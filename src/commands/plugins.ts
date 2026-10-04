@@ -3,14 +3,14 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
-import { assertConfigPath, getAtPath, parseConfigValue, readPluginConfig, unsetAtPath, upsertPluginPatch } from '../config/config.js';
+import { assertConfigPath, getAtPath, parseConfigValue, readPluginConfig, setAtPath, unsetAtPath, upsertPluginPatch } from '../config/config.js';
 import { loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
 import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError } from '../errors.js';
 import { ExactVersionRegex, GitCommitRegex, PackageNameRegex } from '../manifest/schema.js';
-import type { EnvironmentManifest, OverlayPluginEntry, PluginManifestEntry, PluginSource } from '../domain.js';
+import type { EnvironmentManifest, OverlayPatchEntry, OverlayPluginEntry, PatchEntry, PluginManifestEntry, PluginSource, ProfilePatch } from '../domain.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { removeOverlayPlugin, setOverlayPatchValue, setOverlayPluginFields } from '../overlay/write.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
@@ -32,7 +32,7 @@ import { didYouMean } from './suggest.js';
 import { checkNpmVersion } from '../source/npm-registry.js';
 import { resolveDshCommand } from '../dsh/command.js';
 import { dumpProfileConfig } from '../dsh/hmr.js';
-import { parseComposedProfile, pluginConfigKeys } from '../tools/catalog.js';
+import { parseComposedProfile, pluginConfigKeys, pluginRowConfig } from '../tools/catalog.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { renderPluginTable } from '../output/render.js';
 import { resolveWrite, writeBase, writeOverlay } from './manifest-write.js';
@@ -567,26 +567,30 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
   }
 
   // DSH composes only the keys that have a default, so a key it does not show may still be real: warn, don't refuse.
-  async function warnUnknownConfigKey(paths: EnvironmentPaths, opts: { harnessSource?: string; overlay?: string | false }, profile: string, packageName: string, dottedPath: string): Promise<void> {
+  // The rows DSH composes for a profile; null when DSH cannot tell (no profile yet, no DSH, an unreadable dump).
+  async function composedRows(paths: EnvironmentPaths, opts: { harnessSource?: string; overlay?: string | false }, profile: string): Promise<ProfilePatch[] | null> {
     // dsh --dump-config creates a missing profile, which a manifest write must not do.
     if (!fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))) {
-      return;
+      return null;
     }
     const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
     const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest.environment?.harness?.sourceDir });
     if (!command) {
-      return;
+      return null;
     }
     const dump = await dumpProfileConfig(profile, { command, dshHome: paths.home });
     if (!dump.ok) {
-      return;
+      return null;
     }
-    let keys: string[];
     try {
-      keys = pluginConfigKeys(parseComposedProfile(dump.yaml), packageName);
+      return parseComposedProfile(dump.yaml);
     } catch {
-      return;
+      return null;
     }
+  }
+
+  function warnUnknownConfigKey(rows: ProfilePatch[], packageName: string, dottedPath: string): void {
+    const keys = pluginConfigKeys(rows, packageName);
     const head = dottedPath.split('.')[0];
     if (keys.length > 0 && !keys.includes(head)) {
       const hint = didYouMean(head, keys);
@@ -673,18 +677,33 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const profile: string = cmdOpts.profile;
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
-        if (!cmdOpts.force) {
-          const plugin = layerPlugin(paths, selection, overlay, profile, alias);
-          await warnUnknownConfigKey(paths, opts, profile, plugin.package, dottedPath);
+        const declared = overlay ? effectivePlugin(paths, overlay, profile, alias) : layerPlugin(paths, selection, overlay, profile, alias);
+        const rows = await composedRows(paths, opts, profile);
+        if (!cmdOpts.force && rows) {
+          warnUnknownConfigKey(rows, declared.package, dottedPath);
         }
+        // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes now.
+        let seed: Record<string, unknown> | undefined;
+        if (!declared.patches?.length && rows) {
+          seed = pluginRowConfig(rows, declared.package, alias);
+          if (!seed) {
+            ctx.writeErr(
+              `DSH has no config for ${declared.package} in profile '${profile}' yet, so the patch holds only ${dottedPath}; ` +
+                "DSH replaces the plugin's whole config with it, dropping its defaults. To keep them: config unset it, apply, then config set it again\n"
+            );
+          }
+        }
+        const restate = (patch: PatchEntry | OverlayPatchEntry) => {
+          if (seed) patch.config = setAtPath(seed, dottedPath, parseConfigValue(value));
+          return patch;
+        };
 
         const patch = overlay
-          ? await writeOverlay(paths, overlay, (doc) => {
-              const plugin = effectivePlugin(paths, overlay, profile, alias);
-              return setOverlayPatchValue(doc, profile, alias, plugin.patches?.[0]?.id ?? alias, dottedPath, parseConfigValue(value));
-            })
+          ? await writeOverlay(paths, overlay, (doc) =>
+              restate(setOverlayPatchValue(doc, profile, alias, declared.patches?.[0]?.id ?? alias, dottedPath, parseConfigValue(value)))
+            )
           : await writeBase(paths, selection, (manifest) =>
-              upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value))
+              restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value)))
             );
 
         reportWrite(opts, overlay, 'set', { profile, alias, path: dottedPath, patch }, `Set ${alias} config ${dottedPath} in profile '${profile}'`);

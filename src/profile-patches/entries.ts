@@ -4,14 +4,11 @@ import { isDeepStrictEqual } from 'node:util';
 import * as YAML from 'yaml';
 import type { ProfilePatch } from '../domain.js';
 import { ValidationError } from '../errors.js';
-import { flowArrayAsBlock, splicePluginBlocks } from '../patch/patch.js';
+import { flowArrayAsBlock, jsTags as customTags, splicePluginBlocks, stringifyWithJs } from '../patch/patch.js';
 
 // A profile's own entries share the plugin block markers under an alias no plugin may take.
 export const PROFILE_PATCHES_ALIAS = '@profile';
 
-// DSH's config editor reads `!!js` expressions as { __jsExpr } maps and writes them back as tagged scalars.
-const JS_TAG = 'tag:yaml.org,2002:js';
-const customTags = [{ tag: JS_TAG, resolve: (value: string) => ({ __jsExpr: value }) }];
 
 const BLOCK = /# dshenv:begin profile=([^\s]+) plugin=([^\s]+)(?: digest=([^\s]+))?\n([\s\S]*?)# dshenv:end profile=\1 plugin=\2\n?/g;
 
@@ -89,19 +86,9 @@ export function readProfilePatchState(content: string, profileName: string): Pro
 export function renderProfileBlock(profileName: string, entries: ProfilePatch[]): string {
   // The manifest sorts keys; in the file DSH users read, id and name lead as in DSH's own entries.
   const ordered = entries.map(({ id, name, ...rest }) => ({ ...(id !== undefined ? { id } : {}), ...(name !== undefined ? { name } : {}), ...rest }));
-  const doc = new YAML.Document(ordered, { customTags });
-  YAML.visit(doc, {
-    Map(_key, node) {
-      const expression = node.items.length === 1 ? node.get('__jsExpr') : undefined;
-      if (typeof expression !== 'string') return undefined;
-      const scalar = new YAML.Scalar(expression);
-      scalar.tag = JS_TAG;
-      return scalar;
-    }
-  });
   return [
     `# dshenv:begin profile=${profileName} plugin=${PROFILE_PATCHES_ALIAS} digest=${digestProfilePatches(entries)}`,
-    doc.toString({ indent: 2, lineWidth: 0 }).trimEnd(),
+    stringifyWithJs(ordered),
     `# dshenv:end profile=${profileName} plugin=${PROFILE_PATCHES_ALIAS}`
   ].join('\n');
 }
