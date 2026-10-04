@@ -113,11 +113,16 @@ describe('CLI sync', () => {
     const lockBefore = read(paths.lockFile);
     const dryRun = await run(['remote', 'sync', '--yes', '--dry-run']);
     expect(dryRun.code).toBe(2);
-    expect(dryRun.stdout).toContain('Run it again without --dry-run and with --yes to accept');
+    expect(dryRun.stdout).toContain('Run it again without --dry-run and with --ref ');
     expect(read(paths.lockFile)).toBe(lockBefore);
     const accepted = await run(['sync', '--yes', '--json']);
     expect(accepted.code).toBe(0);
-    expect(JSON.parse(accepted.stdout)).toMatchObject({ status: 'accepted', lockEntries: { added: [], modified: ['web/shared'], removed: [] } });
+    expect(JSON.parse(accepted.stdout)).toMatchObject({
+      status: 'accepted',
+      operationId: expect.stringMatching(/^sync-/),
+      snapshotId: expect.any(String),
+      lockEntries: { added: [], modified: ['web/shared'], removed: [] }
+    });
     expect(loadLock(read(paths.lockFile)).profiles.web.plugins.shared.source).toEqual({ type: 'npm', resolvedVersion: '1.1.0' });
   });
 

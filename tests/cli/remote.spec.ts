@@ -56,10 +56,20 @@ describe('CLI remote', () => {
     expect(stdout).toContain('Files:\n  + manifest.yaml\n  + overlays/team.yaml\n');
     expect(stdout).toContain('Lock entries:\n  + web/shared\n');
     expect(stdout).toContain('+ [web] shared-plugin (shared)');
-    expect(stdout).toContain('Re-run with --yes to accept.');
+    expect(stdout).toContain(`Re-run with --ref ${await teamHead(team)} --yes to accept this commit.`);
     expect(fs.existsSync(paths.manifestFile)).toBe(false);
     expect(fs.existsSync(paths.remoteFile)).toBe(false);
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
+  });
+
+  it('accepts the commit it previewed when the branch has moved on since', async () => {
+    const previewed = await teamHead(team);
+    await run(['remote', 'add', team.url]);
+    await commitTeamFiles(team, { 'envctl/overlays/late.yaml': TEAM_OVERLAY }, 'pushed after the review');
+    const { code } = await run(['remote', 'add', team.url, '--ref', previewed, '--yes']);
+    expect(code).toBe(0);
+    expect(readRemoteConfig(paths)?.commit).toBe(previewed);
+    expect(fs.existsSync(overlayFile('late'))).toBe(false);
   });
 
   it('reports the preview as JSON', async () => {
@@ -276,7 +286,7 @@ describe('CLI remote', () => {
   it('removes the subscription only with --yes and leaves the files writable', async () => {
     const addDryRun = await run(['remote', 'add', team.url, '--yes', '--dry-run']);
     expect(addDryRun.code).toBe(2);
-    expect(addDryRun.stdout).toContain('Run it again without --dry-run and with --yes to accept');
+    expect(addDryRun.stdout).toContain('Run it again without --dry-run and with --ref ');
     expect(fs.existsSync(paths.remoteFile)).toBe(false);
     await run(['remote', 'add', team.url, '--yes']);
     const removeDryRun = await run(['remote', 'remove', '--yes', '--dry-run']);
