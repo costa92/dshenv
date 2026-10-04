@@ -10,7 +10,8 @@ import { loadLock, loadManifest, loadState, parseOverlay } from '../../src/manif
 import { readSelectionFile } from '../../src/overlay/selection.js';
 import { readProfilePatchState } from '../../src/profile-patches/entries.js';
 import { rollbackEnvironment } from '../../src/rollback/rollback.js';
-import { writeRemoteOwnedFixture } from '../helpers/remote-fixture.js';
+import { LOCAL_OVERLAY, writeRemoteOwnedFixture } from '../helpers/remote-fixture.js';
+import { readRemoteConfig, sha256Hex, writeRemoteConfig } from '../../src/remote/schema.js';
 
 const HEADER = '# Your patch layer for this dsh profile\n';
 const LOCALE = { id: 'locale', name: '@deepseek-ai/dsh-client-locale', config: { preference: 'zh' } };
@@ -173,6 +174,24 @@ describe('pullProfilePatches', () => {
       expect(result.changes).toMatchObject([{ base: 0, overlay: 2, overlayName: 'mine' }]);
       expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(manifestBefore);
       expect(overlay('mine').profiles?.web?.patches).toEqual([LOCALE, SKILLS]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  });
+
+  it('refuses in the preview too an overlay it would have to write that the team owns', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dshenv-pull-remote-'));
+    try {
+      paths = await writeRemoteOwnedFixture(home);
+      setupProfile(home);
+      fs.rmSync(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      tempHome = home;
+      fs.writeFileSync(path.join(paths.overlaysDir, 'local.yaml'), LOCAL_OVERLAY);
+      const config = readRemoteConfig(paths)!;
+      await writeRemoteConfig(paths, { ...config, files: { ...config.files, 'overlays/local.yaml': sha256Hex(LOCAL_OVERLAY) } });
+
+      await expect(pull({ dryRun: true })).rejects.toThrow(/Overlay 'local' is owned by remote/);
+      await expect(pull({ dryRun: true, selection: { name: 'team', via: 'file' } })).rejects.toThrow(/Overlay 'team' is owned by remote/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }

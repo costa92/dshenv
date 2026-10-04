@@ -12,7 +12,7 @@ import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { loadState, parseOverlay, serializeLock } from '../manifest/files.js';
 import { readOverlay } from '../overlay/effective.js';
 import { mergeManifest } from '../overlay/merge.js';
-import type { OverlaySelection } from '../overlay/selection.js';
+import { readSelectionFile, type OverlaySelection } from '../overlay/selection.js';
 import { buildPlan, type EnvironmentPlan } from '../planner/plan.js';
 import { readSkillDigests, remoteSkillNames } from '../resources/skill.js';
 import { readLocalSourceDigests } from '../source/local.js';
@@ -177,11 +177,17 @@ async function declaredSkillsAfter(paths: EnvironmentPaths, snapshot: RemoteSnap
   if (changed.length === 0) {
     return readSkillDigests(paths.skillsDir);
   }
+  // Only the skills the sync touches are laid out again; every other one, linked in or not, stays as it is.
+  const touched = new Set(changed.map((key) => (skillPathFromKey(key) as string[])[0]));
+  const current = await readSkillDigests(paths.skillsDir);
   const scratch = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dshenv-sync-skills-'));
   try {
-    if (fs.existsSync(paths.skillsDir)) {
-      // Symlinks are left out as copySkillDir leaves them out; copied as links, the preview would write through them.
-      await fs.promises.cp(paths.skillsDir, scratch, { recursive: true, filter: (source) => !fs.lstatSync(source).isSymbolicLink() });
+    for (const name of touched) {
+      const dir = path.join(paths.skillsDir, name);
+      if (fs.existsSync(dir)) {
+        // Symlinks are left out as copySkillDir leaves them out; copied as links, the preview would write through them.
+        await fs.promises.cp(dir, path.join(scratch, name), { recursive: true, filter: (source) => !fs.lstatSync(source).isSymbolicLink() });
+      }
     }
     // Removals first, as accepting does, so a path can turn from a file into a directory or back.
     const removed = changed.filter((key) => files.removed.includes(key));
@@ -195,7 +201,9 @@ async function declaredSkillsAfter(paths: EnvironmentPaths, snapshot: RemoteSnap
         await fs.promises.writeFile(file, snapshot.files[key]);
       }
     }
-    return await readSkillDigests(scratch);
+    const after = await readSkillDigests(scratch);
+    const untouched = Object.entries(current).filter(([name]) => !touched.has(name));
+    return { ...Object.fromEntries(untouched), ...after };
   } finally {
     await fs.promises.rm(scratch, { recursive: true, force: true });
   }
@@ -238,6 +246,13 @@ export async function prepareSync(input: PrepareSyncInput): Promise<SyncPreview>
 
   const ownedEntries = previous?.lockEntries ?? {};
   const files = computeChanges(paths, previous?.files ?? {}, snapshot.digests);
+  // Later commands fall back to the overlay saved as selected, so a sync run with --no-overlay must not delete it either.
+  const saved = readSelectionFile(paths);
+  if (saved !== null && saved !== input.selection?.name && files.removed.includes(`overlays/${saved}.yaml`)) {
+    throw new ValidationError(
+      `The overlay '${saved}' selected on this machine is removed by the remote; select another overlay with dshenv overlay use, then sync again`
+    );
+  }
   const lockEntries = diffLockEntries(localLock, ownedEntries, snapshot.lockEntries);
   const manifest = manifestAfter(paths, snapshot, files, input.selection);
   const lock = mergeRemoteLock(localLock, ownedEntries, snapshot.lock);

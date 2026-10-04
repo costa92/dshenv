@@ -21,7 +21,7 @@ import { mergeManifest } from '../overlay/merge.js';
 import { overlayFilePath, writeSelectionFile, type OverlaySelection } from '../overlay/selection.js';
 import { saveOverlay, setOverlayPluginFields } from '../overlay/write.js';
 import { readRemoteConfig } from '../remote/schema.js';
-import { readLocalLock, remoteOwnedKey } from '../remote/ownership.js';
+import { assertNotRemoteOwned, readLocalLock, remoteOwnedKey } from '../remote/ownership.js';
 import { rewriteProfilePatchFile } from '../apply/patches.js';
 import { createEnvironmentSnapshot, restoreEnvironmentSnapshot } from '../io/backup.js';
 import { appendJournalEntry } from '../io/journal.js';
@@ -221,11 +221,14 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
   let overlayCreated: string | undefined;
   const overlayFor = (refusal: string): EnvironmentOverlay => {
     if (nextOverlay) {
+      // Refused here rather than when writing, so a preview does not promise what --yes then refuses.
+      assertNotRemoteOwned(paths, overlayFilePath(paths, overlayName!));
       return nextOverlay;
     }
     if (!options.allowOverlayCreation) {
       throw new ValidationError(`${refusal} in an overlay; drop --no-overlay, or select one with dshenv overlay use <name>`);
     }
+    assertNotRemoteOwned(paths, overlayFilePath(paths, LOCAL_OVERLAY));
     overlayName = LOCAL_OVERLAY;
     nextOverlay = fs.existsSync(overlayFilePath(paths, LOCAL_OVERLAY))
       ? readOverlay(paths, LOCAL_OVERLAY)

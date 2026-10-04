@@ -12,6 +12,9 @@ import { cloneRemoteRepo, fetchBranch } from '../../src/remote/git.js';
 import { lockEntryDigest } from '../../src/remote/lock-entries.js';
 import { readRemoteConfig, remoteRepoDir, sha256Hex } from '../../src/remote/schema.js';
 import { acceptSync, prepareSync } from '../../src/remote/sync.js';
+import { readSkillDigests, skillOwnership } from '../../src/resources/skill.js';
+import { serializeState, withResources } from '../../src/manifest/files.js';
+import { writeSelectionFile } from '../../src/overlay/selection.js';
 import {
   TEAM_LOCK,
   TEAM_MANIFEST,
@@ -263,6 +266,27 @@ describe('remote sync engine', () => {
     expect(read(path.join(outside, 'SKILL.md'))).toBe('v1');
   });
 
+  it('does not preview removing an owned local skill linked into envctl/skills', async () => {
+    await subscribe();
+    const outside = path.join(root, 'dotfiles', 'mine');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'SKILL.md'), 'mine');
+    fs.mkdirSync(paths.skillsDir, { recursive: true });
+    fs.symlinkSync(outside, path.join(paths.skillsDir, 'mine'), 'junction');
+    fs.mkdirSync(path.join(paths.dshSkillsDir, 'mine'), { recursive: true });
+    fs.writeFileSync(path.join(paths.dshSkillsDir, 'mine', 'SKILL.md'), 'mine');
+    const owned = skillOwnership(await readSkillDigests(paths.skillsDir));
+    expect(Object.keys(owned)).toEqual(['mine']);
+    fs.writeFileSync(paths.stateFile, serializeState(withResources(
+      { apiVersion: 'dshenv-state/v1', lastApplied: '', appliedLockHash: '', profiles: {} },
+      { skill: owned }
+    )));
+
+    await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'v1' }, 'skills');
+    const preview = await prepare({ previous: true });
+    expect(skillOps(preview.plan).map((op) => `${op.kind} ${op.name}`)).toEqual(['install wiki']);
+  });
+
   // Windows has no executable bit to keep.
   it.skipIf(process.platform === 'win32')('keeps a team skill script executable', async () => {
     await subscribe();
@@ -415,6 +439,15 @@ describe('remote sync engine', () => {
     expect(preview.plan.operations.some((op) => op.resource === 'plugin' && op.kind === 'install' && op.alias === 'laptop')).toBe(true);
     await expect(prepare({ previous: true, selection: { name: 'team', via: 'file' } })).rejects.toThrow(
       "The active overlay 'team' is removed by the remote; select another overlay with dshenv overlay use, then sync again"
+    );
+  });
+
+  it('refuses to remove the overlay selected on this machine even when the sync runs without it', async () => {
+    await subscribe();
+    await writeSelectionFile(paths, 'team');
+    await commitTeamFiles(team, { 'envctl/overlays/team.yaml': null }, 'drop team overlay');
+    await expect(prepare({ previous: true, selection: null })).rejects.toThrow(
+      "The overlay 'team' selected on this machine is removed by the remote; select another overlay with dshenv overlay use, then sync again"
     );
   });
 

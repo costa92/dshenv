@@ -9,6 +9,9 @@
 - 失败的 `apply` 恢复 `lock.json` 后，补记失败前已装上的本地来源插件的摘要；此前下一次 `plan` 会以「Local source has no recorded digest」重装同样的代码，并标记为需要重启。
 - `rollback` 不再把 `mark-restarted` 已清除的 `restart-required` 带回来；重启状态以回滚前为准（DSH 进程不随 rollback 改变）。
 - 没有 `state.json` 时，一次「已同步」的 `apply` 也记录 DSH 已有的声明 skill 的所有权与生效 overlay；此前什么都不记录，之后从清单删掉这类 skill 时被当作未管理，不会移除。
+- `pull` 需要写的 overlay（选中的，或要新建的 `local`）归团队所有时，预览就以退出码 3 拒绝；此前预览说会写进去，加 `--yes` 才被拒绝。
+- `remote sync` 的预览不再把用软链接放进 `envctl/skills` 的本机 skill 列为「remove」；只为这次同步涉及的 skill 重算摘要。
+- `remote sync --no-overlay`（或 `--overlay` 其他名字）不再绕过「本机选中的 overlay 被团队删除」的检查；此前同步成功后，之后的命令都报 `Overlay '<名字>' not found`。
 
 ## 0.8.0 - 2026-10-04
 
