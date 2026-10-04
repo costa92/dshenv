@@ -259,6 +259,13 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     });
   }
 
+  // Replacing the entry would drop the other package's patches and enabled state without a word.
+  function aliasTaken(alias: string, current: string, profile: string, next: string): ValidationError {
+    return new ValidationError(
+      `Alias '${alias}' is '${current}' in profile '${profile}'; add '${next}' under another alias with --as <alias>, or remove '${alias}' first`
+    );
+  }
+
   function lockPinsNpm(paths: EnvironmentPaths, profile: string, alias: string): boolean {
     if (!fs.existsSync(paths.lockFile)) {
       return false;
@@ -287,6 +294,9 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             );
           }
           const overlayEntry = doc.profiles?.[profile]?.plugins?.[next.alias];
+          if (overlayEntry && !overlayEntry.remove && overlayEntry.package !== undefined && overlayEntry.package !== next.packageName) {
+            throw aliasTaken(next.alias, overlayEntry.package, profile, next.packageName);
+          }
           // Reinstalling a plugin the effective manifest already has only moves its source, as in the base.
           const exists = overlayEntry ? !overlayEntry.remove : Boolean(baseEntry);
           if (exists) {
@@ -305,11 +315,14 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           }
           const next = parsePluginSpec(request.spec, request.alias, request.packageName);
           const current = manifest.profiles[profile].plugins[next.alias];
+          if (current && current.package !== next.packageName) {
+            throw aliasTaken(next.alias, current.package, profile, next.packageName);
+          }
           // Reinstalling the same package only moves its source; patches and the enabled state are kept.
-          if (current?.package === next.packageName) {
+          if (current) {
             previousSource = current.source;
           }
-          manifest.profiles[profile].plugins[next.alias] = current?.package === next.packageName
+          manifest.profiles[profile].plugins[next.alias] = current
             ? { ...current, source: next.source }
             : { package: next.packageName, enabled: true, source: next.source };
           return next;
