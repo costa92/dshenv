@@ -23,6 +23,10 @@ describe('profile names', () => {
     expect(Object.keys(loadLock(lockWith(name)).profiles)).toEqual([name]);
   });
 
+  it.each(['-h', '--help', '@-x/plugin'])('rejects the package name %j, which pnpm would read as an option', (name) => {
+    expect(() => loadManifest(`apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      a:\n        package: "${name}"\n        source: { type: in-box }\n`)).toThrow(/package/i);
+  });
+
   it('checks lock aliases as the manifest checks aliases', () => {
     const lockAlias = (alias: string) =>
       JSON.stringify({ apiVersion: 'dshenv-lock/v1', profiles: { web: { plugins: { [alias]: { package: 'dsh-plugin-demo', source: { type: 'npm', resolvedVersion: '1.0.0' } } } } } });

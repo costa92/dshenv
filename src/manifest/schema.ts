@@ -3,8 +3,9 @@ import { ValidationError } from '../errors.js';
 import * as path from 'node:path';
 import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 
-// A leading dot is refused so '.' and '..' can never name a directory outside the package's own.
-export const PackageNameRegex = /^(?:@[a-z0-9_-][a-z0-9._-]*\/)?[a-z0-9_-][a-z0-9._-]*$/;
+// A leading dot is refused so '.' and '..' can never name a directory outside the package's own, and a leading '-'
+// so pnpm never reads the name as an option.
+export const PackageNameRegex = /^(?:@[a-z0-9_][a-z0-9._-]*\/)?[a-z0-9_][a-z0-9._-]*$/;
 
 // dshenv pins exact npm versions; ranges and tags would never compare equal to an installed version.
 // The SemVer 2.0 grammar, as npm takes it: no leading zeros, a prerelease and a build part each optional.
@@ -47,7 +48,7 @@ const gitUrlSchema = z
   })
   .refine((url) => !url.startsWith('-'), { message: 'Git URL must not start with -' });
 
-const GitCommitRegex = /^[0-9a-f]{7,64}$/i;
+export const GitCommitRegex = /^[0-9a-f]{7,64}$/i;
 
 export const GitSourceSchema = z
   .object({
