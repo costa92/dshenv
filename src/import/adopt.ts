@@ -8,7 +8,9 @@ import type {
   EnvironmentLock,
   EnvironmentOverlay,
   EnvironmentState,
-  PluginOwnershipRecord
+  PluginLockEntry,
+  PluginOwnershipRecord,
+  PluginSource
 } from '../domain.js';
 import { readEnvironmentInventory, type EnvironmentInventory } from '../inventory/profile-reader.js';
 import { captureEnvironment } from './capture.js';
@@ -38,11 +40,30 @@ export interface AdoptDetail {
   layer?: 'overlay';
 }
 
+// A plugin the base declares that DSH has from a machine-local path here: the base stays, pull sets the path in an overlay.
+export interface OverlaySource {
+  profile: string;
+  alias: string;
+  package: string;
+  source: PluginSource;
+  lock?: PluginLockEntry;
+}
+
 export interface AdoptSummary {
   adoptedCount: number;
   profiles: string[];
   details: AdoptDetail[];
+  overlaySources: OverlaySource[];
   operationId: string;
+}
+
+// A lock entry capture writes has no digest; apply recorded the one of what it installed, which still holds.
+function keepDigest(current: PluginLockEntry | undefined, captured: PluginLockEntry): PluginLockEntry {
+  if (!current || (current.source.type !== 'local-link' && current.source.type !== 'local-file')) {
+    return captured;
+  }
+  const { digest: _digest, ...source } = current.source;
+  return isDeepStrictEqual({ ...current, source }, captured) ? current : captured;
 }
 
 export function checkCandidateFreshness(
@@ -172,6 +193,7 @@ async function adoptUnderLock(
   };
 
   const details: AdoptDetail[] = [];
+  const overlaySources: OverlaySource[] = [];
   const profilesSet = new Set<string>();
 
   for (const [profileName, candProf] of Object.entries(candidate.manifest.profiles)) {
@@ -203,23 +225,33 @@ async function adoptUnderLock(
         details.push({ profile: profileName, alias: existingAlias, package: plugin.package, sourceType: plugin.source.type, alreadyAdopted: true });
         continue;
       }
-      if (existingAlias === undefined && (plugin.source.type === 'local-link' || plugin.source.type === 'local-file')) {
+      const existingEntry = existingAlias ? mergedManifest.profiles[profileName].plugins[existingAlias] : undefined;
+      // A base that already declares this very path keeps it; any other machine-local path goes to an overlay.
+      if ((plugin.source.type === 'local-link' || plugin.source.type === 'local-file') && !isDeepStrictEqual(existingEntry?.source, plugin.source)) {
         if (options?.allowOverlay === false) {
           throw new ValidationError(
             `Plugin '${plugin.package}' of profile '${profileName}' has a machine-local path, which belongs in an overlay; drop --no-overlay, or select one with dshenv overlay use <name>`
           );
         }
-        details.push({ profile: profileName, alias: candidateAlias, package: plugin.package, sourceType: plugin.source.type, alreadyAdopted: false, layer: 'overlay' });
+        if (existingAlias !== undefined) {
+          const lock = candLockProf[candidateAlias];
+          overlaySources.push({ profile: profileName, alias: existingAlias, package: plugin.package, source: plugin.source, ...(lock ? { lock } : {}) });
+        }
+        details.push({ profile: profileName, alias: existingAlias ?? candidateAlias, package: plugin.package, sourceType: plugin.source.type, alreadyAdopted: false, layer: 'overlay' });
         continue;
       }
-      const alias = existingAlias ?? freeAlias(mergedManifest.profiles[profileName].plugins, candidateAlias);
+      // An alias the active overlay adds for another package would make the two collide when merged.
+      const alias = existingAlias ?? freeAlias(
+        { ...mergedManifest.profiles[profileName].plugins, ...options?.overlay?.profiles?.[profileName]?.plugins },
+        candidateAlias
+      );
       // Capture cannot see declared patches, so a candidate without any must not erase them.
-      const existingEntry = existingAlias ? mergedManifest.profiles[profileName].plugins[existingAlias] : undefined;
       const existingPatches = existingEntry?.patches;
       const entry = plugin.patches === undefined && existingPatches ? { ...plugin, patches: existingPatches } : plugin;
       mergedManifest.profiles[profileName].plugins[alias] = entry;
 
-      const lockEntry = candLockProf[candidateAlias];
+      const capturedLock = candLockProf[candidateAlias];
+      const lockEntry = capturedLock && keepDigest(mergedLock.profiles[profileName].plugins[alias], capturedLock);
       const alreadyAdopted =
         existingEntry !== undefined &&
         isDeepStrictEqual(existingEntry, entry) &&
@@ -266,7 +298,7 @@ async function adoptUnderLock(
 
   options?.validateManifest?.(mergedManifest);
   if (options?.dryRun) {
-    return { adoptedCount: details.length, profiles: Array.from(profilesSet), details, operationId };
+    return { adoptedCount: details.length, profiles: Array.from(profilesSet), details, overlaySources, operationId };
   }
 
   // Each write is atomic but the three together are not, so a failure puts back the files already written.
@@ -294,6 +326,7 @@ async function adoptUnderLock(
     adoptedCount: details.length,
     profiles: Array.from(profilesSet),
     details,
+    overlaySources,
     operationId
   };
 }

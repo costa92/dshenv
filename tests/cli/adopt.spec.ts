@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../src/cli.js';
+import { calculateSourceDigest } from '../../src/source/local.js';
+import { loadManifest } from '../../src/manifest/files.js';
 
 describe('CLI adopt', () => {
   let tempHome: string;
@@ -136,6 +138,42 @@ warnings: []
       expect(plan.code).toBe(0);
     });
 
+    it('keeps the base entry of a plugin linked here and records the link in the local overlay', async () => {
+      fs.writeFileSync(
+        envctl('manifest.yaml'),
+        'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      tool:\n        package: local-tool\n        source: { type: npm, version: "1.0.0" }\n'
+      );
+      const preview = await run(['adopt', path.join(tempHome, 'candidate.yaml')]);
+      expect(preview.stdout).toMatch(/local-tool \(tool\) \[local-link\] into an overlay/);
+
+      const out = await run(['adopt', path.join(tempHome, 'candidate.yaml'), '--yes']);
+      expect(out.code).toBe(0);
+      expect(fs.readFileSync(envctl('manifest.yaml'), 'utf8')).not.toContain(source);
+      expect(loadManifest(fs.readFileSync(envctl('manifest.yaml'), 'utf8')).profiles.web.plugins.tool.source).toEqual({ type: 'npm', version: '1.0.0' });
+      expect(fs.readFileSync(envctl('overlays', 'local.yaml'), 'utf8')).toContain(source);
+      const lock = JSON.parse(fs.readFileSync(envctl('lock.json'), 'utf8'));
+      expect(lock.profiles.web.plugins.tool.source).toEqual({ type: 'local-link', path: source, digest: await calculateSourceDigest(source) });
+      const plan = await run(['plan']);
+      expect(plan.stdout).not.toMatch(/tool/);
+      expect(plan.code).toBe(0);
+    });
+
+    it('keeps the lock digest of a local plugin the base already declares as it is installed', async () => {
+      fs.writeFileSync(
+        envctl('manifest.yaml'),
+        `apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      local-tool:\n        package: local-tool\n        source: { type: local-link, path: ${JSON.stringify(source)} }\n`
+      );
+      expect((await run(['adopt', path.join(tempHome, 'candidate.yaml'), '--yes'])).code).toBe(0);
+      const lockFile = envctl('lock.json');
+      const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+      lock.profiles.web.plugins['local-tool'].source.digest = await calculateSourceDigest(source);
+      fs.writeFileSync(lockFile, JSON.stringify(lock, null, 2) + '\n');
+      const again = await run(['adopt', path.join(tempHome, 'candidate.yaml'), '--yes']);
+      expect(again.stdout).toContain('Nothing to adopt: every plugin in the candidate is already adopted.');
+      expect(JSON.parse(fs.readFileSync(lockFile, 'utf8'))).toEqual(lock);
+      expect((await run(['plan'])).code).toBe(0);
+    });
+
     it('refuses under --no-overlay before writing anything', async () => {
       const before = fs.readFileSync(envctl('manifest.yaml'), 'utf8');
       const out = await run(['--no-overlay', 'adopt', path.join(tempHome, 'candidate.yaml'), '--yes']);
@@ -173,5 +211,41 @@ warnings: []
     expect((await run(['adopt', candidate, '--yes'])).code).toBe(0);
     expect((await run(['adopt', candidate, '--layer', 'base'])).code).toBe(0);
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(base);
+  });
+
+  describe('with an alias the active overlay adds for another package', () => {
+    const run = async (args: string[]) => {
+      let stdout = '';
+      let stderr = '';
+      const code = await runCli([...args, '--dsh-home', tempHome], { stdout: (chunk) => { stdout += chunk; }, stderr: (chunk) => { stderr += chunk; } });
+      return { code, stdout, stderr };
+    };
+    const baseAliases = () =>
+      Object.keys(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web?.plugins ?? {});
+
+    beforeEach(async () => {
+      expect((await run(['init'])).code).toBe(0);
+      expect((await run(['capture', '-o', path.join(tempHome, 'candidate.yaml')])).code).toBe(0);
+      fs.mkdirSync(path.join(tempHome, 'envctl', 'overlays'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempHome, 'envctl', 'overlays', 'mine.yaml'),
+        'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        package: other-teams\n        source: { type: npm, version: "1.0.0" }\n'
+      );
+      expect((await run(['overlay', 'use', 'mine'])).code).toBe(0);
+    });
+
+    it('adopt puts the plugin under a free alias', async () => {
+      const out = await run(['adopt', path.join(tempHome, 'candidate.yaml'), '--yes']);
+      expect(out.stderr).toBe('');
+      expect(out.code).toBe(0);
+      expect(baseAliases()).toEqual(['agent-teams-1']);
+    });
+
+    it('pull puts the plugin under a free alias', async () => {
+      const out = await run(['pull', '--yes']);
+      expect(out.stderr).toBe('');
+      expect(out.code).toBe(0);
+      expect(baseAliases()).toEqual(['agent-teams-1']);
+    });
   });
 });

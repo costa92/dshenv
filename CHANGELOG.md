@@ -21,6 +21,9 @@
 - `source clone --profile` 克隆并锁定清单为该别名声明的 `commit` 或 `ref`（同一仓库时），清单里保留它；给了 `--ref` 时写入该 ref。此前总是锁定默认分支的 HEAD 并删掉清单里的 `commit`/`ref`，照 `plan` 的提示操作会悄悄换掉固定的代码。
 - `source clone --profile` 的别名已指向另一个包时拒绝（退出码 3，base 与 overlay 都是），与 `install` 一致；此前写 base 时整条替换、丢掉原包的 `patches` 与启用状态，写 overlay 时让清单与 lock 的包名不一致。
 - `source clone` 的默认别名与 `install` 相同（去掉 `dsh-plugin-`、`dsh-` 前缀）；此前 `install` 之后按 README 再 `source clone` 会因重复包报错。
+- base 已声明、但本机 DSH 从本地路径（`link:`、`file:`）安装的插件，`adopt --yes` 保留 base 中的条目，把本机路径写进 overlay（没有生效 overlay 时新建并选中 `local`）；此前会把本机路径写进共享的 base，推到团队仓库时被拒。
+- 对 base 已按安装方式声明的本地来源插件再次 `adopt --yes`，保留 `lock.json` 中 apply 记录的摘要并输出「Nothing to adopt」；此前会抹掉摘要，之后 `plan` 对每个这类插件都提示更新。
+- `pull` 与 `adopt` 给新插件选别名时避开当前 overlay 新增的别名；此前与 overlay 别名相同时，前者整体失败、后者被拒绝（「an overlay cannot change package」）。
 - 帮助的环境变量部分补上 `DSHENV_NPM_CHECK`；README 与使用教程中需要 `--layer` 的命令补上 `plugins config unset` 与 `tools reset`；README 说明没有快照时的 `rollback` 与没有订阅时的 `remote remove` 以退出码 3 结束。
 
 ### 变更

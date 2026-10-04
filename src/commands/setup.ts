@@ -159,7 +159,8 @@ export function registerSetupCommands(ctx: CommandContext): void {
             profiles: summary.profiles,
             selection,
             allowOverlayCreation: opts.overlay !== false,
-            plugins: machineLocal.length > 0 ? machineLocalPackages(machineLocal) : false
+            plugins: machineLocal.length > 0 ? machineLocalPackages(machineLocal) : false,
+            overlaySources: summary.overlaySources
           })
           : null;
       } catch (err) {
