@@ -2,7 +2,15 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
-## 未发布
+## 0.8.0 - 2026-10-04
+
+### 升级须知
+
+- `gc --yes` 现在也删除 `envctl/backups` 中早于 `--older-than`（默认 7 天）的快照，始终保留最近 10 个；`rollback` 只能回到还在的快照。需要更早的快照时，先用 `--older-than` 调大期限，或在 `gc` 前备份 `envctl/backups`。
+- `--harness-source` 指向不存在的目录时以退出码 3 报错，不再改用清单的 `sourceDir` 或 PATH 上的 `dsh`；相对路径按当前目录解析。
+- `source clone --profile --ref <ref>` 把该 ref 写进清单（替换原来声明的 `commit`/`ref`）；不带 `--ref` 时克隆并锁定清单已声明的 `commit` 或 `ref`，不再总是锁定默认分支的 HEAD。别名已指向另一个包时拒绝（退出码 3），默认别名去掉 `dsh-plugin-`、`dsh-` 前缀。
+- 包名（含作用域）不能以 `-` 开头。
+- 没有清单时 `status` 以退出码 3 结束（此前为 5）；`tools list --all --preset` 以退出码 3 拒绝。
 
 ### 修复
 
