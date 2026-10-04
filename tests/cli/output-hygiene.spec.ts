@@ -51,6 +51,22 @@ describe('CLI output hygiene', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
+  it('shows control characters from names as escapes, so they cannot rewrite the terminal', async () => {
+    fs.writeFileSync(
+      path.join(tempHome, 'envctl', 'manifest.yaml'),
+      'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      "ev\\e[8mil\\u202e":\n        package: dsh-plugin-demo\n        source: { type: npm, version: "1.0.0" }\n'
+    );
+    const list = await run(['plugins', 'list']);
+    expect(list.code).toBe(0);
+    expect(list.stdout).not.toMatch(/[\u001b\u202e]/);
+    expect(list.stdout).toContain('ev\\u001b[8mil\\u202e');
+
+    const typo = await run(['enable', 'ev', '-p', 'web']);
+    expect(typo.code).toBe(3);
+    expect(typo.stderr).not.toMatch(/[\u001b\u202e]/);
+    expect(typo.stderr).toContain('ev\\u001b[8mil\\u202e');
+  });
+
   describe('help without a command', () => {
     it('prints help to stdout and exits 0 for dshenv --json and for a command group run bare', async () => {
       for (const args of [['--json'], ['config'], ['config', '--json'], ['tools', '--json']]) {

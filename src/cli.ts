@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { DshError, ValidationError } from './errors.js';
+import { visibleText } from './output/visible.js';
 import { defaultTargetProfile, type CommandContext } from './commands/context.js';
 import { registerSetupCommands } from './commands/setup.js';
 import { registerLifecycleCommands } from './commands/lifecycle.js';
@@ -88,8 +89,10 @@ function commandUsage(cmd: Command): string {
 }
 
 export async function runCli(argv: string[], io?: CliIO): Promise<number> {
-  const writeOut = io?.stdout ?? ((chunk: string) => process.stdout.write(chunk));
-  const writeErr = io?.stderr ?? ((chunk: string) => process.stderr.write(chunk));
+  const out = io?.stdout ?? ((chunk: string) => process.stdout.write(chunk));
+  const err = io?.stderr ?? ((chunk: string) => process.stderr.write(chunk));
+  const writeOut = (chunk: string) => out(visibleText(chunk));
+  const writeErr = (chunk: string) => err(visibleText(chunk));
 
   let exitCodeToReturn = 0;
   // Errors thrown before parsing leave program.opts() empty, so read argv (up to `--`) as well.
