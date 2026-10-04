@@ -8,7 +8,7 @@ import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError } from '../errors.js';
-import { ExactVersionRegex, PackageNameRegex } from '../manifest/schema.js';
+import { ExactVersionRegex, GitCommitRegex, PackageNameRegex } from '../manifest/schema.js';
 import type { EnvironmentManifest, PluginManifestEntry, PluginSource } from '../domain.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { removeOverlayPlugin, setOverlayPatchValue, setOverlayPluginFields } from '../overlay/write.js';
@@ -100,7 +100,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       const cleanUrl = spec.startsWith('git+') ? spec.slice(4) : spec;
       const urlParts = cleanUrl.split('#');
       const repoUrl = urlParts[0];
-      const commitOrRef = urlParts[1];
+      const commitOrRef = urlParts[1] || undefined;
       const baseName = path.basename(repoUrl, '.git');
       const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
       return {
@@ -109,7 +109,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         source: {
           type: 'git',
           url: repoUrl,
-          commit: commitOrRef
+          // #main or #v1.2.0 names a ref, not a commit; source clone --profile then locks the commit it resolves to.
+          ...(commitOrRef === undefined ? {} : GitCommitRegex.test(commitOrRef) ? { commit: commitOrRef } : { ref: commitOrRef })
         }
       };
     }

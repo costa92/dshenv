@@ -531,12 +531,14 @@ dshenv web stop -p web             # 停止它以及它启动的子进程（如 
 
 ```bash
 dshenv install @nanmicoder/dsh-agent-teams@0.1.21 -p web        # npm 包，必须是精确版本
-dshenv install git+https://github.com/ex/dsh-plugin-demo.git#<commit> -p web   # Git 来源；也接受 git@...、https://...、以 .git 结尾的地址
+dshenv source clone https://github.com/ex/dsh-plugin-demo.git -p web   # Git 来源：克隆并在 lock 中固定 commit（见第 14 节）
 dshenv install ./my-plugin -p web                               # 本地目录（./、../、绝对路径或 file:），登记为 local-link
 dshenv install in-box:@deepseek-ai/dsh-acp-app -p acp           # 随 DSH 发布的 bundle，不装依赖，只在 Profile 中选中
 dshenv disable agent-teams -p web                               # enable 反之
 dshenv remove agent-teams -p web
 ```
+
+`install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
 - 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。
 - 别名默认取包名（去掉作用域与 `dsh-plugin-`、`dsh-` 前缀），`--as` 指定。本地来源的包名默认读其 `package.json` 的 `name`（读不到时用目录名），Git 来源默认用仓库名，与实际包名不同时用 `--package` 指定（`source clone --profile` 会读仓库的 `package.json`）；`--package` 只对 Git 与本地来源有效。
