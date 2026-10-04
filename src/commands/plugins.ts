@@ -10,7 +10,7 @@ import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError } from '../errors.js';
 import { ExactVersionRegex, GitCommitRegex, PackageNameRegex } from '../manifest/schema.js';
-import type { EnvironmentManifest, PluginManifestEntry, PluginSource } from '../domain.js';
+import type { EnvironmentManifest, OverlayPluginEntry, PluginManifestEntry, PluginSource } from '../domain.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { removeOverlayPlugin, setOverlayPatchValue, setOverlayPluginFields } from '../overlay/write.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
@@ -200,6 +200,30 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
 
   function effectivePlugin(paths: EnvironmentPaths, overlay: OverlaySelection, profile: string, alias: string): PluginManifestEntry {
     return requirePlugin(loadEffectiveManifest(paths, overlay).manifest, profile, alias);
+  }
+
+  // The active overlay's value wins on this machine, so a base write alone changes nothing here; say so.
+  function warnOverlayKeeps(
+    opts: { json?: boolean },
+    paths: EnvironmentPaths,
+    selection: OverlaySelection | null,
+    overlay: OverlaySelection | null,
+    profile: string,
+    alias: string,
+    kept: (entry: OverlayPluginEntry) => string | undefined
+  ): void {
+    if (overlay || !selection || opts.json) {
+      return;
+    }
+    const entry = readOverlay(paths, selection.name).profiles?.[profile]?.plugins?.[alias];
+    const what = entry && !entry.remove ? kept(entry) : undefined;
+    if (what) {
+      ctx.writeErr(`Overlay '${selection.name}' sets ${what} on this machine; use --layer overlay to change it here\n`);
+    }
+  }
+
+  function overlayConfigValue(entry: OverlayPluginEntry, dottedPath: string): unknown {
+    return entry.patches?.map((patch) => (patch.config ? getAtPath(patch.config, dottedPath) : undefined)).find((value) => value !== undefined);
   }
 
   // The entry the write changes: a base write must not see what the overlay removes or overrides.
@@ -479,6 +503,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         }
         await pinLockVersion(paths, profile, alias, version);
         reportWrite(opts, overlay, 'updated', { profile, alias, version, npmCheck }, `Set ${alias} in profile '${profile}' to ${version}`);
+        warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) =>
+          entry.source ? `the source of ${alias} in profile '${profile}', so it stays at ${describeSource(entry.source)}` : undefined);
       });
   }
 
@@ -662,6 +688,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             );
 
         reportWrite(opts, overlay, 'set', { profile, alias, path: dottedPath, patch }, `Set ${alias} config ${dottedPath} in profile '${profile}'`);
+        warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) => {
+          const value = overlayConfigValue(entry, dottedPath);
+          return value === undefined ? undefined : `${dottedPath} of ${alias} in profile '${profile}', so it stays ${JSON.stringify(value)}`;
+        });
       });
     configCmd
       .command('unset <alias> <dottedPath>')
@@ -704,6 +734,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           });
         }
         reportWrite(opts, overlay, 'unset', { profile, alias, path: dottedPath }, `Removed ${alias} config ${dottedPath} in profile '${profile}'`);
+        warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) => {
+          const value = overlayConfigValue(entry, dottedPath);
+          return value === undefined ? undefined : `${dottedPath} of ${alias} in profile '${profile}', so it stays ${JSON.stringify(value)}`;
+        });
       });
   }
 
