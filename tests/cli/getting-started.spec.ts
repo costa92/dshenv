@@ -38,6 +38,7 @@ describe('CLI getting started', () => {
     }
     const status = await run(['status']);
     expect(status.stderr).toContain(`No manifest at ${path.join(tempHome, 'envctl', 'manifest.yaml')}; ${INIT_HINT}`);
+    expect(status.code).toBe(3);
   });
 
   it('ends init with the next step, and says so when already initialized', async () => {

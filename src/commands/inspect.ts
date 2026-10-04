@@ -112,7 +112,10 @@ export function registerInspectCommands(ctx: CommandContext): void {
         writeOut(renderStatus(summary));
       }
 
-      if (summary.status === 'degraded' || summary.status === 'incompatible') {
+      // Without a manifest nothing is managed yet: a missing input, as plan reports it, not a degraded runtime.
+      if (!manifest) {
+        setExitCode(3);
+      } else if (summary.status === 'degraded' || summary.status === 'incompatible') {
         setExitCode(5);
       } else {
         setExitCode(planExitCode(plan));

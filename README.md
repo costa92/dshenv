@@ -228,7 +228,7 @@ dshenv apply -p web --yes
 
 `-p` 与 `plan -p` 一样只读取、只改动这个 Profile 的插件与 profile patch，其他 Profile 的所有权与重启记录原样保留；skill 在 `$DSH_HOME/skills` 下、不属于任何 Profile，照常一并应用。
 
-不带 `--yes` 的 `apply` 与 `--dry-run` 相同：展示计划、有变更时退出码 2，并在 stderr 提示加 `--yes` 重跑。`pull`、`rollback`、`gc`、`purge`、`adopt`、`remote add`、`remote remove`、`remote sync` 同样如此：不带 `--yes` 只预览，有待执行的内容时退出码 2，没有时退出码 0。
+不带 `--yes` 的 `apply` 与 `--dry-run` 相同：展示计划、有变更时退出码 2，并在 stderr 提示加 `--yes` 重跑。`pull`、`rollback`、`gc`、`purge`、`adopt`、`remote add`、`remote remove`、`remote sync` 同样如此：不带 `--yes` 只预览，有待执行的内容时退出码 2，没有时退出码 0。例外：要做的事无从做起时按错误处理，退出码 3，例如没有任何快照时的 `rollback`、没有订阅时的 `remote remove`。
 
 当前执行计划中的 `install/update/enable/disable/remove/configure`。`configure` 只写入 Profile `cordis.patch.yml` 的受管块。没有所有权记录的实际插件只标为 `unmanaged`，不会卸载。
 
@@ -376,7 +376,7 @@ profiles:
         remove: true              # 本机不装 base 中的这个插件
 ```
 
-选择优先级：`--overlay` 或 `--no-overlay`（两者同时使用时报错，退出码 3）> `DSHENV_OVERLAY` > 本机选择文件。选中的 overlay 不存在或无效时报错，不会退回只用 base。overlay 里对 base 已不再声明的插件写的 `remove: true` 或字段覆盖（不带 `package`）不起作用、也不报错，例如团队 `sync` 删掉了本机 overlay 停用或改了来源的插件；带 `package` 的条目仍按新增插件处理，必须写 `source`。有生效 overlay 时，改清单的命令（`install`、`update`、`enable`、`disable`、`remove`、`plugins config set`、`tools enable/disable/config`、`source clone --profile`、`new -p`）必须带 `--layer base` 或 `--layer overlay`；也可以设环境变量 `DSHENV_LAYER` 作为默认值，它只在有生效 overlay 时起作用，使用时会在 stderr 提示。`adopt` 不需要 `--layer`：共享的插件写 base，本地来源的插件进 overlay。
+选择优先级：`--overlay` 或 `--no-overlay`（两者同时使用时报错，退出码 3）> `DSHENV_OVERLAY` > 本机选择文件。选中的 overlay 不存在或无效时报错，不会退回只用 base。overlay 里对 base 已不再声明的插件写的 `remove: true` 或字段覆盖（不带 `package`）不起作用、也不报错，例如团队 `sync` 删掉了本机 overlay 停用或改了来源的插件；带 `package` 的条目仍按新增插件处理，必须写 `source`。有生效 overlay 时，改清单的命令（`install`、`update`、`enable`、`disable`、`remove`、`plugins config set/unset`、`tools enable/disable/config/reset`、`source clone --profile`、`new -p`）必须带 `--layer base` 或 `--layer overlay`；也可以设环境变量 `DSHENV_LAYER` 作为默认值，它只在有生效 overlay 时起作用，使用时会在 stderr 提示。`adopt` 不需要 `--layer`：共享的插件写 base，本地来源的插件进 overlay。
 
 ### 16. `dshenv mark-restarted`
 `apply` 输出 `Restart DSH to load:` 分组时，其中插件的状态标为 `restart-required`（升级了已装插件，或该 Profile 的热加载关闭、无法判断）。热加载开启时的安装、启用、停用、配置与卸载当场生效，不需要本命令。重启 DSH 后运行本命令确认，清除该状态（已卸载插件的条目一并删除）。dshenv 无法自行判断 DSH 是否已重启。

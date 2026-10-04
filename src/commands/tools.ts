@@ -134,6 +134,9 @@ export function registerToolsCommands(ctx: CommandContext): void {
     .option('--preset <name>', 'agent preset to show (default: the profile default)')
     .option('--all', 'every tool row: profile-wide and in each preset')
     .action(async (cmdOpts) => {
+      if (cmdOpts.all && cmdOpts.preset !== undefined) {
+        throw new ValidationError('--all lists every preset already; drop --preset, or drop --all to show one preset');
+      }
       const opts: CliOpts = program.opts();
       const paths = resolveCliPaths(opts);
       const tree = await composedProfile(paths, opts, cmdOpts.profile);

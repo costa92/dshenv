@@ -11,6 +11,11 @@
 - `source show/sync/clone` 调用 git 时不再继承 `GIT_DIR`、`GIT_WORK_TREE` 等变量；此前从 git hook 或 CI 步骤里运行时会检查、快进或锁定另一个仓库。
 - `remote sync` 发现本地克隆的 origin 与 `remote.json` 的 URL 不一致（如 rollback 跨过了一次 `remote add`）时重新克隆；此前会从旧仓库取内容。
 - 团队仓库中直接放在 `skills/` 下的文件（如 `README.md`、`.DS_Store`）被忽略，不再让整个提交被拒；使用教程的团队仓库布局补上 `skills/` 与 `__jsExpr` 限制。
+- 有生效 overlay 时，`--layer base` 的 `enable`、`disable`、`remove` 等能改 overlay 用 `remove: true` 去掉的 base 插件；此前按合并后的清单找别名，报「not found」。
+- 没有清单时 `status` 以退出码 3 结束（与 `plan` 一致），不再报告为 `degraded`（退出码 5）。
+- `tools list --all` 与 `--preset` 同时使用时报错（退出码 3），不再静默忽略 `--preset`。
+- 对已经全部纳管的候选执行 `adopt --yes` 时输出「Nothing to adopt」，不再报告「Adopted N plugin(s)」并列出它们。
+- 帮助的环境变量部分补上 `DSHENV_NPM_CHECK`；README 与使用教程中需要 `--layer` 的命令补上 `plugins config unset` 与 `tools reset`；README 说明没有快照时的 `rollback` 与没有订阅时的 `remote remove` 以退出码 3 结束。
 
 ### 变更
 

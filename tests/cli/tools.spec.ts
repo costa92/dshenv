@@ -84,6 +84,12 @@ process.exit(1);
     expect(json.tools).toContainEqual(expect.objectContaining({ id: 'tool-web', category: 'network', state: 'on' }));
   });
 
+  it('refuses --preset with --all, which lists every preset already', async () => {
+    const out = await run(['tools', 'list', '-p', 'web', '--all', '--preset', 'nosuch']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toMatch(/--all.*every preset.*--preset/);
+  });
+
   it('turns a preset tool off by pinning the whole preset in the manifest, and plan says so', async () => {
     const result = await run(['tools', 'disable', 'tool-web', '-p', 'web']);
     expect(result.code).toBe(0);

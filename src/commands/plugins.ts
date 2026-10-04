@@ -203,7 +203,14 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     name: string,
     write?: { overlay: OverlaySelection | null }
   ): string {
-    const manifest = loadEffectiveManifest(paths, selection).manifest;
+    const effective = loadEffectiveManifest(paths, selection).manifest;
+    // A base write names a base entry, which the overlay may have removed from the effective manifest.
+    const baseWrite = Boolean(write && !write.overlay && selection && fs.existsSync(paths.manifestFile));
+    const base = baseWrite ? loadManifest(fs.readFileSync(paths.manifestFile, 'utf8')) : null;
+    if (base && !base.profiles[profile]?.plugins[name] && effective.profiles[profile]?.plugins[name]) {
+      throw new ValidationError(`Plugin '${name}' is declared in overlay '${selection!.name}', not in the base manifest; use --layer overlay`);
+    }
+    const manifest = base?.profiles[profile] ? base : effective;
     const declaredProfiles = Object.keys(manifest.profiles).sort();
     if (!manifest.profiles[profile]) {
       throw new ValidationError(
@@ -219,11 +226,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       const hint = didYouMean(name, aliases) || didYouMean(name, Object.values(plugins).map((plugin) => plugin.package));
       throw new ValidationError(`Plugin '${name}' not found in profile '${profile}'${hint}${aliases.length > 0 ? ` (aliases: ${aliases.join(', ')})` : ''}`);
     }
-    if (write && !write.overlay && selection && fs.existsSync(paths.manifestFile)) {
-      const base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
-      if (!base.profiles[profile]?.plugins[alias]) {
-        throw new ValidationError(`Plugin '${alias}' is declared in overlay '${selection.name}', not in the base manifest; use --layer overlay`);
-      }
+    if (base && !base.profiles[profile]?.plugins[alias]) {
+      throw new ValidationError(`Plugin '${alias}' is declared in overlay '${selection!.name}', not in the base manifest; use --layer overlay`);
     }
     return alias;
   }

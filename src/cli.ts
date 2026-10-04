@@ -61,12 +61,13 @@ Data flow:
   source sync    upstream Git -> a plugin's managed clone
 
 Environment variables:
-  DSH_HOME        DSH home directory (default ~/.dsh; --dsh-home wins)
-  DSH_CLI         DSH command to run, e.g. a path or a JSON array
-  DSHENV_PROFILE  default -p for commands that act on one profile
-  DSHENV_LAYER    default --layer (base or overlay) when an overlay is active
-  DSHENV_OVERLAY  overlay to use (--overlay / --no-overlay win)
-  DSHENV_DSH_URL  dsh web URL that verify checks
+  DSH_HOME          DSH home directory (default ~/.dsh; --dsh-home wins)
+  DSH_CLI           DSH command to run, e.g. a path or a JSON array
+  DSHENV_PROFILE    default -p for commands that act on one profile
+  DSHENV_LAYER      default --layer (base or overlay) when an overlay is active
+  DSHENV_OVERLAY    overlay to use (--overlay / --no-overlay win)
+  DSHENV_DSH_URL    dsh web URL that verify checks
+  DSHENV_NPM_CHECK  off skips the npm version check of install and update
 `;
 
 // Aliases kept for old scripts stay out of help; the name alone is listed. A command that sets its own usage (to keep

@@ -82,6 +82,11 @@ warnings: []
     expect(code).toBe(0);
     expect(stdout).toContain('Adopted');
     expect(stdout).toContain('@nanmicoder/dsh-agent-teams');
+
+    stdout = '';
+    expect(await runCli(['adopt', '--from', candidatePath, '--dsh-home', tempHome, '--yes'], io)).toBe(0);
+    expect(stdout).toContain('Nothing to adopt: every plugin in the candidate is already adopted.');
+    expect(stdout).not.toContain('Adopted');
   });
 
   describe('with a plugin linked from a local checkout', () => {

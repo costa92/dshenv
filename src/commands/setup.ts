@@ -175,13 +175,17 @@ export function registerSetupCommands(ctx: CommandContext): void {
       if (opts.json) {
         writeOut(JSON.stringify(patches ? { ...summary, patches } : summary, null, 2) + '\n');
       } else {
+        // Plugins already adopted as the candidate has them changed nothing, so they are not reported as adopted.
+        const adopted = summary.details.filter((detail) => !detail.alreadyAdopted);
         writeOut(
           summary.adoptedCount === 0
             ? 'Nothing to adopt: the candidate declares no plugins.\n'
-            : `Adopted ${summary.adoptedCount} plugin(s) across profile(s): ${summary.profiles.join(', ')}\n`
+            : adopted.length === 0
+              ? 'Nothing to adopt: every plugin in the candidate is already adopted.\n'
+              : `Adopted ${adopted.length} plugin(s) across profile(s): ${[...new Set(adopted.map((d) => d.profile))].join(', ')}\n`
         );
         // The pull result lists the plugins it put into an overlay, and the overlay it created for them.
-        for (const d of summary.details.filter((detail) => !detail.layer)) {
+        for (const d of adopted.filter((detail) => !detail.layer)) {
           writeOut(`  + [${d.profile}] ${d.package} (${d.alias}) [${d.sourceType}]\n`);
         }
         if (patches && (patches.changes.length > 0 || patches.plugins || patches.skills || patches.warnings || patches.overlayCreated)) {
