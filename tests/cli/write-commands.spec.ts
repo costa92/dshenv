@@ -237,6 +237,15 @@ describe('CLI manifest write commands', () => {
       expect(typo.stderr).toBe("Plugin 'agent-team' not found in profile 'web'; did you mean 'agent-teams'? (aliases: agent-teams)\n");
     });
 
+    it('changes a base plugin the overlay removes when writing the base', async () => {
+      useOverlay('laptop');
+      fs.writeFileSync(path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams: { remove: true }\n');
+      const out = await run(['disable', 'agent-teams', '-p', 'web', '--layer', 'base']);
+      expect(out.code).toBe(0);
+      expect(manifest().profiles.web.plugins['agent-teams'].enabled).toBe(false);
+      expect((await run(['enable', 'agent-teams', '-p', 'web', '--layer', 'overlay'])).code).toBe(3);
+    });
+
     it('says a plugin only the overlay declares must be written there', async () => {
       useOverlay('laptop');
       await run(['install', 'dsh-plugin-demo@1.0.0', '-p', 'web', '--as', 'teams2', '--layer', 'overlay']);
