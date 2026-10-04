@@ -32,6 +32,24 @@ export function computePatchDigest(config: Record<string, unknown>): string {
   return crypto.createHash('sha256').update(canonicalString).digest('hex');
 }
 
+// DSH's config editor reads `!!js` expressions as { __jsExpr } maps and writes them back as tagged scalars.
+export const JS_TAG = 'tag:yaml.org,2002:js';
+export const jsTags = [{ tag: JS_TAG, resolve: (value: string) => ({ __jsExpr: value }) }];
+
+export function stringifyWithJs(value: unknown): string {
+  const doc = new YAML.Document(value, { customTags: jsTags });
+  YAML.visit(doc, {
+    Map(_key, node) {
+      const expression = node.items.length === 1 ? node.get('__jsExpr') : undefined;
+      if (typeof expression !== 'string') return undefined;
+      const scalar = new YAML.Scalar(expression);
+      scalar.tag = JS_TAG;
+      return scalar;
+    }
+  });
+  return doc.toString({ indent: 2, lineWidth: 0 }).trimEnd();
+}
+
 export function renderPatchBlock(
   profileName: string,
   pluginAlias: string,
@@ -46,7 +64,7 @@ export function renderPatchBlock(
     }
   ];
 
-  const payloadYaml = YAML.stringify(patchPayload, { indent: 2, lineWidth: 0 }).trimEnd();
+  const payloadYaml = stringifyWithJs(patchPayload);
 
   return [
     `# dshenv:begin profile=${profileName} plugin=${pluginAlias} digest=${digest}`,
@@ -228,7 +246,7 @@ export function extractManagedPatches(
     }
 
     try {
-      const parsed = YAML.parse(payloadYaml);
+      const parsed = YAML.parse(payloadYaml, { customTags: jsTags });
       if (Array.isArray(parsed) && parsed.length > 0) {
         const first = parsed[0];
         const id = typeof first.id === 'string' ? first.id : undefined;

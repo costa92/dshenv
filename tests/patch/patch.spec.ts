@@ -200,3 +200,14 @@ suffix: true
     expect(removePatchBlock(withBlock, 'web', 'demo')).toBe(userContent);
   });
 });
+
+describe('plugin patch blocks with JavaScript expressions', () => {
+  it('writes { __jsExpr } as a !!js value DSH evaluates, and reads it back with a valid digest', () => {
+    const config = { when: { __jsExpr: 'ctx.ready' }, stateDir: '.sd' };
+    const block = renderPatchBlock('web', 'agent-teams', 'agent-teams', config);
+    expect(block).toContain("when: !!js ctx.ready");
+    const [read] = extractManagedPatches(`${block}\n`, 'web');
+    expect(read.config).toEqual(config);
+    expect(read.isDigestValid).toBe(true);
+  });
+});

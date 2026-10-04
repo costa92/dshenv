@@ -317,6 +317,51 @@ describe('CLI manifest write commands', () => {
       expect((await run(['config', 'set', 'agent-teams', 'maxRounds', '3', '-p', 'web', '--force'])).stderr).toBe('');
     });
 
+    describe('copies the config DSH composes into a new patch, since DSH replaces the whole config with it', () => {
+      const fakeDump = (rows: string) => {
+        const fakeDsh = path.join(tempHome, 'fake-dsh.mjs');
+        fs.writeFileSync(fakeDsh, `if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(rows)}); process.exit(0); }\nprocess.exit(1);\n`);
+        process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
+      };
+      const ROW = `- id: agent-teams\n  name: '${PKG}'\n  config:\n    stateDir: .agent-teams\n    memberProvider: spawn\n    when: !!js 'ctx.ready'\n`;
+      // Start without the patch the enclosing beforeEach sets.
+      beforeEach(async () => {
+        expect((await run(['config', 'unset', 'agent-teams', 'team.lead', '-p', 'web'])).code).toBe(0);
+        expect(manifest().profiles.web.plugins['agent-teams'].patches).toBeUndefined();
+      });
+
+      it('in the base, keeping the plugin defaults beside the key set', async () => {
+        fakeDump(ROW);
+        expect(await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web'])).toMatchObject({ code: 0, stderr: '' });
+        expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([
+          { id: 'agent-teams', config: { stateDir: '.sd', memberProvider: 'spawn', when: { __jsExpr: 'ctx.ready' } } }
+        ]);
+        // The patch now restates the config; later writes change only their key.
+        fakeDump(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    stateDir: .sd\n`);
+        expect((await run(['config', 'set', 'agent-teams', 'memberProvider', 'fork', '-p', 'web'])).code).toBe(0);
+        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd', memberProvider: 'fork', when: { __jsExpr: 'ctx.ready' } });
+      });
+
+      it('in the overlay', async () => {
+        fakeDump(ROW);
+        useOverlay('laptop');
+        expect((await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web', '--layer', 'overlay'])).code).toBe(0);
+        expect(overlay('laptop').profiles?.web?.plugins?.['agent-teams'].patches).toEqual([
+          { id: 'agent-teams', config: { stateDir: '.sd', memberProvider: 'spawn', when: { __jsExpr: 'ctx.ready' } } }
+        ]);
+      });
+
+      it('says the defaults are dropped when DSH has no config for the plugin yet', async () => {
+        fakeDump('- id: other\n  name: other-plugin\n  config: {}\n');
+        const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toBe(
+          `DSH has no config for ${PKG} in profile 'web' yet, so the patch holds only stateDir; DSH replaces the plugin's whole config with it, dropping its defaults. To keep them: config unset it, apply, then config set it again\n`
+        );
+        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
+      });
+    });
+
     it('refuses __proto__, prototype and constructor in a path and never reaches inherited keys', async () => {
       for (const args of [
         ['config', 'set', 'agent-teams', '__proto__.polluted', 'yes', '-p', 'web'],

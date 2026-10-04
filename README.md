@@ -316,6 +316,7 @@ dshenv plugins config unset agent-teams taskPlanning --profile web     # 删掉�
 ```
 
 - 值按 JSON 解析（`3`、`true`、`{"a":1}`），解析不了时当作字符串；要写字符串 `"3"` 就传 `'"3"'`。
+- DSH 用补丁的 `config` 整体替换插件的配置，所以清单里还没有这个插件的补丁时，`config set` 先把 DSH 当前为它组合出的全部配置（`dsh --dump-config`，含 `!!js` 表达式）抄进补丁，再改这个键，插件的默认值得以保留；之后的 `config set` 只改各自的键。DSH 还没有这个插件（尚未 apply）时只写这个键，并在 stderr 提示默认值会被替换掉。
 - DSH 为该插件组合出了配置而其中没有这个顶层键时，`config set` 在 stderr 提示一行（附相近的键名）后照常写入：DSH 只组合出带默认值的键，插件文档里的键可能不在其中。`--force` 不再提示。
 - 读取或删除不存在的键时以退出码 3 报错；只认配置里自己的键，不会读到 `toString` 这类继承来的属性。路径为空，或含 `__proto__`、`prototype`、`constructor` 时以退出码 3 拒绝。
 - `config unset` 在该插件声明的所有 patch 里找这个键；删完后什么都不设的 patch 会一并删掉，不留下 `config: {}`。

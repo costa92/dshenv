@@ -15,6 +15,8 @@
 - 有生效 overlay 时，`update --layer base`、`plugins config set/unset --layer base` 写的值被 overlay 覆盖时在 stderr 提示（与 `enable`/`disable` 相同）；此前静默写入，这台机器上实际没变。
 - `remote add --replace` 与 `remote sync --discard-local-changes` 的预览末尾给出的接受命令保留这个参数；此前照提示执行会以退出码 3 失败。
 - `remote add` 遇到同名本机 skill 时提示「then run remote add again」；此前提示「sync again」。
+- `plugins config set` 为插件新建补丁时，先把 DSH 当前为该插件组合出的全部配置（`dsh --dump-config`）抄进补丁再改这个键，与 `tools config` 相同；此前补丁只含这个键，而 DSH 用它整体替换插件配置，apply 后插件的其他默认值（如 agent-teams 的 `memberProvider`）全部丢失。DSH 还没有这个插件时照旧只写这个键，并在 stderr 说明。
+- 插件的受管配置块把 `{ __jsExpr }` 写回 `!!js` 表达式（与 Profile 块相同）；此前会写成字面的 `__jsExpr` 映射。
 
 ## 0.8.1 - 2026-10-04
 
