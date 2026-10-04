@@ -2,7 +2,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
-## 未发布
+## 0.7.0 - 2026-10-04
+
+### 升级须知
+
+- `install` 的别名已指向另一个包时以退出码 3 拒绝（base 与 overlay 都是），需要用 `--as` 换别名或先 `remove`；此前会静默替换。
+- `lock.json` 的插件别名按清单别名的规则校验，含空白的别名会让 lock 无法加载。
+- `remote add/sync` 预览末尾的提示改为 `Re-run with --ref <commit> --yes to accept this commit.`；依赖原提示文字的脚本需要调整。不带 `--ref` 的 `--yes` 行为不变。
+- 命令行输出中的控制字符与双向文本控制符显示为 `\uXXXX` 转义（`--json` 输出本来就会转义，不受影响）。
+- 有生效 overlay 时 `pull` 不再把 overlay 的条目并进 base；曾依赖这一行为把 overlay 内容「提升」到 base 的，请改为直接编辑 base 清单。
+
+### 新增
+
+- `remote add --ref <commit|tag>`：固定到订阅分支上指定的提交，而不是分支最新提交。
 
 ### 修复
 
