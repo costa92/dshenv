@@ -7,7 +7,8 @@ import { withEnvironmentLock } from '../io/lock.js';
 import { retryWhileBusy } from '../io/windows-retry.js';
 import { appendJournalEntry } from '../io/journal.js';
 import { loadManifest, loadState } from '../manifest/files.js';
-import { clearManagedPatches, profilePatchFile } from '../apply/patches.js';
+import { clearManagedPatches, profilePatchFile, readProfilePatchFile } from '../apply/patches.js';
+import { extractPluginBlocks } from '../patch/patch.js';
 import { inspectGitWorkingTree, managedGitSourceDir } from '../source/git.js';
 
 export interface PurgeOptions {
@@ -120,9 +121,17 @@ async function purgeDecided(
     throw new ValidationError(`Refusing to purge ${cloneDir}: the managed clone has uncommitted changes`);
   }
 
+  // A patch file without this plugin's blocks (purged already, or never configured) has nothing of it to purge.
+  const hasPatchFile = !owned.cloneOnly && fs.existsSync(patchFile) &&
+    extractPluginBlocks(await readProfilePatchFile(paths, profileName), profileName, owned.alias).trim() !== '';
+  const hasClone = fs.existsSync(cloneDir);
+  if (!hasPatchFile && !hasClone) {
+    return { dryRun: Boolean(options?.dryRun), profile: profileName, plugin: owned.alias, package: owned.packageName, moved, message: `Nothing to purge for ${owned.alias}` };
+  }
+
   if (options?.dryRun) {
-    if (!owned.cloneOnly && fs.existsSync(patchFile)) moved.push(patchFile);
-    if (fs.existsSync(cloneDir)) moved.push(cloneDir);
+    if (hasPatchFile) moved.push(patchFile);
+    if (hasClone) moved.push(cloneDir);
     return {
       dryRun: true,
       profile: profileName,
@@ -144,8 +153,6 @@ async function purgeDecided(
   });
 
   // Both are checked before either changes, so a refusal leaves everything as it was.
-  const hasPatchFile = !owned.cloneOnly && fs.existsSync(patchFile);
-  const hasClone = fs.existsSync(cloneDir);
   if (hasPatchFile) {
     await assertSafeManagedPath(patchFile, paths.profilesDir);
   }

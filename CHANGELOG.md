@@ -2,6 +2,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- 没有清单时 `status` 只报缺少清单（与 `plan` 相同，`--json` 时是 stderr 上的 JSON 错误），不再同时输出一份 `degraded` 状态报告；0.8.0 只改了退出码。
+- 插件的受管配置块已经清掉后，再次 `purge` 输出「Nothing to purge」、退出码 0，不再每次把整个 `cordis.patch.yml` 复制进 trash。
+- 输出接到提前关闭的管道（如 `dshenv --help | head -1`）时不再以 EPIPE 调用栈崩溃；命令照常执行完，之后的输出被丢弃。
+
 ## 0.8.1 - 2026-10-04
 
 ### 修复

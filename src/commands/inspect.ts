@@ -5,7 +5,7 @@ import { buildPlan, buildStatus, onlyProfile, planExitCode, planJson } from '../
 import { renderPlan, renderStatus, renderDoctor, type DoctorReport } from '../output/render.js';
 import { resolveDshCommand, probeDsh, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, displayDshVersion, type RuntimeCapabilityEvidence } from '../dsh/index.js';
 import { readLocalSourceDigests } from '../source/local.js';
-import { ValidationError, CapabilityError, START_HINT } from '../errors.js';
+import { ValidationError, CapabilityError, missingManifestError } from '../errors.js';
 import type { EnvironmentLock, EnvironmentManifest, EnvironmentState } from '../domain.js';
 import { loadEffectiveManifest, overlaySwitchWarning, readOverlay } from '../overlay/effective.js';
 import { resolveCliPaths, resolveCliOverlay, overlayBanner, filterProfile, type CommandContext } from './context.js';
@@ -70,15 +70,14 @@ export function registerInspectCommands(ctx: CommandContext): void {
       const paths = resolveCliPaths(opts);
       const selection = resolveCliOverlay(opts, paths);
 
-      let manifest: EnvironmentManifest | null = null;
       let lock: EnvironmentLock | null = null;
       let state: EnvironmentState | null = null;
 
-      if (fs.existsSync(paths.manifestFile)) {
-        manifest = onlyProfile(loadEffectiveManifest(paths, selection).manifest, cmdOpts.profile);
-      } else {
-        writeErr(`No manifest at ${paths.manifestFile}; ${START_HINT}\n`);
+      // Without a manifest nothing is managed yet: a missing input, as plan reports it, not a degraded runtime.
+      if (!fs.existsSync(paths.manifestFile)) {
+        throw missingManifestError(paths.manifestFile);
       }
+      const manifest = onlyProfile(loadEffectiveManifest(paths, selection).manifest, cmdOpts.profile);
       if (fs.existsSync(paths.lockFile)) {
         const content = fs.readFileSync(paths.lockFile, 'utf8');
         lock = loadLock(content);
@@ -112,10 +111,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
         writeOut(renderStatus(summary));
       }
 
-      // Without a manifest nothing is managed yet: a missing input, as plan reports it, not a degraded runtime.
-      if (!manifest) {
-        setExitCode(3);
-      } else if (summary.status === 'degraded' || summary.status === 'incompatible') {
+      if (summary.status === 'degraded' || summary.status === 'incompatible') {
         setExitCode(5);
       } else {
         setExitCode(planExitCode(plan));

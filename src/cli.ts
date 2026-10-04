@@ -114,6 +114,16 @@ function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[
   return argv;
 }
 
+// A reader that stops early (dshenv --help | head -1) closes the pipe. Later writes are dropped rather than crashing
+// the process, since the command (an apply, say) must still finish what it started.
+export function ignoreClosedPipe(stream: { on(event: 'error', listener: (err: NodeJS.ErrnoException) => void): unknown }): void {
+  stream.on('error', (err) => {
+    if (err.code !== 'EPIPE') {
+      throw err;
+    }
+  });
+}
+
 export async function runCli(argv: string[], io?: CliIO): Promise<number> {
   const out = io?.stdout ?? ((chunk: string) => process.stdout.write(chunk));
   const err = io?.stderr ?? ((chunk: string) => process.stderr.write(chunk));

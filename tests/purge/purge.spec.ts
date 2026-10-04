@@ -129,6 +129,19 @@ profiles:
     expect(result.moved.some((item) => item.includes('cordis.patch.yml'))).toBe(true);
   });
 
+  it('finds nothing more to purge once the managed block is gone, and creates no trash entry', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    await applyEnvironment(paths);
+    await purgePlugin(paths, 'web', 'agent-teams');
+    const trashBefore = fs.readdirSync(paths.trashDir);
+
+    expect((await purgePlugin(paths, 'web', 'agent-teams', { dryRun: true })).moved).toEqual([]);
+    const again = await purgePlugin(paths, 'web', 'agent-teams');
+    expect(again.moved).toEqual([]);
+    expect(again.message).toBe('Nothing to purge for agent-teams');
+    expect(fs.readdirSync(paths.trashDir)).toEqual(trashBefore);
+  });
+
   it('resolves an alias declared only in the effective manifest', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     fs.writeFileSync(

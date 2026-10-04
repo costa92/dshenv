@@ -36,9 +36,12 @@ describe('CLI getting started', () => {
       expect(out.code, args.join(' ')).toBe(3);
       expect(out.stderr, args.join(' ')).toContain(INIT_HINT);
     }
+    // status reports the missing manifest as plan does, with no degraded report beside it.
     const status = await run(['status']);
-    expect(status.stderr).toContain(`No manifest at ${path.join(tempHome, 'envctl', 'manifest.yaml')}; ${INIT_HINT}`);
-    expect(status.code).toBe(3);
+    expect(status).toEqual({ code: 3, stdout: '', stderr: expect.stringContaining(INIT_HINT) });
+    const json = await run(['--json', 'status']);
+    expect(json.stdout).toBe('');
+    expect(JSON.parse(json.stderr).error.exitCode).toBe(3);
   });
 
   it('ends init with the next step, and says so when already initialized', async () => {
