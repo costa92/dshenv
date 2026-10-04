@@ -76,7 +76,9 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     preview: SyncPreview,
     accepted: AcceptResult | null,
     dryRun: boolean | undefined,
-    extra: Record<string, unknown> = {}
+    extra: Record<string, unknown> = {},
+    // Flags the preview needed (--replace, --discard-local-changes) that accepting needs again.
+    repeated: string[] = []
   ): void {
     const status = accepted ? 'accepted' : preview.status;
     setExitCode(status === 'pending' ? 2 : 0);
@@ -109,7 +111,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       writeOut(`Accepted ${preview.to} (snapshot ${accepted.snapshotId}).\nNext: dshenv plan, then dshenv apply --yes.\n`);
     } else {
       // The branch can move on after the review; --ref pins the accept to the commit shown here.
-      const accept = `--ref ${preview.to} --yes`;
+      const accept = [`--ref ${preview.to}`, ...repeated, '--yes'].join(' ');
       writeOut(
         `Accepting means agreeing to run the plugins this commit declares. ` +
           `${dryRun ? `Run it again without --dry-run and with ${accept}` : `Re-run with ${accept}`} to accept this commit.\n`
@@ -178,7 +180,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           throw err;
         }
       });
-      reportSync(opts, url, preview, accepted, cmdOpts.dryRun, subscription);
+      reportSync(opts, url, preview, accepted, cmdOpts.dryRun, subscription, cmdOpts.replace ? ['--replace'] : []);
     });
 
   remoteCmd
@@ -298,7 +300,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           const accepted = preview.status === 'pending' && cmdOpts.yes && !cmdOpts.dryRun ? await acceptSync(paths, preview) : null;
           return { url: config.url, preview, accepted };
         });
-        reportSync(opts, url, preview, accepted, cmdOpts.dryRun);
+        reportSync(opts, url, preview, accepted, cmdOpts.dryRun, {}, cmdOpts.discardLocalChanges ? ['--discard-local-changes'] : []);
       });
   }
 }

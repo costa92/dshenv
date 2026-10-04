@@ -409,6 +409,31 @@ describe('CLI manifest write commands', () => {
       expect((await run(['disable', 'agent-teams', '-p', 'web', '--layer', 'base', '--json'])).stderr).toBe('');
     });
 
+    it('warns when the overlay keeps a base update or config write from taking effect', async () => {
+      useOverlay('laptop');
+      fs.writeFileSync(
+        path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'),
+        'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        source: { type: npm, version: "0.1.30" }\n        patches:\n          - id: agent-teams\n            config: { stateDir: .o }\n'
+      );
+      const update = await run(['update', 'agent-teams', '--to', '0.1.22', '-p', 'web', '--layer', 'base', '--no-npm-check']);
+      expect(update.code).toBe(0);
+      expect(update.stderr).toBe(
+        "Overlay 'laptop' sets the source of agent-teams in profile 'web', so it stays at 0.1.30 on this machine; use --layer overlay to change it here\n"
+      );
+      const set = await run(['config', 'set', 'agent-teams', 'stateDir', '.b', '-p', 'web', '--layer', 'base', '--force']);
+      expect(set.code).toBe(0);
+      expect(set.stderr).toBe(
+        "Overlay 'laptop' sets stateDir of agent-teams in profile 'web', so it stays \".o\" on this machine; use --layer overlay to change it here\n"
+      );
+      const unset = await run(['config', 'unset', 'agent-teams', 'stateDir', '-p', 'web', '--layer', 'base']);
+      expect(unset.code).toBe(0);
+      expect(unset.stderr).toBe(
+        "Overlay 'laptop' sets stateDir of agent-teams in profile 'web', so it stays \".o\" on this machine; use --layer overlay to change it here\n"
+      );
+      // Writes the overlay does not override say nothing.
+      expect((await run(['config', 'set', 'agent-teams', 'other', '1', '-p', 'web', '--layer', 'base', '--force'])).stderr).toBe('');
+    });
+
     it('hides --layer on adopt, which only writes the base', async () => {
       expect((await run(['adopt', '--help'])).stdout).not.toMatch(/--layer/);
       expect((await run(['install', '--help'])).stdout).toMatch(/--layer <layer>\s+layer to write when an overlay is active: base or\s+overlay \(default: \$DSHENV_LAYER\)/);

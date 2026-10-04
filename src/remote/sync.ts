@@ -90,7 +90,9 @@ function assertNoConflicts(input: PrepareSyncInput, snapshot: RemoteSnapshot, lo
   for (const name of [...remoteSkillNames(snapshot.files)].sort()) {
     const dir = path.join(paths.skillsDir, name);
     if (!ownedSkills.has(name) && fs.existsSync(dir)) {
-      throw new ValidationError(`Local skill '${name}' at ${dir} is not owned by the remote, but the remote now provides it; move it aside, then sync again`);
+      throw new ValidationError(
+        `Local skill '${name}' at ${dir} is not owned by the remote, but the remote now provides it; move it aside, then ${previous ? 'sync' : 'run remote add'} again`
+      );
     }
   }
   for (const key of Object.keys(snapshot.files).sort(compareRemoteKeys)) {

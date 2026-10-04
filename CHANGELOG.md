@@ -12,6 +12,9 @@
 - `source sync` 不带目录也不带 `--profile` 时作用于当前目录，与 README 及 `source show` 一致；此前报「requires <dir> or --profile」。
 - `source clone <本机路径> --profile` 把路径记为 `file://` 地址；此前记成普通路径，`apply` 时 pnpm 把它当本地目录链接，失败并在 Profile 的 `package.json` 里留下名字带 `#<commit>` 的坏依赖。
 - `install` 本地路径时检查目录存在（退出码 3），`file://` 地址按其路径解析，带 `#<ref>` 的本地路径被拒绝并提示 `git+file://`；此前 `file:///repo#<sha>` 会登记成别名 `repo#<sha>`、路径不存在的本地插件。
+- 有生效 overlay 时，`update --layer base`、`plugins config set/unset --layer base` 写的值被 overlay 覆盖时在 stderr 提示（与 `enable`/`disable` 相同）；此前静默写入，这台机器上实际没变。
+- `remote add --replace` 与 `remote sync --discard-local-changes` 的预览末尾给出的接受命令保留这个参数；此前照提示执行会以退出码 3 失败。
+- `remote add` 遇到同名本机 skill 时提示「then run remote add again」；此前提示「sync again」。
 
 ## 0.8.1 - 2026-10-04
 

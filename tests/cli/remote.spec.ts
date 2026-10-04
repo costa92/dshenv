@@ -137,6 +137,23 @@ describe('CLI remote', () => {
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
   });
 
+  it('keeps --replace in the accept command the preview prints', async () => {
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.writeFileSync(paths.manifestFile, LOCAL_MANIFEST);
+    const { code, stdout } = await run(['remote', 'add', team.url, '--replace']);
+    expect(code).toBe(2);
+    expect(stdout).toContain(`Re-run with --ref ${await teamHead(team)} --replace --yes to accept this commit.`);
+  });
+
+  it('asks to add again, not sync, when a local skill takes a team skill name', async () => {
+    await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'team' }, 'skill');
+    fs.mkdirSync(path.join(paths.skillsDir, 'wiki'), { recursive: true });
+    fs.writeFileSync(path.join(paths.skillsDir, 'wiki', 'SKILL.md'), 'mine');
+    const { code, stderr } = await run(['remote', 'add', team.url]);
+    expect(code).toBe(3);
+    expect(stderr).toContain('move it aside, then run remote add again');
+  });
+
   it('merges into a local lock and refuses a clashing local entry without --replace', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     const localLock = serializeLock({
