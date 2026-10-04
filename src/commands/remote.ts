@@ -47,6 +47,19 @@ function ownedEntryIds(config: RemoteConfig): string[] {
     .sort();
 }
 
+// The branch tip, or the commit a ref names on that branch.
+async function targetCommit(repoDir: string, branch: string, ref: string | undefined): Promise<string> {
+  const tip = await fetchBranch(repoDir, branch);
+  if (ref === undefined) {
+    return tip;
+  }
+  const target = await resolveTargetRef(repoDir, ref);
+  if (!(await isAncestor(repoDir, target, tip))) {
+    throw new ValidationError(`Ref '${ref}' (${target}) is not on branch '${branch}'`);
+  }
+  return target;
+}
+
 export function registerRemoteCommands(ctx: CommandContext): void {
   const { program, writeOut, setExitCode } = ctx;
 
@@ -63,7 +76,16 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     if (opts.json) {
       writeOut(
         JSON.stringify(
-          { status, ...extra, from: preview.from, to: preview.to, files: preview.files, lockEntries: preview.lockEntries, plan: planJson(preview.plan) },
+          {
+            status,
+            ...extra,
+            from: preview.from,
+            to: preview.to,
+            files: preview.files,
+            lockEntries: preview.lockEntries,
+            plan: planJson(preview.plan),
+            ...(accepted ? { operationId: accepted.operationId, snapshotId: accepted.snapshotId } : {})
+          },
           null,
           2
         ) + '\n'
@@ -79,8 +101,11 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     if (accepted) {
       writeOut(`Accepted ${preview.to} (snapshot ${accepted.snapshotId}).\nNext: dshenv plan, then dshenv apply --yes.\n`);
     } else {
+      // The branch can move on after the review; --ref pins the accept to the commit shown here.
+      const accept = `--ref ${preview.to} --yes`;
       writeOut(
-        `Accepting means agreeing to run the plugins this commit declares. ${dryRun ? 'Run it again without --dry-run and with --yes' : 'Re-run with --yes'} to accept.\n`
+        `Accepting means agreeing to run the plugins this commit declares. ` +
+          `${dryRun ? `Run it again without --dry-run and with ${accept}` : `Re-run with ${accept}`} to accept this commit.\n`
       );
     }
   }
@@ -92,10 +117,11 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     .description('Subscribe to a team configuration repository and pin its newest commit')
     .option('--branch <name>', 'branch to follow; defaults to the branch the remote HEAD points to')
     .option('--path <dir>', 'directory inside the repository that holds manifest.yaml', DEFAULT_REMOTE_PATH)
+    .option('--ref <ref>', 'commit or tag on the branch to pin instead of its newest commit')
     .option('--replace', 'overwrite a local manifest, same-named overlay or lock entry the team lock pins (a snapshot is taken first)')
     .option('--dry-run', 'show what remote add would write without writing; exit code 2 when there is any')
     .option('-y, --yes', 'accept and write the remote files; without it remote add only previews')
-    .action(async (url: string, cmdOpts: { branch?: string; path: string; replace?: boolean; dryRun?: boolean; yes?: boolean }) => {
+    .action(async (url: string, cmdOpts: { branch?: string; path: string; ref?: string; replace?: boolean; dryRun?: boolean; yes?: boolean }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
       if (hasEmbeddedCredentials(url)) {
@@ -124,7 +150,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           if (!isValidBranchName(branch)) {
             throw new ValidationError(`Remote default branch '${branch}' is not a supported branch name; pass --branch`);
           }
-          const target = await fetchBranch(repoDir, branch);
+          const target = await targetCommit(repoDir, branch, cmdOpts.ref);
           const subscription = { url, branch, path: cmdOpts.path };
           const preview = await prepareSync({
             paths,
@@ -250,14 +276,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           if (!fs.existsSync(repoDir)) {
             await cloneRemoteRepo(config.url, repoDir);
           }
-          const tip = await fetchBranch(repoDir, config.branch);
-          let target = tip;
-          if (cmdOpts.ref !== undefined) {
-            target = await resolveTargetRef(repoDir, cmdOpts.ref);
-            if (!(await isAncestor(repoDir, target, tip))) {
-              throw new ValidationError(`Ref '${cmdOpts.ref}' (${target}) is not on branch '${config.branch}'`);
-            }
-          }
+          const target = await targetCommit(repoDir, config.branch, cmdOpts.ref);
           const preview = await prepareSync({
             paths,
             repoDir,

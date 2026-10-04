@@ -23,6 +23,13 @@ describe('profile names', () => {
     expect(Object.keys(loadLock(lockWith(name)).profiles)).toEqual([name]);
   });
 
+  it('checks lock aliases as the manifest checks aliases', () => {
+    const lockAlias = (alias: string) =>
+      JSON.stringify({ apiVersion: 'dshenv-lock/v1', profiles: { web: { plugins: { [alias]: { package: 'dsh-plugin-demo', source: { type: 'npm', resolvedVersion: '1.0.0' } } } } } });
+    expect(() => loadLock(lockAlias('a b'))).toThrow(/whitespace/);
+    expect(Object.keys(loadLock(lockAlias('demo')).profiles.web.plugins)).toEqual(['demo']);
+  });
+
   describe('on the command line', () => {
     let tempHome: string;
     const run = async (args: string[]) => {

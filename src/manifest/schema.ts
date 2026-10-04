@@ -251,7 +251,7 @@ export const PluginLockEntrySchema = z
 
 export const ProfileLockEntrySchema = z
   .object({
-    plugins: z.record(z.string(), PluginLockEntrySchema).default({})
+    plugins: z.record(PluginAliasSchema, PluginLockEntrySchema).default({})
   })
   .strict();
 

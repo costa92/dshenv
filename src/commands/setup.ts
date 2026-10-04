@@ -102,9 +102,9 @@ export function registerSetupCommands(ctx: CommandContext): void {
       }
 
       const selection = resolveCliOverlay(opts, paths);
-      // adopt only ever writes the base, so an active overlay does not make it ask for --layer.
+      // adopt picks the layer per plugin (machine-local ones go to an overlay), so an active overlay does not make it ask for --layer.
       if (resolveWriteLayer(selection, cmdOpts.layer ?? 'base') === 'overlay') {
-        throw new ValidationError('adopt only writes the base manifest; use --layer base');
+        throw new ValidationError('adopt picks the layer itself: the base, and an overlay for machine-local plugins; drop --layer overlay');
       }
       // Adopt rewrites the base and the whole lock; a subscription always owns the base, so team lock entries stay intact too.
       assertNotRemoteOwned(paths, paths.manifestFile);
@@ -180,14 +180,15 @@ export function registerSetupCommands(ctx: CommandContext): void {
             ? 'Nothing to adopt: the candidate declares no plugins.\n'
             : `Adopted ${summary.adoptedCount} plugin(s) across profile(s): ${summary.profiles.join(', ')}\n`
         );
-        // The pull result lists the plugins it put into an overlay.
+        // The pull result lists the plugins it put into an overlay, and the overlay it created for them.
         for (const d of summary.details.filter((detail) => !detail.layer)) {
           writeOut(`  + [${d.profile}] ${d.package} (${d.alias}) [${d.sourceType}]\n`);
         }
-        if (patches && patches.changes.length > 0) {
+        if (patches && (patches.changes.length > 0 || patches.plugins || patches.skills || patches.warnings || patches.overlayCreated)) {
           writeOut(renderPullResult(patches));
+        } else {
+          writeOut('Next: dshenv plan\n');
         }
-        writeOut('Next: dshenv plan\n');
       }
     });
 }
