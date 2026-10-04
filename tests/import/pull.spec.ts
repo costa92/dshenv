@@ -138,6 +138,21 @@ describe('pullProfilePatches', () => {
     expect((await applyEnvironment(paths, { dryRun: true, overlay: selection })).plan.operations).toEqual([]);
   });
 
+  it('leaves a profile whose entries hold ${...} in DSH and still takes the rest', async () => {
+    const dynamic = { id: 'skill-filesystem', config: { customSkillDirs: ['${HOME}/skills'] } };
+    fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([LOCALE, dynamic])}`);
+    const before = fs.readFileSync(patchFile(), 'utf8');
+    fs.mkdirSync(path.join(paths.dshSkillsDir, 'notes'), { recursive: true });
+    fs.writeFileSync(path.join(paths.dshSkillsDir, 'notes', 'SKILL.md'), 'notes');
+
+    const result = await pull();
+    expect(result.warnings).toEqual([expect.stringMatching(/profile 'web'.*\$\{\.\.\.\}.*left in .*cordis\.patch\.yml/)]);
+    expect(result.changes).toEqual([]);
+    expect(result.skills).toMatchObject({ added: ['notes'] });
+    expect(fs.readFileSync(patchFile(), 'utf8')).toBe(before);
+    expect(base().profiles).toEqual({});
+  });
+
   it('refuses machine-local entries under --no-overlay', async () => {
     await expect(pull({ allowOverlayCreation: false })).rejects.toThrow(/machine-local paths.*overlay/);
     expect(base().profiles).toEqual({});
@@ -234,6 +249,20 @@ describe('pullProfilePatches', () => {
       expect(plan.operations).toEqual([]);
       expect(plan.unmanaged).toEqual([]);
       expect((await pull()).plugins).toBeUndefined();
+    });
+
+    it('does not take a plugin the base declares and the overlay removes, and says why', async () => {
+      setProfile({ '@acme/dsh-notes': '1.2.3' }, ['@acme/dsh-notes']);
+      installNpm('@acme/dsh-notes', '1.2.3');
+      fs.writeFileSync(paths.manifestFile, YAML.stringify({ apiVersion: 'dshenv/v1', profiles: { web: { plugins: { notes: { package: '@acme/dsh-notes', source: { type: 'npm', version: '1.2.3' } } } } } }));
+      fs.mkdirSync(paths.overlaysDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.overlaysDir, 'lap.yaml'), YAML.stringify({ apiVersion: 'dshenv-overlay/v1', profiles: { web: { plugins: { notes: { remove: true } } } } }));
+      const manifestBefore = fs.readFileSync(paths.manifestFile, 'utf8');
+
+      const result = await pull({ selection: { name: 'lap', via: 'flag' } });
+      expect(result.plugins).toBeUndefined();
+      expect(result.warnings).toEqual([expect.stringMatching(/@acme\/dsh-notes.*profile 'web'.*base manifest.*overlay 'lap' removes/)]);
+      expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(manifestBefore);
     });
 
     it('takes a local-link plugin into a local overlay it creates and selects, with the digest plan checks', async () => {

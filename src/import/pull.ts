@@ -12,7 +12,7 @@ import type {
 } from '../domain.js';
 import { ValidationError, missingManifestError } from '../errors.js';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
-import { loadLock, loadManifest, loadState, serializeLock, serializeManifest, serializeState, withResources } from '../manifest/files.js';
+import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock, serializeManifest, serializeState, withResources } from '../manifest/files.js';
 import { captureUnmanagedPlugins, freeAlias, pluginOwnershipRecord, withLinkDigest } from '../resources/plugin.js';
 import { importSkill, ownedSkillDigests, planSkillImport, remoteSkillNames, skillOwnership, summarizeSkillImport, type SkillImportChanges } from '../resources/skill.js';
 import { readOverlay } from '../overlay/effective.js';
@@ -167,11 +167,17 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
   }
   const profiles = options.profiles ?? Object.keys(inventory.profiles).sort();
 
-  const { reads, conflicts } = await planProfilePatchImport(
+  const { reads: allReads, conflicts } = await planProfilePatchImport(
     paths,
     profiles,
     (profile) => effectivePatches(base, selectedOverlay, selectedName, profile),
     options.prefer
+  );
+  // The manifest refuses ${...}; such a profile stays as DSH has it, so the rest of the pull still goes ahead.
+  const interpolated = allReads.filter((read) => read.from === 'dsh' && hasInterpolation(JSON.stringify(read.desired)));
+  const reads = allReads.filter((read) => !interpolated.includes(read));
+  const patchWarnings = interpolated.map(
+    (read) => `Patch entries of profile '${read.profile}' hold \${...}, which the manifest does not allow; left in its cordis.patch.yml, not pulled`
   );
   const state = fs.existsSync(paths.stateFile) ? loadState(fs.readFileSync(paths.stateFile, 'utf8')) : null;
   const skills = options.skills === false ? null : planSkillImport(inventory.skills ?? { declared: {}, live: {} }, ownedSkillDigests(state), options.prefer);
@@ -255,8 +261,18 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
   const nextLock: EnvironmentLock = structuredClone(lock ?? { apiVersion: 'dshenv-lock/v1', profiles: {} });
   const ownership = structuredClone(state?.resources?.plugin ?? {});
   const plugins: PluginPullChange[] = [];
+  const pluginWarnings: string[] = [];
   for (const [profile, { plugins: capturedPlugins }] of Object.entries(captured?.manifest.profiles ?? {})) {
     for (const [capturedAlias, entry] of Object.entries(capturedPlugins)) {
+      // Unmanaged only because the overlay removes it here; the base entry already describes it.
+      const baseAlias = Object.entries(base.profiles[profile]?.plugins ?? {}).find(([, declared]) => declared.package === entry.package)?.[0];
+      if (baseAlias !== undefined) {
+        pluginWarnings.push(
+          `Plugin '${entry.package}' of profile '${profile}' is in the base manifest as '${baseAlias}', which overlay '${selectedName}' removes; ` +
+            `uninstall it with dsh, or drop the remove from the overlay`
+        );
+        continue;
+      }
       const machineLocal = entry.source.type === 'local-link' || entry.source.type === 'local-file';
       const layer = machineLocal || baseOwnedByRemote ? 'overlay' : 'base';
       const overlay = layer === 'overlay'
@@ -307,12 +323,13 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     overlay: counts.get(read.profile)?.overlay ?? (nextOverlay?.profiles?.[read.profile]?.patches ?? []).length,
     ...(overlayName ? { overlayName } : {})
   }));
+  const warnings = [...patchWarnings, ...pluginWarnings, ...(captured?.warnings ?? [])];
   const skillChanges = skills && skills.actions.length > 0 ? summarizeSkillImport(skills.actions) : undefined;
   const reported = {
     changes,
     ...(skillChanges ? { skills: skillChanges } : {}),
     ...(plugins.length > 0 ? { plugins } : {}),
-    ...(captured && captured.warnings.length > 0 ? { warnings: captured.warnings } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
     ...(overlayCreated ? { overlayCreated } : {})
   };
   if (options.dryRun || (reads.length === 0 && !skillChanges && plugins.length === 0)) {

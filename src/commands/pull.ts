@@ -6,7 +6,8 @@ import { resolveCliPaths, resolveCliOverlay, profileOption, PROFILE_FILTER_HELP,
 export function renderPullResult(result: PullResult): string {
   const warnings = (result.warnings ?? []).map((warning) => `! ${warning}`);
   if (result.changes.length === 0 && !result.skills && !result.plugins) {
-    return `${['Nothing to pull: every plugin, patch entry and skill in DSH matches the manifest.', ...warnings].join('\n')}\n`;
+    const head = warnings.length > 0 ? 'Nothing was pulled.' : 'Nothing to pull: every plugin, patch entry and skill in DSH matches the manifest.';
+    return `${[head, ...warnings].join('\n')}\n`;
   }
   const lines = (result.plugins ?? []).map(
     (plugin) =>
