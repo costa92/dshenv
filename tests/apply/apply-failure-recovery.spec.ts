@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { applyEnvironment, type ApplyOptions } from '../../src/apply/apply.js';
 import { rollbackEnvironment } from '../../src/rollback/rollback.js';
+import { markRestarted } from '../../src/restart/restart.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
 
 const hint = vi.hoisted(() => ({ fail: false }));
@@ -29,6 +30,16 @@ const profileDir = path.join(process.env.DSH_HOME, 'profiles', args[args.indexOf
 const pkgPath = path.join(profileDir, 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 const spec = args.at(-1);
+if (spec.startsWith('link:')) {
+  const source = spec.slice('link:'.length);
+  const name = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8')).name;
+  pkg.dependencies[name] = spec;
+  fs.mkdirSync(path.join(profileDir, 'node_modules'), { recursive: true });
+  fs.symlinkSync(source, path.join(profileDir, 'node_modules', name), 'junction');
+  if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name);
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg));
+  process.exit(0);
+}
 const name = spec.split('@')[0];
 const dir = path.join(profileDir, 'node_modules', name);
 pkg.dependencies[name] = spec.slice(name.length + 1);
@@ -86,6 +97,21 @@ describe('applyEnvironment failure recovery', () => {
     );
   });
 
+  it('keeps the digest of a local plugin installed before the failure, so the next plan does not reinstall it', async () => {
+    const source = path.join(tempHome, 'src', 'aa-local');
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'aa-local', version: '1.0.0', dsh: { bundle: {} } }));
+    const local = `      aa-local:\n        package: aa-local\n        source: { type: local-link, path: ${JSON.stringify(source)} }\n`;
+    fs.writeFileSync(paths.manifestFile, manifest(local, plugin('zz')));
+    process.env.FAIL_ON = 'zz';
+    await expect(applyEnvironment(paths, options)).rejects.toThrow(/install zz/);
+
+    const lock = JSON.parse(fs.readFileSync(paths.lockFile, 'utf8'));
+    expect(lock.profiles.web.plugins['aa-local'].source.digest).toMatch(/^[0-9a-f]{64}$/);
+    const preview = await applyEnvironment(paths, { ...options, dryRun: true });
+    expect(preview.plan.operations.filter((op) => op.resource === 'plugin').map((op) => `${op.kind} ${op.alias}`)).toEqual(['install zz']);
+  });
+
   it('does not report a failed restore when only looking up the way back fails', async () => {
     fs.writeFileSync(paths.manifestFile, manifest(plugin('aa'), plugin('bb')));
     process.env.FAIL_ON = 'bb';
@@ -111,6 +137,20 @@ describe('applyEnvironment failure recovery', () => {
     );
     expect(result.message).toMatch(/skipped apply-[0-9a-f]{12}, which failed and had already undone its own changes/);
     expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(goodManifest);
+  });
+
+  it('does not bring back a restart-required that mark-restarted cleared after the snapshot was taken', async () => {
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa')));
+    await applyEnvironment(paths, options);
+    const status = () => JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')).profiles.web.plugins;
+    expect(status().aa.status).toBe('restart-required');
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa'), plugin('bb')));
+    await applyEnvironment(paths, options);
+    await markRestarted(paths);
+    expect(status().aa.status).toBe('healthy');
+
+    await rollbackEnvironment(paths);
+    expect(status().aa.status).toBe('healthy');
   });
 
   it('saves the active overlay in the snapshot and restores it on rollback', async () => {

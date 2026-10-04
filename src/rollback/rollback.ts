@@ -49,7 +49,7 @@ function readState(paths: EnvironmentPaths): EnvironmentState | null {
 // Rollback leaves the profiles alone, so what the restored state.json says about them must still match them: a plugin
 // an apply installed and that is still installed stays dshenv's to remove, one no longer installed is not, and a
 // restart owed before the rollback is still owed. Skills in DSH_HOME/skills stay too: one still as dshenv last synced
-// it keeps that baseline, so apply converges it.
+// it keeps that baseline, so apply converges it. Restarts follow the state from before the rollback both ways.
 async function keepLiveState(paths: EnvironmentPaths, before: EnvironmentState | null): Promise<void> {
   const restored = readState(paths);
   if (fs.existsSync(paths.stateFile) && !restored) {
@@ -75,6 +75,18 @@ async function keepLiveState(paths: EnvironmentPaths, before: EnvironmentState |
     for (const [packageName, record] of Object.entries(plugins)) {
       if (record.status === 'restart-required') {
         (profiles[profile] ??= { plugins: {} }).plugins[packageName] = record;
+      }
+    }
+  }
+  // A restart the restored state still owes but DSH has had since (mark-restarted) is not owed again.
+  if (before) {
+    for (const [profile, { plugins }] of Object.entries(profiles)) {
+      for (const [packageName, record] of Object.entries(plugins)) {
+        const live = before.profiles[profile]?.plugins[packageName];
+        if (record.status === 'restart-required' && live?.status !== 'restart-required') {
+          if (live) plugins[packageName] = live;
+          else delete plugins[packageName];
+        }
       }
     }
   }

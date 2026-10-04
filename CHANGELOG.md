@@ -2,6 +2,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- 失败的 `apply` 恢复 `lock.json` 后，补记失败前已装上的本地来源插件的摘要；此前下一次 `plan` 会以「Local source has no recorded digest」重装同样的代码，并标记为需要重启。
+- `rollback` 不再把 `mark-restarted` 已清除的 `restart-required` 带回来；重启状态以回滚前为准（DSH 进程不随 rollback 改变）。
+- 没有 `state.json` 时，一次「已同步」的 `apply` 也记录 DSH 已有的声明 skill 的所有权与生效 overlay；此前什么都不记录，之后从清单删掉这类 skill 时被当作未管理，不会移除。
+
 ## 0.8.0 - 2026-10-04
 
 ### 升级须知

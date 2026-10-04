@@ -428,14 +428,16 @@ async function planAndApply(
     // and a declared skill DSH already had is never owned.
     const skills = inventory.skills?.declared ?? {};
     const plugin = dropUninstalledOwnership(state?.resources?.plugin, inventory);
+    // Without a state.json yet (a first apply on a machine that already matches), there is still something to record
+    // when an overlay is active or DSH already has declared skills.
+    const current: EnvironmentState = state ?? { apiVersion: 'dshenv-state/v1', lastApplied: new Date().toISOString(), appliedLockHash: '', profiles: {} };
     if (
       !options?.dryRun &&
-      state &&
-      (state.appliedOverlay !== options?.overlay?.name ||
-        !isDeepStrictEqual(ownedSkillDigests(state), skills) ||
-        !isDeepStrictEqual(plugin, state.resources?.plugin ?? {}))
+      (current.appliedOverlay !== options?.overlay?.name ||
+        !isDeepStrictEqual(ownedSkillDigests(current), skills) ||
+        !isDeepStrictEqual(plugin, current.resources?.plugin ?? {}))
     ) {
-      const { appliedOverlay: _previous, ...rest } = state;
+      const { appliedOverlay: _previous, ...rest } = current;
       const nextState = withResources(
         { ...rest, ...(options?.overlay ? { appliedOverlay: options.overlay.name } : {}) },
         { plugin, skill: skillOwnership(skills) }
@@ -513,10 +515,22 @@ async function planAndApply(
     const base: EnvironmentState = state ?? { apiVersion: 'dshenv-state/v1', lastApplied: '', appliedLockHash: '', profiles: {} };
     let plugin = recordInstalledOwnership(base.resources?.plugin, installed, manifest, now, operationId);
     let profiles = base.profiles;
+    // The restored lock.json has no digest for local plugins installed before the failure; without one the next plan reinstalls them.
+    const installedDigests: LocalSourceDigests = {};
+    for (const operation of installed) {
+      const digest = localDigests[operation.profile]?.[operation.alias];
+      if (digest !== undefined) {
+        (installedDigests[operation.profile] ??= {})[operation.alias] = digest;
+      }
+    }
+    const partialLock = recordLocalDigests(lock, manifest, installedDigests);
+    if (partialLock && partialLock !== lock) {
+      await writeAtomic(paths.lockFile, serializeLock(partialLock), 'overwrite');
+    }
     try {
       const live = onlyProfile(await readEnvironmentInventory(paths), options?.profile);
       const remaining = new Set(
-        buildPlan(manifest, lock, live, state, localDigests).operations
+        buildPlan(manifest, partialLock, live, state, localDigests).operations
           .filter((op): op is PluginOperation => op.resource === 'plugin')
           .map((op) => `${op.profile}\0${op.alias}\0${op.kind}`)
       );
