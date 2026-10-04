@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execa } from 'execa';
-import { CapabilityError, DegradedError } from '../errors.js';
+import { CapabilityError, DegradedError, ValidationError } from '../errors.js';
 import { awaitWithTreeTimeout } from '../io/process-tree.js';
 import { parseDshVersion } from './version.js';
 
@@ -51,7 +51,15 @@ export function resolveDshCommand(input?: ResolveDshCommandInput): CommandSpec |
     }
   });
 
-  const sourceDir = input?.cliHarnessSource ?? input?.manifestHarnessSource;
+  // The command runs with the source as its cwd and also gets --dir, so a relative path would be resolved twice.
+  const cliSource = input?.cliHarnessSource && !path.isAbsolute(input.cliHarnessSource)
+    ? path.resolve(input.cliHarnessSource)
+    : input?.cliHarnessSource;
+  // A source asked for by name must not quietly become another DSH; the manifest's may live on another machine.
+  if (cliSource && !checkExists(cliSource)) {
+    throw new ValidationError(`Harness source not found: ${cliSource}`);
+  }
+  const sourceDir = cliSource ?? input?.manifestHarnessSource;
   if (sourceDir && checkExists(sourceDir)) {
     return {
       file: 'pnpm',

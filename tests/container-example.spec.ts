@@ -55,7 +55,11 @@ describe('container example', () => {
         'envctl/backups',
         'envctl/logs',
         'envctl/trash',
-        'envctl/sources'
+        'envctl/sources',
+        'envctl/run',
+        'envctl/remote.json',
+        'envctl/remote',
+        'envctl/dshenv.lock.*'
       ])
     );
   });

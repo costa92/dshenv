@@ -44,7 +44,7 @@ Harness 主目录解析优先级：
 
 DSH 运行时命令解析优先级：
 1. 环境变量 `DSH_CLI`（支持 JSON 数组或字面执行文件名，绝不进入 shell）
-2. `--harness-source <path>` / 清单中的 `environment.harness.sourceDir`（转换为 `pnpm --dir <sourceDir> dsh`）
+2. `--harness-source <path>` / 清单中的 `environment.harness.sourceDir`（转换为 `pnpm --dir <sourceDir> dsh`）。`--harness-source` 的相对路径按当前目录解析，目录不存在时以退出码 3 报错，不会改用其他 DSH；清单的 `sourceDir` 在本机不存在时继续往下找
 3. 系统 `PATH` 中的 `dsh`
 
 跨机器同步 `manifest.yaml` 与 `overlays/`；`state.json`、`overlay-selection.json` 只属于本机。`lock.json` 由本机维护，但订阅团队 remote 后，团队 lock 中的条目归远程、随 `sync` 更新（见第 20 节）。
