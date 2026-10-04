@@ -168,7 +168,7 @@ describe('CLI writes with an active overlay', () => {
     await run(['overlay', 'use', 'laptop']);
     const adopt = await run(['adopt', '--from', path.join(tempHome, 'missing.yaml'), '--layer', 'overlay']);
     expect(adopt.code).toBe(3);
-    expect(adopt.stderr).toMatch(/adopt only writes the base manifest/);
+    expect(adopt.stderr).toMatch(/adopt picks the layer itself/);
   });
 
   it('removes a base plugin the active overlay adjusts, leaving the overlay entry with nothing to do', async () => {

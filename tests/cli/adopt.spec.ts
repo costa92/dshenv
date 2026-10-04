@@ -116,6 +116,9 @@ warnings: []
 
       const out = await run(['adopt', path.join(tempHome, 'candidate.yaml'), '--yes']);
       expect(out.code).toBe(0);
+      expect(out.stdout).toMatch(/\+ plugin local-tool \(overlay 'local'\)/);
+      expect(out.stdout).toContain("went into overlay 'local', now selected");
+      expect(out.stdout.match(/Next: dshenv plan/g)).toHaveLength(1);
       expect(fs.readFileSync(envctl('manifest.yaml'), 'utf8')).not.toContain('local-tool');
       expect(fs.readFileSync(envctl('overlays', 'local.yaml'), 'utf8')).toContain(source);
       const lock = JSON.parse(fs.readFileSync(envctl('lock.json'), 'utf8'));
