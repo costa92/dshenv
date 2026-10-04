@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { runCli } from '../../src/cli.js';
 import type { EnvironmentPaths } from '../../src/environment/paths.js';
@@ -108,9 +109,9 @@ describe('CLI writes to remote-owned files and lock entries', () => {
     expect(code).toBe(0);
     expect(loadLock(read(paths.lockFile)).profiles.web.plugins.tool).toMatchObject({
       package: 'local-tool',
-      source: { type: 'git', url: upstream }
+      source: { type: 'git', url: pathToFileURL(upstream).href }
     });
-    expect(parseOverlay(read(overlayFile('mine')), 'mine').profiles?.web.plugins?.tool?.source).toEqual({ type: 'git', url: upstream });
+    expect(parseOverlay(read(overlayFile('mine')), 'mine').profiles?.web.plugins?.tool?.source).toEqual({ type: 'git', url: pathToFileURL(upstream).href });
     const config = readRemoteConfig(paths)!;
     expect(findRemoteLockDrift(paths, config)).toEqual([]);
     expect(findLocalDrift(paths, config)).toEqual([]);

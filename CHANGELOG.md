@@ -9,6 +9,9 @@
 - 没有清单时 `status` 只报缺少清单（与 `plan` 相同，`--json` 时是 stderr 上的 JSON 错误），不再同时输出一份 `degraded` 状态报告；0.8.0 只改了退出码。
 - 插件的受管配置块已经清掉后，再次 `purge` 输出「Nothing to purge」、退出码 0，不再每次把整个 `cordis.patch.yml` 复制进 trash。
 - 输出接到提前关闭的管道（如 `dshenv --help | head -1`）时不再以 EPIPE 调用栈崩溃；命令照常执行完，之后的输出被丢弃。
+- `source sync` 不带目录也不带 `--profile` 时作用于当前目录，与 README 及 `source show` 一致；此前报「requires <dir> or --profile」。
+- `source clone <本机路径> --profile` 把路径记为 `file://` 地址；此前记成普通路径，`apply` 时 pnpm 把它当本地目录链接，失败并在 Profile 的 `package.json` 里留下名字带 `#<commit>` 的坏依赖。
+- `install` 本地路径时检查目录存在（退出码 3），`file://` 地址按其路径解析，带 `#<ref>` 的本地路径被拒绝并提示 `git+file://`；此前 `file:///repo#<sha>` 会登记成别名 `repo#<sha>`、路径不存在的本地插件。
 
 ## 0.8.1 - 2026-10-04
 
