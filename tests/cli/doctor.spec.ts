@@ -133,6 +133,26 @@ exit 0
     }
   });
 
+  it('does not print an unusual prerelease tag, which a DSH_CLI wrapper may fill with a credential', async () => {
+    const wrapped = path.join(fakeBinDir, 'wrapped-dsh.sh');
+    fs.writeFileSync(wrapped, '#!/bin/sh\necho "0.2.0-ghp.SECRET123"\nexit 0\n');
+    fs.chmodSync(wrapped, 0o755);
+    const oldDshCli = process.env.DSH_CLI;
+    process.env.DSH_CLI = wrapped;
+    try {
+      for (const json of [false, true]) {
+        let stdout = '';
+        const code = await runCli(['doctor', '--allow-untested-dsh', '--dsh-home', tempHome, ...(json ? ['--json'] : [])], { stdout: (chunk) => { stdout += chunk; }, stderr: () => {} });
+        expect(code).toBe(0);
+        expect(stdout).not.toContain('SECRET123');
+        expect(stdout).toContain('0.2.0 (a prerelease)');
+      }
+    } finally {
+      if (oldDshCli) process.env.DSH_CLI = oldDshCli;
+      else delete process.env.DSH_CLI;
+    }
+  });
+
   it('should print doctor JSON without environment or credential dumps', async () => {
     const oldDshCli = process.env.DSH_CLI;
     process.env.DSH_CLI = fakeDsh;

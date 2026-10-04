@@ -3,7 +3,7 @@ import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { loadLock, loadState } from '../manifest/files.js';
 import { buildPlan, buildStatus, onlyProfile, planExitCode, planJson } from '../planner/plan.js';
 import { renderPlan, renderStatus, renderDoctor, type DoctorReport } from '../output/render.js';
-import { resolveDshCommand, probeDsh, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, type RuntimeCapabilityEvidence } from '../dsh/index.js';
+import { resolveDshCommand, probeDsh, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, displayDshVersion, type RuntimeCapabilityEvidence } from '../dsh/index.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError, CapabilityError, START_HINT } from '../errors.js';
 import type { EnvironmentLock, EnvironmentManifest, EnvironmentState } from '../domain.js';
@@ -186,7 +186,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
       const report: DoctorReport = {
         runtime: {
           command: dshCmd.file,
-          version: probeResult.version,
+          version: displayDshVersion(probeResult.version),
           discoverySupported: evaluatedCaps.discovery.status === 'available',
           mutationsSupported: evaluatedCaps.mutations,
           capabilities: evaluatedCaps
