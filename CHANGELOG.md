@@ -15,6 +15,10 @@
 - `install` 的别名已经指向另一个包时拒绝（退出码 3），提示用 `--as`；此前写 base 时整条替换、丢掉原包的 `patches` 与启用状态并输出「Added」，写 overlay 时只改来源，把新版本混进原包的条目。
 - `pull`（以及 `adopt --yes`）遇到含 `${...}` 的 DSH patch 条目时，跳过该 Profile 的 patch 并给出警告，其余 skill 与插件照常导入；此前整个命令以退出码 3 失败。
 - base 声明、当前 overlay 用 `remove: true` 去掉、但仍装在 DSH 里的插件，`pull` 不再把它当作未管理插件以第二个别名加入 base（此前因重复包报错，之后每次 `pull` 都失败），改为给出警告。
+- 命令行输出中的控制字符与双向文本控制符显示为 `\uXXXX` 转义；此前团队仓库里的 skill 文件名、插件别名等可以带终端控制序列，隐藏或抹掉 `remote add/sync` 预览中的行。`lock.json` 的别名改为与清单别名相同的校验。
+- `remote add/sync` 的预览末尾给出带 `--ref <预览的 commit>` 的接受命令，`remote add` 新增 `--ref`；此前预览后分支有新提交时，`--yes` 接受的是未经审阅的新 commit。
+- `remote add/sync --yes --json` 输出 `operationId` 与 `snapshotId`，脚本可以据此 `rollback`。
+- `adopt --yes` 把本机路径插件写进 overlay 时，输出列出这些插件，并说明新建并选中了哪个 overlay；`adopt --layer overlay` 的报错与使用教程不再说 adopt 只写 base。
 
 ## 0.6.1 - 2026-10-04
 

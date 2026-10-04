@@ -437,10 +437,10 @@ dshenv new mcp docs-server              # MCP server 配置包
 
 ```bash
 dshenv remote add git@github.com:team/dsh-config.git          # 预览：文件变化与接受后的 plan，退出码 2，不写文件
-dshenv remote add git@github.com:team/dsh-config.git --yes    # 接受并固定到分支最新 commit
+dshenv remote add git@github.com:team/dsh-config.git --ref <commit> --yes   # 接受预览过的那个 commit（预览末尾给出这条命令）
 dshenv remote show                                           # URL、分支、固定 commit、远程文件与 lock 条目及本地改动
 dshenv remote sync                                           # 拉取并预览更新，退出码 2；已是最新时退出码 0
-dshenv remote sync --yes                                     # 接受更新（只接受 fast-forward），之后自行 plan / apply
+dshenv remote sync --ref <commit> --yes                      # 接受预览过的更新（只接受 fast-forward），之后自行 plan / apply
 dshenv remote sync --ref v1.2.0 --yes                        # 移动到订阅分支上的某个 tag 或 commit
 dshenv remote remove                                         # 预览取消订阅，退出码 2
 dshenv remote remove --yes                                   # 取消订阅，文件保留为本地文件
@@ -455,7 +455,8 @@ dshenv remote remove --yes                                   # 取消订阅，�
 - 团队仓库提供的 skill（`skills/<名字>/...`）整个目录归团队所有：`envctl/skills` 里已有不归团队的同名 skill 时，`remote add` 与 `sync` 都拒绝（`--replace` 也不行，以免两份混在一起），需先移走本地的那份。
 - 每次接受都会先建快照，用 `dshenv rollback <快照 id> --yes` 撤销（id 见接受时输出的 `snapshot ...`；之后又 `apply` 过时，不带 id 的 `rollback --yes` 只会撤销那次 apply）；接受后不会自动 `apply`。接受更新即同意执行其中声明的插件。
 - URL 不得内嵌凭据（认证交给 SSH 或 git credential helper）；git 失败时退出码 1，并带出 git 的原始错误。
-- `--json` 时 `sync` 输出 `{status, from, to, files: {added, modified, removed}, lockEntries: {added, modified, removed}, plan}`，lock 条目写作 `<profile>/<alias>`，`status` 为 `up-to-date`、`pending` 或 `accepted`。
+- 预览之后分支可能又有新提交，不带 `--ref` 的 `--yes` 接受的是那时的最新 commit；预览末尾给出带 `--ref <预览的 commit>` 的命令，用它接受的正是审阅过的内容。
+- `--json` 时 `sync` 输出 `{status, from, to, files: {added, modified, removed}, lockEntries: {added, modified, removed}, plan}`，接受时另有 `operationId` 与 `snapshotId`；lock 条目写作 `<profile>/<alias>`，`status` 为 `up-to-date`、`pending` 或 `accepted`。
 
 ### 21. `dshenv self-update`
 
