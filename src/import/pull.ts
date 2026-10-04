@@ -26,7 +26,7 @@ import { createEnvironmentSnapshot, restoreEnvironmentSnapshot } from '../io/bac
 import { appendJournalEntry } from '../io/journal.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { withEnvironmentLock } from '../io/lock.js';
-import { diffProfilePatches, localPatchEntries } from '../profile-patches/entries.js';
+import { containsLocalPath, diffProfilePatches, localPatchEntries, mergeProfilePatches, overrideKey } from '../profile-patches/entries.js';
 import {
   describeProfilePatchImport,
   importProfilePatchFile,
@@ -108,6 +108,41 @@ function setOverlayPatches(overlay: EnvironmentOverlay, profile: string, entries
   } else {
     delete target.patches;
   }
+}
+
+// With an overlay selected, the base takes only what DSH changed in entries the overlay leaves alone; the rest stays
+// with the overlay, so what it removes, adds or overrides is not folded into the base every machine shares.
+function pullBasePatches(base: ProfilePatch[], overlay: ProfilePatch[], effective: ProfilePatch[], desired: ProfilePatch[]): ProfilePatch[] {
+  const overlayKeys = new Set(overlay.map(overrideKey).filter((key) => key !== undefined));
+  const local = localPatchEntries(desired);
+  const shared = (entry: ProfilePatch) => !local.includes(entry) && !containsLocalPath(entry);
+  const result: ProfilePatch[] = [];
+  for (const entry of base) {
+    const key = overrideKey(entry);
+    if (key !== undefined && overlayKeys.has(key)) {
+      result.push(entry);
+    } else if (desired.some((candidate) => isDeepStrictEqual(candidate, entry))) {
+      if (shared(desired.find((candidate) => isDeepStrictEqual(candidate, entry))!)) result.push(entry);
+    } else {
+      const edited = key === undefined ? undefined : desired.find((candidate) => overrideKey(candidate) === key);
+      if (edited && shared(edited)) result.push(edited);
+    }
+  }
+  for (const entry of desired) {
+    const key = overrideKey(entry);
+    const known = effective.some((candidate) => isDeepStrictEqual(candidate, entry)) ||
+      (key !== undefined && (overlayKeys.has(key) || base.some((candidate) => overrideKey(candidate) === key)));
+    if (!known && shared(entry)) result.push(entry);
+  }
+  return result;
+}
+
+function sameEntries(left: ProfilePatch[], right: ProfilePatch[]): boolean {
+  const unused = [...right];
+  return left.length === right.length && left.every((entry) => {
+    const index = unused.findIndex((candidate) => isDeepStrictEqual(candidate, entry));
+    return index !== -1 && unused.splice(index, 1).length === 1;
+  });
 }
 
 export async function pullProfilePatches(paths: EnvironmentPaths, options: PullOptions): Promise<PullResult> {
@@ -192,10 +227,17 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
   const counts = new Map<string, { base: number; overlay: number }>();
   for (const read of reads.filter((entry) => entry.from === 'dsh')) {
     const local = localPatchEntries(read.desired);
+    const basePatches = base.profiles[read.profile]?.patches ?? [];
+    const selectedPatches = selectedOverlay?.profiles?.[read.profile]?.patches;
     const baseEntries = baseOwnedByRemote
-      ? (base.profiles[read.profile]?.patches ?? [])
-      : read.desired.filter((entry) => !local.includes(entry));
-    const overlayEntries = diffProfilePatches(baseEntries, read.desired);
+      ? basePatches
+      : selectedPatches
+        ? pullBasePatches(basePatches, selectedPatches, read.expected, read.desired)
+        : read.desired.filter((entry) => !local.includes(entry));
+    // An overlay that still yields what DSH has is kept as written, rather than rebuilt in another order.
+    const overlayEntries = selectedPatches && sameEntries(mergeProfilePatches(baseEntries, selectedPatches), read.desired)
+      ? selectedPatches
+      : diffProfilePatches(baseEntries, read.desired);
     if (!baseOwnedByRemote) {
       setBasePatches(nextBase, read.profile, baseEntries);
     }
