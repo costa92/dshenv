@@ -7,6 +7,10 @@
 ### 修复
 
 - 选中 overlay 时，`pull`（以及 `adopt --yes` 随后的 pull）只把 DSH 改动的条目写进 base，overlay 删除、新增或覆盖的条目留在 overlay；此前会用合并后的结果重写 base：overlay 删掉的 base 条目被永久删除，overlay 新增与覆盖的条目被搬进 base，overlay 被清空，而 `plan` 不报告任何差异。
+- `rollback` 与失败的 `apply` 恢复 `state.json` 后，去掉已不在 Profile 里的插件的所有权记录；此前会留下这类记录，之后手动装回同名插件时，下一次 `apply` 会把它当作自己拥有的插件卸载。一次无改动的 `apply` 也会清理已有的这类记录。
+- 失败的 `apply` 把已经生效的步骤记为 `restart-required`，`rollback` 保留回滚前尚未处理的 `restart-required`；此前两者都整体恢复 `state.json` 中的 Profile 状态，DSH 仍在运行旧代码却不再提示重启。
+- `status` 对 `state.json` 中仍为 `restart-required` 的插件如实报告，包括已移除的插件和清单声明、但 Profile 里查不到的插件（如关闭热重载时停用的内置插件）；此前显示为 `healthy`。
+- 清单不再声明某个别名后（改名或删除了 dshenv 不拥有的插件），`plan` 会清理 `cordis.patch.yml` 中该别名的受管配置块与挂载块；非 bundle 插件按别名判断是否已挂载，改名后在新别名下挂载。此前旧块一直保留且 `plan` 显示无变化。
 
 ## 0.6.1 - 2026-10-04
 
