@@ -333,7 +333,7 @@ dshenv status --json
 ```
 
 ### 14. `dshenv source clone`
-带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`，并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
+带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`，并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。清单里这个别名已声明同一仓库的 `commit` 或 `ref`（如 `install <url>#<sha>` 写入的）时，克隆并锁定它而不是 HEAD，commit 不在仓库里时报错；给了 `--ref` 时改用该 ref 并写进清单。别名默认与 `install` 相同（仓库名去掉 `dsh-plugin-`、`dsh-` 前缀）；别名已指向另一个包时拒绝（退出码 3）。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
 
 ```bash
 dshenv source clone https://github.com/ex/plugin.git --profile web --as demo

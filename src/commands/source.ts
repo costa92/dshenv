@@ -9,6 +9,7 @@ import {
   safeFastForwardManagedGit,
   managedGitSourceDir,
   packageNameFromGitUrl,
+  checkoutCommit,
   assertCheckoutServes,
   assertCommitOnOrigin
 } from '../source/git.js';
@@ -21,9 +22,30 @@ import { retryWhileBusy } from '../io/windows-retry.js';
 import { hasEmbeddedCredentials } from '../manifest/schema.js';
 import { readPackageJsonName } from '../source/local.js';
 import { assertLockEntryNotRemoteOwned, assertNotRemoteOwned } from '../remote/ownership.js';
-import { assertBaseMergesWithOverlay, resolveWriteLayer, saveOverlay, setOverlayPluginFields } from '../overlay/write.js';
-import { overlayFilePath } from '../overlay/selection.js';
+import { assertBaseMergesWithOverlay, resolveWriteLayer, saveOverlay, setOverlayPluginFields, type WriteLayer } from '../overlay/write.js';
+import { overlayFilePath, type OverlaySelection } from '../overlay/selection.js';
+import type { EnvironmentPaths } from '../environment/paths.js';
+import type { PluginSource } from '../domain.js';
 import { resolveCliPaths, resolveCliOverlay, profileOption, aliasOption, assertKnownProfile, writeLayer, type CommandContext } from './context.js';
+
+// The git source the layer being written declares for this alias and repository, as the effective manifest has it.
+function declaredGitSource(
+  paths: EnvironmentPaths,
+  selection: OverlaySelection | null,
+  layer: WriteLayer,
+  profile: string,
+  alias: string,
+  url: string
+): Extract<PluginSource, { type: 'git' }> | undefined {
+  if (!fs.existsSync(paths.manifestFile)) {
+    return undefined;
+  }
+  const manifest = layer === 'overlay'
+    ? loadEffectiveManifest(paths, selection).manifest
+    : loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+  const source = manifest.profiles[profile]?.plugins[alias]?.source;
+  return source?.type === 'git' && source.url === url ? source : undefined;
+}
 
 function overlaySuffix(name: string): string {
   return ` (overlay '${name}')`;
@@ -111,7 +133,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
       }
-      const alias: string = cmdOpts.as || packageNameFromGitUrl(url);
+      // The same default alias install gives this repository, so cloning after install names the same plugin.
+      const alias: string = cmdOpts.as || packageNameFromGitUrl(url).replace(/^(dsh-plugin-|dsh-)/, '');
       if (!targetDir && !cmdOpts.profile) {
         throw new ValidationError('source clone requires <dir> or --profile');
       }
@@ -150,13 +173,29 @@ export function registerSourceCommands(ctx: CommandContext): void {
             assertNotRemoteOwned(paths, overlayFilePath(paths, selection.name));
           }
         }
-        res = await cloneManagedGit(url, cloneDir, cmdOpts.ref);
+        // A commit or ref the manifest already declares for this repository is what gets cloned and locked; --ref replaces it.
+        const declared = cmdOpts.profile ? declaredGitSource(paths, selection, layer, cmdOpts.profile, alias, url) : undefined;
+        const pinned = cmdOpts.ref === undefined && declared?.commit !== undefined ? declared.commit : undefined;
+        const ref: string | undefined = cmdOpts.ref ?? (pinned === undefined ? declared?.ref : undefined);
+        res = await cloneManagedGit(url, cloneDir, ref);
+        if (pinned !== undefined) {
+          const commit = await checkoutCommit(cloneDir, pinned);
+          if (commit === null) {
+            throw new ValidationError(`Commit ${pinned} that the manifest pins for '${alias}' is not in ${url}; fix the manifest commit, or pass --ref`);
+          }
+          res = { commit };
+        }
+        const source: PluginSource = { type: 'git', url, ...(pinned !== undefined ? { commit: pinned } : ref !== undefined ? { ref } : {}) };
 
         if (cmdOpts.profile) {
           const profile: string = cmdOpts.profile;
           const packageName: string = cmdOpts.package ?? readPackageJsonName(cloneDir) ?? packageNameFromGitUrl(url);
           let writeManifest: () => Promise<void>;
           const base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+          // Replacing the entry would drop the other package's patches and enabled state without a word.
+          const aliasTaken = (current: string) => new ValidationError(
+            `Alias '${alias}' is '${current}' in profile '${profile}'; clone '${packageName}' under another alias with --as <alias>, or remove '${alias}' first`
+          );
           const manifestTarget = layer === 'overlay' && selection ? overlayFilePath(paths, selection.name) : paths.manifestFile;
           const original = fs.existsSync(manifestTarget) ? fs.readFileSync(manifestTarget) : null;
           if (layer === 'overlay' && selection) {
@@ -166,13 +205,16 @@ export function registerSourceCommands(ctx: CommandContext): void {
               throw new ValidationError(`Alias '${alias}' is '${baseEntry.package}' in the base manifest; an overlay cannot change its package`);
             }
             const overlayEntry = overlayDoc.profiles?.[profile]?.plugins?.[alias];
+            if (overlayEntry && !overlayEntry.remove && overlayEntry.package !== undefined && overlayEntry.package !== packageName) {
+              throw aliasTaken(overlayEntry.package);
+            }
             // An overlay entry without a package only adjusts a base plugin, so with none in the base nothing is declared yet.
             const exists = baseEntry ? !overlayEntry?.remove : overlayEntry?.package !== undefined && !overlayEntry.remove;
             setOverlayPluginFields(overlayDoc, profile, alias, exists
-              ? { source: { type: 'git', url } }
+              ? { source }
               : baseEntry
-                ? { enabled: true, source: { type: 'git', url } }
-                : { package: packageName, enabled: true, source: { type: 'git', url } });
+                ? { enabled: true, source }
+                : { package: packageName, enabled: true, source });
             mergeManifest(base, overlayDoc, selection.name);
             writeManifest = () => saveOverlay(paths, selection.name, base, overlayDoc);
           } else {
@@ -180,9 +222,12 @@ export function registerSourceCommands(ctx: CommandContext): void {
               base.profiles[profile] = { plugins: {} };
             }
             const current = base.profiles[profile].plugins[alias];
-            base.profiles[profile].plugins[alias] = current?.package === packageName
-              ? { ...current, source: { type: 'git', url } }
-              : { package: packageName, enabled: true, source: { type: 'git', url } };
+            if (current && current.package !== packageName) {
+              throw aliasTaken(current.package);
+            }
+            base.profiles[profile].plugins[alias] = current
+              ? { ...current, source }
+              : { package: packageName, enabled: true, source };
             assertBaseMergesWithOverlay(paths, selection, base);
             writeManifest = () => writeAtomic(paths.manifestFile, serializeManifest(base), 'overwrite');
           }

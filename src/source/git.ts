@@ -154,6 +154,17 @@ export async function cloneManagedGit(
   return { commit: commitRes.stdout.trim() };
 }
 
+// Detaches a fresh clone at a commit; null when the clone does not have it.
+export async function checkoutCommit(repoDir: string, commit: string): Promise<string | null> {
+  assertNotOptionLike('Git commit', commit);
+  const checkout = await execa('git', ['checkout', '--quiet', '--detach', `${commit}^{commit}`], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 30000, reject: false });
+  if (checkout.exitCode !== 0) {
+    return null;
+  }
+  const head = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 5000 });
+  return head.stdout.trim();
+}
+
 export async function safeFastForwardManagedGit(
   repoDir: string,
   ref?: string

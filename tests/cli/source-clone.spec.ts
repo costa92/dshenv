@@ -276,4 +276,105 @@ describe('CLI source clone --profile', () => {
     expect(demo.enabled).toBe(false);
     expect(demo.patches).toEqual([{ id: 'demo', config: { mode: 'fast' } }]);
   });
+
+  describe('over a declared git plugin', () => {
+    const run = async (args: string[]) => {
+      let stderr = '';
+      const code = await runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+      return { code, stderr };
+    };
+    const manifestFile = () => path.join(tempHome, 'envctl', 'manifest.yaml');
+    const lockedCommit = () => {
+      const source = loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).profiles.web.plugins.demo.source;
+      return source.type === 'git' ? source.commit : undefined;
+    };
+    const commit = async (file: string) => {
+      fs.writeFileSync(path.join(upstream, file), file);
+      await execa('git', ['add', '.'], { cwd: upstream });
+      await execa('git', ['commit', '-m', file], { cwd: upstream });
+      return (await execa('git', ['rev-parse', 'HEAD'], { cwd: upstream })).stdout.trim();
+    };
+
+    it('locks the commit the manifest pins, not the newer HEAD, and keeps it declared', async () => {
+      const url = `file://${upstream}`;
+      const pinned = (await execa('git', ['rev-parse', 'HEAD'], { cwd: upstream })).stdout.trim();
+      expect((await run(['install', `git+${url}#${pinned}`, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      await commit('newer.txt');
+
+      expect(await run(['source', 'clone', url, '--profile', 'web', '--as', 'demo'])).toEqual({ code: 0, stderr: '' });
+      expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url, commit: pinned });
+      expect(lockedCommit()).toBe(pinned);
+      const cloneHead = await execa('git', ['rev-parse', 'HEAD'], { cwd: path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin') });
+      expect(cloneHead.stdout.trim()).toBe(pinned);
+    });
+
+    it('clones the ref the manifest declares and keeps it declared', async () => {
+      const url = `file://${upstream}`;
+      await execa('git', ['checkout', '-q', '-b', 'feature'], { cwd: upstream });
+      const featureHead = await commit('feature.txt');
+      await execa('git', ['checkout', '-q', '-'], { cwd: upstream });
+      expect((await run(['install', `git+${url}#feature`, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+
+      expect((await run(['source', 'clone', url, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url, ref: 'feature' });
+      expect(lockedCommit()).toBe(featureHead);
+    });
+
+    it('refuses a pinned commit the repository does not have, leaving nothing behind', async () => {
+      const url = `file://${upstream}`;
+      expect((await run(['install', `git+${url}#${'a'.repeat(40)}`, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      const before = fs.readFileSync(manifestFile(), 'utf8');
+      const clone = await run(['source', 'clone', url, '--profile', 'web', '--as', 'demo']);
+      expect(clone.code).toBe(3);
+      expect(clone.stderr).toContain(`Commit ${'a'.repeat(40)} that the manifest pins for 'demo' is not in ${url}`);
+      expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
+      expect(fs.existsSync(path.join(tempHome, 'envctl', 'sources'))).toBe(false);
+    });
+  });
+
+  it('refuses an alias another package has, in the base and in the overlay, leaving nothing behind', async () => {
+    const run = async (args: string[]) => {
+      let stderr = '';
+      const code = await runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+      return { code, stderr };
+    };
+    const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');
+    expect((await run(['install', 'other-plugin@1.0.0', '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+    const before = fs.readFileSync(manifestFile, 'utf8');
+    const lockFile = path.join(tempHome, 'envctl', 'lock.json');
+    const lockBefore = fs.existsSync(lockFile) ? fs.readFileSync(lockFile, 'utf8') : null;
+    const lockNow = () => (fs.existsSync(lockFile) ? fs.readFileSync(lockFile, 'utf8') : null);
+    const base = await run(['source', 'clone', upstream, '--profile', 'web', '--as', 'demo']);
+    expect(base.code).toBe(3);
+    expect(base.stderr).toContain("Alias 'demo' is 'other-plugin' in profile 'web'");
+    expect(fs.readFileSync(manifestFile, 'utf8')).toBe(before);
+    expect(lockNow()).toBe(lockBefore);
+
+    fs.mkdirSync(path.join(tempHome, 'envctl', 'overlays'), { recursive: true });
+    const overlayFile = path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml');
+    fs.writeFileSync(overlayFile, 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      extra:\n        package: extra-plugin\n        source: { type: npm, version: "2.0.0" }\n');
+    expect((await run(['overlay', 'use', 'laptop'])).code).toBe(0);
+    const overlayBefore = fs.readFileSync(overlayFile, 'utf8');
+    const overlay = await run(['source', 'clone', upstream, '--profile', 'web', '--as', 'extra', '--layer', 'overlay']);
+    expect(overlay.code).toBe(3);
+    expect(overlay.stderr).toContain("Alias 'extra' is 'extra-plugin' in profile 'web'");
+    expect(fs.readFileSync(overlayFile, 'utf8')).toBe(overlayBefore);
+    expect(lockNow()).toBe(lockBefore);
+    expect(fs.readdirSync(path.join(tempHome, 'envctl')).filter((name) => name === 'sources')).toEqual([]);
+  });
+
+  it('derives the alias as install does, dropping a dsh-plugin- prefix', async () => {
+    const repo = path.join(tempHome, 'upstream', 'dsh-plugin-demo');
+    fs.mkdirSync(repo, { recursive: true });
+    await execa('git', ['init', '-q'], { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'dsh-plugin-demo', version: '1.0.0', dsh: { bundle: {} } }));
+    await execa('git', ['add', '.'], { cwd: repo });
+    await execa('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init'], { cwd: repo });
+    const url = `file://${repo}`;
+    const run = (args: string[]) => runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+
+    expect(await run(['install', `git+${url}`, '--profile', 'web'])).toBe(0);
+    expect(await run(['source', 'clone', url, '--profile', 'web'])).toBe(0);
+    expect(Object.keys(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins)).toEqual(['demo']);
+  });
 });
