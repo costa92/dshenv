@@ -1,6 +1,6 @@
 {
   "name": "@costa92/dshenv",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Environment-as-Code manager for DeepSeek Harness",
   "license": "MIT",
   "author": "costa",
