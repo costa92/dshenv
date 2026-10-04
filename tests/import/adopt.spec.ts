@@ -267,6 +267,24 @@ profiles:
     });
   });
 
+  it('leaves the base entry alone for a plugin the active overlay overrides', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    const baseManifest = 'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      teams:\n        package: "@nanmicoder/dsh-agent-teams"\n        source: { type: npm, version: "0.1.20" }\n';
+    fs.writeFileSync(paths.manifestFile, baseManifest);
+    const candidate: CaptureDocument = {
+      apiVersion: 'dshenv-capture/v1',
+      manifest: { apiVersion: 'dshenv/v1', profiles: { web: { plugins: { 'agent-teams': { package: '@nanmicoder/dsh-agent-teams', enabled: true, source: { type: 'npm', version: '0.1.21' } } } } } },
+      lock: { apiVersion: 'dshenv-lock/v1', profiles: {} },
+      warnings: []
+    };
+    const overlay = { apiVersion: 'dshenv-overlay/v1' as const, profiles: { web: { plugins: { teams: { source: { type: 'npm' as const, version: '0.1.21' } } } } } };
+
+    const summary = await adoptEnvironment(paths, candidate, { overlay });
+    expect(summary.details).toMatchObject([{ alias: 'teams', alreadyAdopted: true }]);
+    expect(loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'))).toEqual(loadManifest(baseManifest));
+  });
+
   it('adopts a package under a free alias when its captured alias names another declared package', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const webProfile = path.join(tempHome, 'profiles', 'web');

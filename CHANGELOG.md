@@ -11,6 +11,10 @@
 - 失败的 `apply` 把已经生效的步骤记为 `restart-required`，`rollback` 保留回滚前尚未处理的 `restart-required`；此前两者都整体恢复 `state.json` 中的 Profile 状态，DSH 仍在运行旧代码却不再提示重启。
 - `status` 对 `state.json` 中仍为 `restart-required` 的插件如实报告，包括已移除的插件和清单声明、但 Profile 里查不到的插件（如关闭热重载时停用的内置插件）；此前显示为 `healthy`。
 - 清单不再声明某个别名后（改名或删除了 dshenv 不拥有的插件），`plan` 会清理 `cordis.patch.yml` 中该别名的受管配置块与挂载块；非 bundle 插件按别名判断是否已挂载，改名后在新别名下挂载。此前旧块一直保留且 `plan` 显示无变化。
+- 有生效 overlay 时，`adopt` 不再把 overlay 覆盖过的插件（如改了 `enabled` 或来源）按 DSH 实际安装的样子写进 base，这类插件视为已由 overlay 管理。
+- `install` 的别名已经指向另一个包时拒绝（退出码 3），提示用 `--as`；此前写 base 时整条替换、丢掉原包的 `patches` 与启用状态并输出「Added」，写 overlay 时只改来源，把新版本混进原包的条目。
+- `pull`（以及 `adopt --yes`）遇到含 `${...}` 的 DSH patch 条目时，跳过该 Profile 的 patch 并给出警告，其余 skill 与插件照常导入；此前整个命令以退出码 3 失败。
+- base 声明、当前 overlay 用 `remove: true` 去掉、但仍装在 DSH 里的插件，`pull` 不再把它当作未管理插件以第二个别名加入 base（此前因重复包报错，之后每次 `pull` 都失败），改为给出警告。
 
 ## 0.6.1 - 2026-10-04
 

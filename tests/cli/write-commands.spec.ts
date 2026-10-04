@@ -97,6 +97,20 @@ describe('CLI manifest write commands', () => {
       expect(same.stdout).toBe(`${PKG} (agent-teams) is already declared at 0.1.22 in profile 'web' in the manifest; nothing changed.\n`);
     });
 
+    it('refuses an install whose alias already names another package, in the base and in an overlay', async () => {
+      const base = await run(['install', 'dsh-plugin-other@1.0.0', '-p', 'web', '--as', 'agent-teams']);
+      expect(base.code).toBe(3);
+      expect(base.stderr).toMatch(/Alias 'agent-teams' is '@nanmicoder\/dsh-agent-teams' in profile 'web'.*--as/);
+      expect(manifest().profiles.web.plugins['agent-teams'].package).toBe(PKG);
+
+      useOverlay('laptop');
+      await run(['install', 'dsh-plugin-demo@1.0.0', '-p', 'web', '--as', 'bar', '--layer', 'overlay']);
+      const layered = await run(['install', 'dsh-plugin-other@3.0.0', '-p', 'web', '--as', 'bar', '--layer', 'overlay']);
+      expect(layered.code).toBe(3);
+      expect(layered.stderr).toMatch(/Alias 'bar' is 'dsh-plugin-demo' in profile 'web'.*--as/);
+      expect(overlay('laptop').profiles?.web?.plugins?.bar).toMatchObject({ package: 'dsh-plugin-demo', source: { type: 'npm', version: '1.0.0' } });
+    });
+
     it('keeps the JSON of a write as it was', async () => {
       const out = JSON.parse((await run(['disable', 'agent-teams', '-p', 'web', '--json'])).stdout);
       expect(out).toEqual({ status: 'disabled', profile: 'web', alias: 'agent-teams' });
