@@ -22,7 +22,7 @@ your-config-repo/
 
 清单中要使用的 profile 名固定为 `web`，因为镜像启动命令是 `dsh web`。
 
-`.dockerignore` 不能省：`Dockerfile` 会 `COPY` 整个 `envctl/`，而本机用过 dshenv 的配置仓库里可能还有 `state.json`、`overlay-selection.json`、`dshenv.lock`、`backups/`、`logs/`、`trash/`、`sources/` 等本机状态。它们会让镜像内的 `apply`/`plan` 依赖本机状态而不只是清单，`.dockerignore` 把它们（以及 `.git`）排除在构建上下文之外。
+`.dockerignore` 不能省：`Dockerfile` 会 `COPY` 整个 `envctl/`，而本机用过 dshenv 的配置仓库里可能还有 `state.json`、`overlay-selection.json`、`dshenv.lock`、`backups/`、`logs/`、`trash/`、`sources/`、`remote.json`、`remote/` 等本机状态，以及 `run/`（`web start` 的记录，含带 token 的 dsh web 登录地址）。它们会让镜像内的 `apply`/`plan` 依赖本机状态而不只是清单，`.dockerignore` 把它们（以及 `.git`）排除在构建上下文之外，`run/` 若进了镜像层，token 会随镜像分发。
 
 ## 3. 构建与运行
 

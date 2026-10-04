@@ -27,6 +27,9 @@
 - 团队 skill 里同一路径在文件与目录之间互换时，`remote sync` 能正常预览与接受（先删除再写入）；此前预览报 `EEXIST`（退出码 1），或误报该路径「not owned by the remote」（退出码 3），之后每次 sync 都失败。目录里仍有本机文件时照旧拒绝。
 - 快照另存当时所有 overlay 文件；`rollback` 跨过一次 `remote add --replace` 时，把被团队接管的本机 overlay 恢复为原内容；此前会删除它。
 - `apply` 删除插件后，`purge <包名>` 能清理它留在 `envctl/sources` 下的 clone（清单不再声明该包时）；此前因所有权记录已去掉而拒绝，与 `remove` 帮助所说的流程不符。
+- `--harness-source` 指向不存在的目录时以退出码 3 报错；此前静默改用清单的 `sourceDir` 或 PATH 上的 `dsh`，`doctor`、`apply`、`web start` 跑的是另一个 DSH。
+- `--harness-source` 的相对路径按当前目录解析；此前被解析两次（`hs/hs`），相对路径总是失败。
+- 容器示例的 `.dockerignore` 排除 `envctl/run/`（`web start` 的记录，含带 token 的 dsh web 登录地址）、`remote.json`、`remote/` 与锁的 `.wanted`/`.reclaim` 文件；此前用过 `web start` 的配置仓库构建镜像时，token 会进入镜像层。
 - 帮助的环境变量部分补上 `DSHENV_NPM_CHECK`；README 与使用教程中需要 `--layer` 的命令补上 `plugins config unset` 与 `tools reset`；README 说明没有快照时的 `rollback` 与没有订阅时的 `remote remove` 以退出码 3 结束。
 
 ### 变更

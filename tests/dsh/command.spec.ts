@@ -88,6 +88,29 @@ describe('resolveDshCommand', () => {
     });
   });
 
+  it('refuses a --harness-source that does not exist rather than run another DSH', () => {
+    expect(() => resolveDshCommand({
+      cliHarnessSource: '/nonexistent/harness',
+      which: () => '/usr/local/bin/dsh',
+      sourceDirExists: () => false
+    })).toThrow(/Harness source not found: \/nonexistent\/harness/);
+  });
+
+  it('resolves a relative --harness-source against the working directory', () => {
+    const absolute = path.resolve('hs');
+    const cmd = resolveDshCommand({ cliHarnessSource: 'hs', sourceDirExists: (dir) => dir === absolute });
+    expect(cmd).toEqual({ file: 'pnpm', args: ['--silent', '--dir', absolute, 'dsh'], cwd: absolute });
+  });
+
+  it('falls back to PATH when the manifest sourceDir does not exist on this machine', () => {
+    const cmd = resolveDshCommand({
+      manifestHarnessSource: '/elsewhere/harness',
+      which: () => '/usr/local/bin/dsh',
+      sourceDirExists: () => false
+    });
+    expect(cmd).toEqual({ file: '/usr/local/bin/dsh', args: [] });
+  });
+
   it('should resolve dsh in PATH if no source dir or DSH_CLI', () => {
     const cmd = resolveDshCommand({
       which: (bin) => (bin === 'dsh' ? '/usr/local/bin/dsh' : null),

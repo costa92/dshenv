@@ -3,7 +3,13 @@
 envctl/state.json
 envctl/overlay-selection.json
 envctl/dshenv.lock
+envctl/dshenv.lock.*
 envctl/backups
 envctl/logs
 envctl/trash
 envctl/sources
+# web start records hold the live dsh web login URL, token included.
+envctl/run
+# A subscription and its team clone belong to the machine that subscribed.
+envctl/remote.json
+envctl/remote
