@@ -17,7 +17,7 @@ on:
 
 env:
   # The published npm version to run; bump it after reading the CHANGELOG.
-  DSHENV_VERSION: 0.6.1
+  DSHENV_VERSION: 0.7.0
 
 jobs:
   validate:
