@@ -2,6 +2,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- 选中 overlay 时，`pull`（以及 `adopt --yes` 随后的 pull）只把 DSH 改动的条目写进 base，overlay 删除、新增或覆盖的条目留在 overlay；此前会用合并后的结果重写 base：overlay 删掉的 base 条目被永久删除，overlay 新增与覆盖的条目被搬进 base，overlay 被清空，而 `plan` 不报告任何差异。
+
 ## 0.6.1 - 2026-10-04
 
 ### 修复

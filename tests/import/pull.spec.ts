@@ -112,6 +112,32 @@ describe('pullProfilePatches', () => {
     expect(base().profiles.web.patches).toEqual([LOCALE, { id: 'extra', config: {} }]);
   });
 
+  it('with an overlay selected, takes only what DSH changed into the base and keeps what the overlay removes, adds or overrides', async () => {
+    const MODEL = { id: 'model', config: { m: 'a' } };
+    const overlayPatches = [{ id: 'locale', remove: true }, { id: 'extra', config: { a: 1 } }, { id: 'model', config: { m: 'b' } }];
+    fs.writeFileSync(paths.manifestFile, YAML.stringify({ apiVersion: 'dshenv/v1', profiles: { web: { plugins: {}, patches: [LOCALE, MODEL] } } }));
+    fs.mkdirSync(paths.overlaysDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.overlaysDir, 'work.yaml'), YAML.stringify({ apiVersion: 'dshenv-overlay/v1', profiles: { web: { patches: overlayPatches } } }));
+    fs.writeFileSync(patchFile(), HEADER);
+    const selection = { name: 'work', via: 'flag' as const };
+    await applyEnvironment(paths, { dryRun: false, overlay: selection });
+    fs.writeFileSync(patchFile(), `${fs.readFileSync(patchFile(), 'utf8')}- id: new\n  config: { b: 2 }\n`);
+
+    const result = await pull({ selection });
+    expect(result.changes).toMatchObject([{ profile: 'web', added: ['new'], changed: [], removed: [] }]);
+    expect(base().profiles.web.patches).toEqual([LOCALE, MODEL, { id: 'new', config: { b: 2 } }]);
+    expect(overlay('work').profiles?.web?.patches).toEqual(overlayPatches);
+    expect((await applyEnvironment(paths, { dryRun: true, overlay: selection })).plan.operations).toEqual([]);
+
+    // An edit to an entry the overlay overrides stays in the overlay.
+    fs.writeFileSync(patchFile(), fs.readFileSync(patchFile(), 'utf8').replace('m: b', 'm: c'));
+    await pull({ selection });
+    expect(base().profiles.web.patches).toEqual([LOCALE, MODEL, { id: 'new', config: { b: 2 } }]);
+    expect(overlay('work').profiles?.web?.patches).toContainEqual({ id: 'model', config: { m: 'c' } });
+    expect(overlay('work').profiles?.web?.patches).toContainEqual({ id: 'locale', remove: true });
+    expect((await applyEnvironment(paths, { dryRun: true, overlay: selection })).plan.operations).toEqual([]);
+  });
+
   it('refuses machine-local entries under --no-overlay', async () => {
     await expect(pull({ allowOverlayCreation: false })).rejects.toThrow(/machine-local paths.*overlay/);
     expect(base().profiles).toEqual({});
