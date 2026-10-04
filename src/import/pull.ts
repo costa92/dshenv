@@ -16,6 +16,7 @@ import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock, ser
 import { captureUnmanagedPlugins, freeAlias, pluginOwnershipRecord, withLinkDigest } from '../resources/plugin.js';
 import { importSkill, ownedSkillDigests, planSkillImport, remoteSkillNames, skillOwnership, summarizeSkillImport, type SkillImportChanges } from '../resources/skill.js';
 import { readOverlay } from '../overlay/effective.js';
+import type { OverlaySource } from './adopt.js';
 import { mergeManifest } from '../overlay/merge.js';
 import { overlayFilePath, writeSelectionFile, type OverlaySelection } from '../overlay/selection.js';
 import { saveOverlay, setOverlayPluginFields } from '../overlay/write.js';
@@ -50,6 +51,8 @@ export interface PullOptions {
   // False leaves plugins not in the manifest out, e.g. after adopt took only the ones its candidate lists;
   // profile -> packages takes only those.
   plugins?: boolean | Record<string, string[]>;
+  // Machine-local paths adopt left out of the base for plugins it declares; set here in the overlay.
+  overlaySources?: OverlaySource[];
 }
 
 export interface PluginPullChange {
@@ -282,7 +285,8 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
       const alias = freeAlias(
         {
           ...nextBase.profiles[profile]?.plugins,
-          ...overlay?.profiles?.[profile]?.plugins,
+          // The selected overlay's aliases too: one it adds for another package would collide with this one when merged.
+          ...(overlay ?? nextOverlay)?.profiles?.[profile]?.plugins,
           ...nextLock.profiles[profile]?.plugins,
           ...remote?.lockEntries[profile]
         },
@@ -308,6 +312,25 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
         ...(overlay ? { overlayName: overlayName! } : {})
       });
     }
+  }
+
+  for (const local of options.overlaySources ?? []) {
+    const overlay = overlayFor(`Plugin '${local.package}' of profile '${local.profile}' has a machine-local path, which belongs`);
+    setOverlayPluginFields(overlay, local.profile, local.alias, { source: local.source });
+    if (local.lock) {
+      (nextLock.profiles[local.profile] ??= { plugins: {} }).plugins[local.alias] =
+        await withLinkDigest(local.lock, inventory.profiles[local.profile]?.plugins[local.package]);
+    }
+    (ownership[local.profile] ??= {})[local.package] = pluginOwnershipRecord(local.package, local.alias, local.source, now, operationId);
+    plugins.push({
+      profile: local.profile,
+      alias: local.alias,
+      package: local.package,
+      sourceType: local.source.type,
+      enabled: nextBase.profiles[local.profile]?.plugins[local.alias]?.enabled ?? true,
+      layer: 'overlay',
+      overlayName: overlayName!
+    });
   }
 
   // Validates both files the way every later command will load them.

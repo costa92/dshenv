@@ -207,7 +207,7 @@ describe('CLI writes with an active overlay', () => {
     expect(fs.existsSync(target)).toBe(false);
   });
 
-  it('leaves a plugin the overlay declares to the overlay, and refuses an adopt the overlay cannot merge onto', async () => {
+  it('leaves a plugin the overlay declares to the overlay, and adopts another package under a free alias', async () => {
     const profileDir = path.join(tempHome, 'profiles', 'web');
     for (const [name, version] of [['extra-plugin', '2.0.0'], ['other-plugin', '1.0.0']]) {
       fs.mkdirSync(path.join(profileDir, 'node_modules', name), { recursive: true });
@@ -257,12 +257,9 @@ warnings: []
     expect(same.stdout).toBe('Nothing to adopt: every plugin in the candidate is already adopted.\n');
     expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
 
-    // A different package under the alias the overlay uses would have the overlay change its package.
-    const { code, stderr } = await run(['adopt', '--from', candidateFor('other-plugin', '1.0.0'), '--layer', 'base', '--yes']);
-    expect(code).toBe(3);
-    expect(stderr).toMatch(/cannot change package/);
-    expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
-    expect(fs.existsSync(path.join(tempHome, 'envctl', 'state.json'))).toBe(false);
+    // A different package goes under another alias than the one the overlay uses, which would have the overlay change its package.
+    expect(await run(['adopt', '--from', candidateFor('other-plugin', '1.0.0'), '--layer', 'base', '--yes'])).toEqual({ code: 0, stderr: '' });
+    expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins['extra-1'].package).toBe('other-plugin');
   });
 
   it('source clone --layer base checks the overlay merge and --profile before cloning', async () => {
