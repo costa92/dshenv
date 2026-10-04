@@ -198,6 +198,11 @@ async function adoptUnderLock(
       // Capture derives its own alias; keep the one the manifest already uses for this package.
       const existingAlias = Object.entries(mergedManifest.profiles[profileName].plugins)
         .find(([, entry]) => entry.package === plugin.package)?.[0];
+      // What DSH has installed there is what the overlay says, not what the base says.
+      if (existingAlias !== undefined && Object.hasOwn(options?.overlay?.profiles?.[profileName]?.plugins ?? {}, existingAlias)) {
+        details.push({ profile: profileName, alias: existingAlias, package: plugin.package, sourceType: plugin.source.type, alreadyAdopted: true });
+        continue;
+      }
       if (existingAlias === undefined && (plugin.source.type === 'local-link' || plugin.source.type === 'local-file')) {
         if (options?.allowOverlay === false) {
           throw new ValidationError(
