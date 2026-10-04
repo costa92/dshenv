@@ -2,6 +2,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- `apply` 更新已有所有权的插件后，`state.json` 中该插件的 `lockedVersion` 与 `sourceType` 跟随清单更新（最初取得所有权的 `adoptedAt` / `adoptedBy` 保留）；此前一直停留在第一次安装或采纳时的版本。
+
 ## 0.6.0 - 2026-10-03
 
 ### 升级须知

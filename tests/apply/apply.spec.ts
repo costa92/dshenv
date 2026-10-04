@@ -164,6 +164,28 @@ profiles:
     expect(removal.plan.operations.filter((op) => op.resource === 'plugin').map((op) => [op.kind, op.package])).toEqual([['remove', '@nanmicoder/dsh-agent-teams']]);
   });
 
+  it('records the new version of an owned plugin apply updated, and keeps when it was first owned', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const state = JSON.parse(fs.readFileSync(paths.stateFile, 'utf8'));
+    state.resources.plugin.web['@nanmicoder/dsh-agent-teams'].lockedVersion = '0.1.20';
+    fs.writeFileSync(paths.stateFile, JSON.stringify(state));
+    installDeclaredPlugin();
+    const installedPackage = path.join(tempHome, 'profiles', 'web', 'node_modules', '@nanmicoder', 'dsh-agent-teams', 'package.json');
+    fs.writeFileSync(installedPackage, JSON.stringify({ name: '@nanmicoder/dsh-agent-teams', version: '0.1.20', dsh: { bundle: {} } }));
+
+    const res = await applyEnvironment(paths, {
+      dryRun: false,
+      executor: async () => {
+        installDeclaredPlugin();
+        return { success: true };
+      }
+    });
+    expect(res.plan.operations.map((op) => op.kind)).toContain('update');
+
+    const owned = loadState(fs.readFileSync(paths.stateFile, 'utf8')).resources?.plugin?.web?.['@nanmicoder/dsh-agent-teams'];
+    expect(owned).toMatchObject({ lockedVersion: '0.1.21', adoptedAt: '2026-01-01T00:00:00.000Z', adoptedBy: 'test' });
+  });
+
   it('should apply changes, create snapshot, journal and update state.json', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const res = await applyEnvironment(paths, {
