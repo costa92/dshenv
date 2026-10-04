@@ -29,6 +29,8 @@ export interface ProfileInventory {
   plugins: Record<string, InstalledPluginInfo>;
   rawProfile?: Record<string, unknown>;
   managedPatches?: ExtractedPatch[];
+  // Alias -> package of each dshenv mount row in cordis.patch.yml.
+  mounts?: Record<string, string>;
   // cordis.patch.yml is invalid YAML that rewriting any managed block would repair.
   patchFileRepairable?: boolean;
   // The profile's own patch entries; absent when the file is missing or not a readable array.
@@ -234,7 +236,7 @@ export async function readEnvironmentInventory(
     let managedPatches: ExtractedPatch[] = [];
     let patchFileRepairable = false;
     let profilePatches: ProfilePatchState | undefined;
-    let mounted = new Set<string>();
+    let mounts: Record<string, string> = {};
     try {
       const patchStat = fs.statSync(patchFile);
       if (patchStat.size <= MAX_JSON_SIZE) {
@@ -242,12 +244,13 @@ export async function readEnvironmentInventory(
         managedPatches = extractManagedPatches(patchContent, profileName);
         patchFileRepairable = needsPatchFileRepair(patchContent);
         profilePatches = readProfilePatchState(patchContent, profileName);
-        mounted = new Set(Object.values(readMounts(patchContent, profileName)));
+        mounts = readMounts(patchContent, profileName);
       }
     } catch {
       // A missing or unreadable file has no patches to report.
     }
 
+    const mounted = new Set(Object.values(mounts));
     const names = new Set<string>([...Object.keys(dependencies), ...bundleNames]);
     const plugins: Record<string, InstalledPluginInfo> = {};
 
@@ -286,6 +289,7 @@ export async function readEnvironmentInventory(
       plugins,
       rawProfile: rawProfileData,
       managedPatches,
+      mounts,
       ...(patchFileRepairable ? { patchFileRepairable } : {}),
       ...(profilePatches ? { profilePatches } : {})
     };

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { applyEnvironment } from '../../src/apply/apply.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
 import { readMounts } from '../../src/patch/mount.js';
@@ -87,5 +88,38 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg));
     await applyEnvironment(paths);
     expect(profileJson().dependencies).toEqual({});
     expect(mounts()).toEqual({});
+  });
+
+  const patchFile = () => fs.readFileSync(path.join(profileDir(), 'cordis.patch.yml'), 'utf8');
+  const withPatch = (alias: string) =>
+    `      ${alias}:\n        package: "${PKG}"\n        source: { type: npm, version: "1.0.0" }\n        patches:\n          - id: ${alias}\n            config: { a: 1 }\n`;
+
+  it('moves the mount and patches to the new alias when only the alias is renamed', async () => {
+    declare(withPatch('foo'));
+    await applyEnvironment(paths);
+    expect(mounts()).toEqual({ foo: PKG });
+
+    declare(withPatch('bar'));
+    await applyEnvironment(paths);
+    expect(mounts()).toEqual({ bar: PKG });
+    expect(patchFile()).not.toContain('plugin=foo');
+    expect(patchFile()).toContain('plugin=bar');
+    expect((await applyEnvironment(paths, { dryRun: true })).plan.operations).toEqual([]);
+  });
+
+  it('clears the blocks of a plugin it does not own once the manifest drops it, and leaves the package installed', async () => {
+    execFileSync(process.execPath, [path.join(tempHome, 'fake-dsh.mjs'), 'plugin', '--profile', 'web', 'add', `${PKG}@1.0.0`], { env: { ...process.env, DSH_HOME: tempHome } });
+    declare(withPatch('plain'));
+    await applyEnvironment(paths);
+    expect(patchFile()).toContain('plugin=plain');
+
+    fs.writeFileSync(paths.manifestFile, 'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins: {}\n');
+    const plan = (await applyEnvironment(paths, { dryRun: true })).plan;
+    expect(plan.operations.map((op) => `${op.kind}:${'alias' in op ? op.alias : ''}`)).toEqual(['configure:plain']);
+    await applyEnvironment(paths);
+    expect(patchFile()).not.toContain('plugin=plain');
+    expect(mounts()).toEqual({});
+    expect(profileJson().dependencies).toEqual({ [PKG]: '1.0.0' });
+    expect((await applyEnvironment(paths, { dryRun: true })).plan.operations).toEqual([]);
   });
 });
