@@ -288,4 +288,35 @@ warnings: []
     expect(noProfile.stderr).toContain('--layer requires --profile for source clone');
     expect(fs.existsSync(target)).toBe(false);
   });
+
+  it('refuses an overlay write of ${...}, as a base write is refused, and leaves the overlay loadable', async () => {
+    const overlayBefore = fs.readFileSync(overlayFile(), 'utf8');
+    const set = await run(['config', 'set', 'shared', 'greeting', 'hi ${USER}', '--profile', 'web', '--layer', 'overlay']);
+    expect(set.code).toBe(3);
+    expect(set.stderr).toMatch(/interpolations \$\{\.\.\.\} are not allowed/);
+    expect(fs.readFileSync(overlayFile(), 'utf8')).toBe(overlayBefore);
+    expect((await run(['plugins', 'list', '--profile', 'web'])).code).toBe(0);
+  });
+
+  it('update and config set --layer base change a base plugin the overlay removes', async () => {
+    expect((await run(['update', 'heavy', '--profile', 'web', '--to', '1.1.0', '--layer', 'base', '--no-npm-check'])).code).toBe(0);
+    expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.heavy.source).toEqual({ type: 'npm', version: '1.1.0' });
+    const set = await run(['config', 'set', 'heavy', 'mode', 'x', '--profile', 'web', '--layer', 'base']);
+    expect(set).toEqual({ code: 0, stderr: '' });
+    expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.heavy.patches).toEqual([{ id: 'heavy', config: { mode: 'x' } }]);
+  });
+
+  it('update --layer base checks the base source, not the one the overlay sets', async () => {
+    fs.writeFileSync(overlayFile(), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      shared:\n        source: { type: local-link, path: /tmp/shared }\n');
+    expect((await run(['update', 'shared', '--profile', 'web', '--to', '1.1.0', '--layer', 'base', '--no-npm-check'])).code).toBe(0);
+    expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.shared.source).toEqual({ type: 'npm', version: '1.1.0' });
+  });
+
+  it('install --layer overlay declares the package when the overlay only adjusts a plugin the base no longer has', async () => {
+    fs.writeFileSync(overlayFile(), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      gone:\n        enabled: false\n');
+    expect((await run(['install', 'gone-plugin@1.2.0', '--as', 'gone', '--profile', 'web', '--layer', 'overlay', '--no-npm-check'])).code).toBe(0);
+    expect(overlay().profiles?.web.plugins?.gone).toEqual({ package: 'gone-plugin', enabled: true, source: { type: 'npm', version: '1.2.0' } });
+    const listed = await runOut(['--json', 'plugins', 'list', '--profile', 'web']);
+    expect(listed.stdout).toContain('"gone"');
+  });
 });

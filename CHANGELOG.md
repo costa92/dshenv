@@ -15,6 +15,9 @@
 - 没有清单时 `status` 以退出码 3 结束（与 `plan` 一致），不再报告为 `degraded`（退出码 5）。
 - `tools list --all` 与 `--preset` 同时使用时报错（退出码 3），不再静默忽略 `--preset`。
 - 对已经全部纳管的候选执行 `adopt --yes` 时输出「Nothing to adopt」，不再报告「Adopted N plugin(s)」并列出它们。
+- 写 overlay 的命令（`plugins config set`、`tools config set`、`install` 等加 `--layer overlay`）拒绝含 `${...}` 的值（退出码 3），与写 base 一致；此前会写进 overlay，之后所有读取它的命令都以退出码 3 失败，只能手改文件。
+- 有生效 overlay 时，`update --layer base` 与 `plugins config set --layer base` 能改 overlay 用 `remove: true` 去掉的 base 插件，`update --layer base` 按 base 中的来源判断是否为 npm；此前前者崩溃（退出码 1），后者按 overlay 覆盖后的来源拒绝。
+- overlay 里只调整某个 base 插件（没有 `package`）、而 base 已不再声明它时，`install`/`source clone --profile` 加 `--layer overlay` 写入完整的 `package`；此前输出「Added」，插件却不在生效清单中。
 - 帮助的环境变量部分补上 `DSHENV_NPM_CHECK`；README 与使用教程中需要 `--layer` 的命令补上 `plugins config unset` 与 `tools reset`；README 说明没有快照时的 `rollback` 与没有订阅时的 `remote remove` 以退出码 3 结束。
 
 ### 变更

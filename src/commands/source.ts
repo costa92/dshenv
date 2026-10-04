@@ -166,7 +166,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
               throw new ValidationError(`Alias '${alias}' is '${baseEntry.package}' in the base manifest; an overlay cannot change its package`);
             }
             const overlayEntry = overlayDoc.profiles?.[profile]?.plugins?.[alias];
-            const exists = overlayEntry ? !overlayEntry.remove : Boolean(baseEntry);
+            // An overlay entry without a package only adjusts a base plugin, so with none in the base nothing is declared yet.
+            const exists = baseEntry ? !overlayEntry?.remove : overlayEntry?.package !== undefined && !overlayEntry.remove;
             setOverlayPluginFields(overlayDoc, profile, alias, exists
               ? { source: { type: 'git', url } }
               : baseEntry
