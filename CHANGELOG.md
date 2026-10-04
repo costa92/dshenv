@@ -12,6 +12,9 @@
 - `pull` 需要写的 overlay（选中的，或要新建的 `local`）归团队所有时，预览就以退出码 3 拒绝；此前预览说会写进去，加 `--yes` 才被拒绝。
 - `remote sync` 的预览不再把用软链接放进 `envctl/skills` 的本机 skill 列为「remove」；只为这次同步涉及的 skill 重算摘要。
 - `remote sync --no-overlay`（或 `--overlay` 其他名字）不再绕过「本机选中的 overlay 被团队删除」的检查；此前同步成功后，之后的命令都报 `Overlay '<名字>' not found`。
+- `doctor` 只原样显示常见的预发布标签（如 `rc.2`、`beta.1`），其他标签显示为「(a prerelease)」；此前完整打印 `DSH_CLI` 包装脚本输出的版本，可能带出凭据（不支持版本的报错早已如此处理）。
+- `dshenv help <不存在的命令>`、`dshenv <不存在的命令> --help` 按未知命令处理，退出码 3 并给出相近命令（`--json` 时输出 JSON 错误）；此前打印根帮助、退出码 0。
+- README 关于 `verify` 地址来源的说明前后矛盾（「只从 `DSHENV_DSH_URL` 读取」），改为说明显式地址只能经该环境变量给出；使用教程不再说 `web start` 的地址「只打印这一次」，并统一用 `mark-restarted`。
 
 ## 0.8.0 - 2026-10-04
 

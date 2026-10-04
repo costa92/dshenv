@@ -89,6 +89,31 @@ function commandUsage(cmd: Command): string {
   return `${ancestors}${cmd.name()} ${cmd.usage()}`;
 }
 
+// commander answers help for a command it does not know with the root help and exit 0; without the help request it
+// reports the unknown command (with a suggestion) as the usage error it is.
+function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[] {
+  const valued = new Set(program.options.filter((option) => option.required || option.optional).flatMap((option) => [option.long, option.short]));
+  const operands: number[] = [];
+  for (let index = 0; index < argv.length && operands.length < 2; index++) {
+    const arg = argv[index];
+    if (arg === '--') break;
+    if (arg.startsWith('-')) {
+      if (!arg.includes('=') && valued.has(arg)) index++;
+      continue;
+    }
+    operands.push(index);
+  }
+  const known = (name: string) => name === 'help' || program.commands.some((cmd) => cmd.name() === name || cmd.aliases().includes(name));
+  const [first, second] = operands;
+  if (first !== undefined && argv[first] === 'help' && second !== undefined && !known(argv[second])) {
+    return argv.filter((_, index) => index !== first);
+  }
+  if (first !== undefined && !known(argv[first]) && argv.some((arg) => arg === '--help' || arg === '-h')) {
+    return argv.filter((arg) => arg !== '--help' && arg !== '-h');
+  }
+  return argv;
+}
+
 export async function runCli(argv: string[], io?: CliIO): Promise<number> {
   const out = io?.stdout ?? ((chunk: string) => process.stdout.write(chunk));
   const err = io?.stderr ?? ((chunk: string) => process.stderr.write(chunk));
@@ -173,7 +198,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
     if (argv.includes('--no-overlay') && argv.some((arg) => arg === '--overlay' || arg.startsWith('--overlay='))) {
       throw new ValidationError('--overlay and --no-overlay cannot be used together');
     }
-    await program.parseAsync(argv, { from: 'user' });
+    await program.parseAsync(withoutHelpForUnknownCommand(program, argv), { from: 'user' });
     writeErr(commanderErr);
     return exitCodeToReturn;
   } catch (err: unknown) {

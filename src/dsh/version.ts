@@ -65,7 +65,7 @@ export function isCompatibleDshVersion(
     return {
       compatible: true,
       isUntested: true,
-      reason: `Version ${value} allowed via --allow-untested-dsh override`
+      reason: `Version ${displayDshVersion(value)} allowed via --allow-untested-dsh override`
     };
   }
 
@@ -73,6 +73,22 @@ export function isCompatibleDshVersion(
     compatible: false,
     reason: `Unsupported DSH version: ${value}. Use --allow-untested-dsh to enable untested runtimes.`
   };
+}
+
+// DSH_CLI can name a wrapper whose --version output carries a credential, so only a prerelease tag made of the usual
+// words and numbers (rc.2, beta.1) is shown as it is.
+const USUAL_PRERELEASE = /^(?:alpha|beta|rc|pre|preview|next|canary|dev|nightly|\d+)(?:\.(?:alpha|beta|rc|pre|preview|next|canary|dev|nightly|\d+))*$/;
+
+export function displayDshVersion(value: string): string {
+  const parsed = parseDshVersion(value);
+  if (!parsed) {
+    return 'an unparseable version';
+  }
+  const core = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+  if (!parsed.prerelease) {
+    return core;
+  }
+  return USUAL_PRERELEASE.test(parsed.prerelease) ? `${core}-${parsed.prerelease}` : `${core} (a prerelease)`;
 }
 
 // The prerelease tag is left out: DSH_CLI can name a wrapper whose --version output carries a credential.

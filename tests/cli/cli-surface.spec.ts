@@ -97,6 +97,21 @@ describe('CLI surface', () => {
       expect(error.error).toEqual({ type: 'ValidationError', message: "missing required argument 'spec'", exitCode: 3 });
     });
 
+    it('exits 3 when help is asked for a command that does not exist, as running it would', async () => {
+      for (const args of [['help', 'bogus'], ['bogus', '--help'], ['--dsh-home', '/tmp/x', 'bogus', '-h']]) {
+        const out = await run(args, false);
+        expect(out.code).toBe(3);
+        expect(out.stdout).toBe('');
+        expect(out.stderr).toMatch(/unknown command 'bogus'/);
+      }
+      expect((await run(['help', 'instal'], false)).stderr).toMatch(/Did you mean install\?/);
+      const json = await run(['--json', 'help', 'bogus'], false);
+      expect(JSON.parse(json.stderr.split('\n').filter(Boolean).at(-1)!).error.exitCode).toBe(3);
+      for (const args of [['help', 'plan'], ['plan', '--help'], ['remote', 'sync', '--help'], ['help']]) {
+        expect((await run(args, false)).code).toBe(0);
+      }
+    });
+
     it('still exits 0 for help and version, and shows help when run without a command', async () => {
       expect((await run(['--help'], false)).code).toBe(0);
       expect((await run(['-v'], false)).code).toBe(0);
