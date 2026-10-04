@@ -111,6 +111,16 @@ describe('CLI manifest write commands', () => {
       expect(overlay('laptop').profiles?.web?.plugins?.bar).toMatchObject({ package: 'dsh-plugin-demo', source: { type: 'npm', version: '1.0.0' } });
     });
 
+    it('records a git fragment as the commit when it is one, and as the ref otherwise', async () => {
+      const commit = 'a'.repeat(40);
+      expect((await run(['install', `git+https://example.invalid/dsh-plugin-x.git#${commit}`, '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins.x.source).toEqual({ type: 'git', url: 'https://example.invalid/dsh-plugin-x.git', commit });
+      expect((await run(['install', 'git+https://example.invalid/dsh-plugin-y.git#v1.2.0', '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins.y.source).toEqual({ type: 'git', url: 'https://example.invalid/dsh-plugin-y.git', ref: 'v1.2.0' });
+      expect((await run(['install', 'git+https://example.invalid/dsh-plugin-z.git', '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins.z.source).toEqual({ type: 'git', url: 'https://example.invalid/dsh-plugin-z.git' });
+    });
+
     it('keeps the JSON of a write as it was', async () => {
       const out = JSON.parse((await run(['disable', 'agent-teams', '-p', 'web', '--json'])).stdout);
       expect(out).toEqual({ status: 'disabled', profile: 'web', alias: 'agent-teams' });

@@ -386,6 +386,29 @@ profiles:
     expect(none.stderr).toContain('No remote is configured; run dshenv remote add <url> first');
   });
 
+  it('clones again when the clone follows another URL than remote.json, as after a rollback across remote add', async () => {
+    const forkBare = path.join(root, 'fork.git');
+    const forkWork = path.join(root, 'fork-work');
+    await execa('git', ['clone', '--quiet', '--bare', team.bare, forkBare]);
+    await execa('git', ['clone', '--quiet', forkBare, forkWork]);
+    await execa('git', ['config', 'user.name', 'Tester'], { cwd: forkWork });
+    await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: forkWork });
+    await execa('git', ['config', 'commit.gpgsign', 'false'], { cwd: forkWork });
+    const fork = { bare: forkBare, work: forkWork, url: `file://${forkBare}` };
+    const forkHead = await commitTeamFiles(fork, {}, 'fork only');
+    const config = JSON.parse(read(paths.remoteFile));
+    fs.writeFileSync(paths.remoteFile, JSON.stringify({ ...config, url: fork.url }));
+
+    const preview = await run(['sync', '--json']);
+    expect(JSON.parse(preview.stdout)).toMatchObject({ status: 'pending', from: first, to: forkHead });
+  });
+
+  it('ignores files directly under skills/, which belong to no skill', async () => {
+    await commitTeamFiles(team, { 'envctl/skills/README.md': '# team skills\n', 'envctl/skills/.DS_Store': 'x' }, 'skills readme');
+    expect((await run(['sync', '--yes'])).code).toBe(0);
+    expect(fs.existsSync(path.join(paths.skillsDir, 'README.md'))).toBe(false);
+  });
+
   it('exits 1 with the git stderr when the remote is unreachable', async () => {
     fs.renameSync(team.bare, `${team.bare}.moved`);
     const { code, stderr } = await run(['sync']);

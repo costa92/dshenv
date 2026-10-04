@@ -4,6 +4,14 @@
 
 ## 未发布
 
+### 修复
+
+- `install <git 地址>#<分支或 tag>` 把 `#` 后的内容记为 `ref`，不再因「不是 commit」报 schema 错误；README 的 Git 示例改用会锁定 commit 的 `source clone --profile`。
+- 包名（含作用域）不能以 `-` 开头，避免被 pnpm 当成选项。
+- `source show/sync/clone` 调用 git 时不再继承 `GIT_DIR`、`GIT_WORK_TREE` 等变量；此前从 git hook 或 CI 步骤里运行时会检查、快进或锁定另一个仓库。
+- `remote sync` 发现本地克隆的 origin 与 `remote.json` 的 URL 不一致（如 rollback 跨过了一次 `remote add`）时重新克隆；此前会从旧仓库取内容。
+- 团队仓库中直接放在 `skills/` 下的文件（如 `README.md`、`.DS_Store`）被忽略，不再让整个提交被拒；使用教程的团队仓库布局补上 `skills/` 与 `__jsExpr` 限制。
+
 ### 变更
 
 - `gc` 同时删除 `envctl/backups` 中早于 `--older-than` 的快照（始终保留最近 10 个），以及被中断的操作留下、超过同一期限的 `.…partial` 临时目录；此前快照只增不减，每次有变更的 `apply` 都会复制一份 `envctl/skills`。

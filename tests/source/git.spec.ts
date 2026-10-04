@@ -35,6 +35,22 @@ describe('Managed Git Source Lifecycle', () => {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
+  it('inspects the directory it is given even when GIT_DIR names another repository', async () => {
+    const other = path.join(tempDir, 'other');
+    fs.mkdirSync(other);
+    await execa('git', ['init'], { cwd: other });
+    await execa('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '--allow-empty', '-m', 'other'], { cwd: other });
+    const own = (await execa('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).stdout.trim();
+    const saved = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(other, '.git');
+    try {
+      expect((await inspectGitWorkingTree(repoDir)).commit).toBe(own);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
+  });
+
   it('should inspect clean git working tree accurately', async () => {
     const status = await inspectGitWorkingTree(repoDir);
     expect(status.isGitRepo).toBe(true);
