@@ -65,4 +65,19 @@ describe('apply skills', () => {
     fs.rmSync(path.join(paths.skillsDir, 'wiki'), { recursive: true });
     expect(skillOps(await plan())).toMatchObject([{ kind: 'remove', name: 'wiki' }]);
   });
+
+  it('takes ownership without a state.json yet, as a first apply on a machine that already has the skills', async () => {
+    write(dshSkill('wiki'), 'declared');
+    expect((await applyEnvironment(paths)).applied).toBe(false);
+    expect(Object.keys(loadState(fs.readFileSync(paths.stateFile, 'utf8')).resources?.skill ?? {})).toEqual(['wiki']);
+
+    fs.rmSync(path.join(paths.skillsDir, 'wiki'), { recursive: true });
+    expect(skillOps(await plan())).toMatchObject([{ kind: 'remove', name: 'wiki' }]);
+  });
+
+  it('writes no state.json for an in-sync apply with nothing to record', async () => {
+    fs.rmSync(path.join(paths.skillsDir, 'wiki'), { recursive: true });
+    expect((await applyEnvironment(paths)).applied).toBe(false);
+    expect(fs.existsSync(paths.stateFile)).toBe(false);
+  });
 });
