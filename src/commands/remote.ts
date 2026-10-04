@@ -1,10 +1,11 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { hasEmbeddedCredentials } from '../manifest/schema.js';
 import { renderPlan } from '../output/render.js';
 import { planJson } from '../planner/plan.js';
-import { cloneRemoteRepo, defaultBranch, fetchBranch, isAncestor, resolveTargetRef } from '../remote/git.js';
+import { cloneOrigin, cloneRemoteRepo, defaultBranch, fetchBranch, isAncestor, resolveTargetRef } from '../remote/git.js';
 import { lockEntryId } from '../remote/lock-entries.js';
 import { findLocalDrift, findRemoteLockDrift } from '../remote/ownership.js';
 import {
@@ -45,6 +46,12 @@ function ownedEntryIds(config: RemoteConfig): string[] {
   return Object.entries(config.lockEntries)
     .flatMap(([profile, aliases]) => Object.keys(aliases).map((alias) => lockEntryId(profile, alias)))
     .sort();
+}
+
+// git records a relative clone path resolved against the directory it ran in, so only a URL or an absolute path
+// can be compared with the clone's origin.
+function comparableUrl(url: string): boolean {
+  return url.includes(':') || path.isAbsolute(url);
 }
 
 // The branch tip, or the commit a ref names on that branch.
@@ -272,8 +279,10 @@ export function registerRemoteCommands(ctx: CommandContext): void {
             throw new ValidationError('No remote is configured; run dshenv remote add <url> first');
           }
           const repoDir = remoteRepoDir(paths);
-          // remote remove deletes the clone, and rolling back past it brings remote.json back without one.
-          if (!fs.existsSync(repoDir)) {
+          // remote remove deletes the clone, and rolling back past it brings remote.json back without one, or with
+          // the clone of a remote added since.
+          if (!fs.existsSync(repoDir) || (comparableUrl(config.url) && (await cloneOrigin(repoDir)) !== config.url)) {
+            await fs.promises.rm(repoDir, { recursive: true, force: true });
             await cloneRemoteRepo(config.url, repoDir);
           }
           const target = await targetCommit(repoDir, config.branch, cmdOpts.ref);

@@ -24,7 +24,8 @@ function candidateKey(rel: string): string | null {
   if (rel === 'manifest.yaml' || rel === 'lock.json') {
     return rel;
   }
-  return /^overlays\/[^/]+\.yaml$/.test(rel) || rel.startsWith('skills/') ? rel : null;
+  // A file directly under skills/ (a README, .DS_Store) belongs to no skill.
+  return /^overlays\/[^/]+\.yaml$/.test(rel) || /^skills\/[^/]+\/./.test(rel) ? rel : null;
 }
 
 // Only a network URL (scheme://, or scp-style host:path) names the same repository on every machine.

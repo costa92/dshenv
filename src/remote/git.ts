@@ -57,6 +57,12 @@ export async function cloneRemoteRepo(url: string, repoDir: string): Promise<voi
   await git(null, ['clone', '--bare', '--quiet', '--', url, repoDir]);
 }
 
+// The URL the clone fetches from, or null when it has none (a broken clone).
+export async function cloneOrigin(repoDir: string): Promise<string | null> {
+  const res = await execa('git', gitArgs(repoDir, ['remote', 'get-url', 'origin']), { shell: false, timeout: GIT_TIMEOUT_MS, env: GIT_ENV, reject: false });
+  return res.exitCode === 0 ? String(res.stdout).trim() : null;
+}
+
 export async function defaultBranch(repoDir: string): Promise<string> {
   return (await git(repoDir, ['symbolic-ref', '--short', 'HEAD'])).trim();
 }
