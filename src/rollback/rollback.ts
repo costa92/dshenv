@@ -18,6 +18,8 @@ import * as path from 'node:path';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { readSkillDigests } from '../resources/skill.js';
+import { dropUninstalledOwnership } from '../resources/plugin.js';
+import { isDeepStrictEqual } from 'node:util';
 import type { EnvironmentState } from '../domain.js';
 import * as fs from 'node:fs';
 
@@ -44,27 +46,35 @@ function readState(paths: EnvironmentPaths): EnvironmentState | null {
   }
 }
 
-// Rollback leaves the profiles alone, so a plugin an apply installed is still installed and must stay dshenv's to remove.
-// Skills in DSH_HOME/skills stay too: one still as dshenv last synced it keeps that baseline, so apply converges it.
-async function keepInstalledOwnership(paths: EnvironmentPaths, before: EnvironmentState | null): Promise<void> {
+// Rollback leaves the profiles alone, so what the restored state.json says about them must still match them: a plugin
+// an apply installed and that is still installed stays dshenv's to remove, one no longer installed is not, and a
+// restart owed before the rollback is still owed. Skills in DSH_HOME/skills stay too: one still as dshenv last synced
+// it keeps that baseline, so apply converges it.
+async function keepLiveState(paths: EnvironmentPaths, before: EnvironmentState | null): Promise<void> {
   const restored = readState(paths);
-  if ((!before?.resources?.plugin && !before?.resources?.skill) || (fs.existsSync(paths.stateFile) && !restored)) {
+  if (fs.existsSync(paths.stateFile) && !restored) {
     return;
   }
   const next: EnvironmentState = restored ?? { apiVersion: 'dshenv-state/v1', lastApplied: '', appliedLockHash: '', profiles: {} };
-  const plugin = structuredClone(next.resources?.plugin ?? {});
+  let plugin = structuredClone(next.resources?.plugin ?? {});
   const skill = structuredClone(next.resources?.skill ?? {});
-  let changed = false;
-  if (before?.resources?.plugin) {
+  const profiles = structuredClone(next.profiles);
+  if (before?.resources?.plugin || next.resources?.plugin) {
     const inventory = await readEnvironmentInventory(paths);
-    for (const [profile, packages] of Object.entries(before.resources.plugin)) {
+    for (const [profile, packages] of Object.entries(before?.resources?.plugin ?? {})) {
       for (const [packageName, record] of Object.entries(packages)) {
         // Adopted plugins were DSH's before; rolling back an adopt gives them back.
-        if (!record.adoptedBy.startsWith('apply-') || plugin[profile]?.[packageName] || !inventory.profiles[profile]?.plugins[packageName]?.installed) {
-          continue;
+        if (record.adoptedBy.startsWith('apply-') && !plugin[profile]?.[packageName]) {
+          (plugin[profile] ??= {})[packageName] = record;
         }
-        (plugin[profile] ??= {})[packageName] = record;
-        changed = true;
+      }
+    }
+    plugin = dropUninstalledOwnership(plugin, inventory);
+  }
+  for (const [profile, { plugins }] of Object.entries(before?.profiles ?? {})) {
+    for (const [packageName, record] of Object.entries(plugins)) {
+      if (record.status === 'restart-required') {
+        (profiles[profile] ??= { plugins: {} }).plugins[packageName] = record;
       }
     }
   }
@@ -73,12 +83,14 @@ async function keepInstalledOwnership(paths: EnvironmentPaths, before: Environme
     for (const [name, record] of Object.entries(before.resources.skill)) {
       if (live[name] === record.digest && skill[name]?.digest !== record.digest) {
         skill[name] = record;
-        changed = true;
       }
     }
   }
+  const changed = !isDeepStrictEqual(plugin, next.resources?.plugin ?? {}) ||
+    !isDeepStrictEqual(skill, next.resources?.skill ?? {}) ||
+    !isDeepStrictEqual(profiles, next.profiles);
   if (changed) {
-    await writeAtomic(paths.stateFile, serializeState(withResources(next, { plugin, skill })), 'overwrite');
+    await writeAtomic(paths.stateFile, serializeState(withResources({ ...next, profiles }, { plugin, skill })), 'overwrite');
   }
 }
 
@@ -197,7 +209,7 @@ async function rollbackDecided(
   });
   const before = readState(paths);
   await restoreEnvironmentSnapshot(snapshot, paths);
-  await keepInstalledOwnership(paths, before);
+  await keepLiveState(paths, before);
   // A pull may have created and selected the overlay the restore just removed; a selection of nothing breaks every command.
   const selected = readSelectionFile(paths);
   if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`)) {

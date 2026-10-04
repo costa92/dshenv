@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
 import type { EnvironmentPaths } from '../environment/paths.js';
-import type { CaptureDocument, EnvironmentLock, EnvironmentManifest, EnvironmentState, PluginLockEntry, PluginOwnershipRecord, PluginSource } from '../domain.js';
+import type { CaptureDocument, EnvironmentLock, EnvironmentManifest, EnvironmentState, PluginLockEntry, PluginOwnership, PluginOwnershipRecord, PluginSource } from '../domain.js';
 import type { EnvironmentInventory, InstalledPluginInfo } from '../inventory/profile-reader.js';
 import { captureEnvironment } from '../import/capture.js';
 import { calculateSourceDigest } from '../source/local.js';
@@ -157,7 +157,9 @@ export function planPlugins(
       // A bundle entry without a dependency reads as in-box, which proves nothing about a package declared from elsewhere.
       const isInstalled = Boolean(installed?.installed) && !(installed?.sourceType === 'in-box' && pluginManifest.source.type !== 'in-box');
       const currentVersion = installed?.version;
-      const currentEnabled = isInstalled ? (installed?.enabled ?? true) : undefined;
+      // A plain plugin is loaded through the mount row of its alias; a row left under an old alias is cleared below.
+      const mountedHere = installed?.bundle === false && profInv?.mounts ? profInv.mounts[alias] === pkgName : undefined;
+      const currentEnabled = isInstalled ? (mountedHere ?? installed?.enabled ?? true) : undefined;
 
       if (!isInstalled && pluginManifest.source.type === 'in-box') {
         // In-box plugins ship with DSH and are only inventoried through the bundles, so absence means disabled.
@@ -375,6 +377,28 @@ export function planPlugins(
     }
   }
 
+  // dshenv blocks of an alias the manifest no longer declares describe nothing, unless a remove of that alias clears them.
+  for (const [profName, profInv] of Object.entries(inventory.profiles)) {
+    const declared = manifestProfiles[profName]?.plugins ?? {};
+    const removed = new Set(operations.filter((op) => op.profile === profName && op.kind === 'remove').map((op) => op.alias));
+    const aliases = new Set([
+      ...(profInv.managedPatches ?? []).map((patch) => patch.plugin).filter((alias) => !alias.startsWith('@')),
+      ...Object.keys(profInv.mounts ?? {})
+    ]);
+    for (const alias of aliases) {
+      if (!Object.hasOwn(declared, alias) && !removed.has(alias)) {
+        operations.push({
+          resource: 'plugin',
+          kind: 'configure',
+          profile: profName,
+          alias,
+          package: profInv.mounts?.[alias] ?? alias,
+          reason: 'Managed configuration patch or mount of an alias the manifest no longer declares'
+        });
+      }
+    }
+  }
+
   return { operations, unmanaged, unverified };
 }
 
@@ -512,7 +536,9 @@ export async function applyPluginOperation(operation: PluginOperation, ctx: Plug
   if (operation.kind === 'configure') {
     const plugin = manifest.profiles[operation.profile]?.plugins[operation.alias];
     if (!plugin) {
-      throw new ValidationError(`Plugin '${operation.alias}' is missing from profile '${operation.profile}'`);
+      rollback.undo.push(await clearManagedPatches(paths, operation.profile, operation.alias));
+      rollback.undo.push(await writePluginMount(paths, operation.profile, operation.alias, null));
+      return null;
     }
     rollback.undo.push(await writeManagedPatches(paths, operation.profile, operation.alias, plugin.patches ?? []));
     return null;
@@ -604,6 +630,20 @@ export function pluginOwnershipRecord(packageName: string, alias: string, source
     adoptedAt,
     adoptedBy
   };
+}
+
+// A record for a package no longer in its profile has nothing left to remove; kept, it would make a later
+// hand install of that package look like dshenv's.
+export function dropUninstalledOwnership(ownership: PluginOwnership | undefined, inventory: EnvironmentInventory): PluginOwnership {
+  const next: PluginOwnership = {};
+  for (const [profileName, packages] of Object.entries(ownership ?? {})) {
+    const live = inventory.profiles[profileName]?.plugins;
+    const kept = live ? Object.fromEntries(Object.entries(packages).filter(([name]) => live[name]?.installed)) : packages;
+    if (Object.keys(kept).length > 0) {
+      next[profileName] = kept;
+    }
+  }
+  return next;
 }
 
 // A captured alias can already name another declared package; overwriting that entry would drop it and its patches.

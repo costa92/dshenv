@@ -318,8 +318,19 @@ function collectPluginStatuses(
         } else if (drifted.has(key)) {
           push(profName, plugin.package, 'drifted');
         } else {
-          push(profName, plugin.package, 'healthy');
+          const stateStatus = state?.profiles?.[profName]?.plugins?.[plugin.package]?.status;
+          push(profName, plugin.package, stateStatus === 'restart-required' ? stateStatus : 'healthy');
         }
+      }
+    }
+  }
+
+  // A plugin apply removed or that DSH no longer lists can still be running until DSH restarts.
+  const profiles = new Set([...Object.keys(inventory.profiles), ...Object.keys(manifest?.profiles ?? {})]);
+  for (const [profName, profState] of Object.entries(state?.profiles ?? {})) {
+    for (const [pkgName, record] of Object.entries(profState.plugins)) {
+      if (profiles.has(profName) && record.status === 'restart-required') {
+        push(profName, pkgName, 'restart-required');
       }
     }
   }
