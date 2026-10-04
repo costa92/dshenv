@@ -333,7 +333,7 @@ dshenv status --json
 ```
 
 ### 14. `dshenv source clone`
-带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`，并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。清单里这个别名已声明同一仓库的 `commit` 或 `ref`（如 `install <url>#<sha>` 写入的）时，克隆并锁定它而不是 HEAD，commit 不在仓库里时报错；给了 `--ref` 时改用该 ref 并写进清单。别名默认与 `install` 相同（仓库名去掉 `dsh-plugin-`、`dsh-` 前缀）；别名已指向另一个包时拒绝（退出码 3）。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
+带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`，并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。清单里这个别名已声明同一仓库的 `commit` 或 `ref`（如 `install <url>#<sha>` 写入的）时，克隆并锁定它而不是 HEAD，commit 不在仓库里时报错；给了 `--ref` 时改用该 ref 并写进清单。别名默认与 `install` 相同（仓库名去掉 `dsh-plugin-`、`dsh-` 前缀）；别名已指向另一个包时拒绝（退出码 3）。本机仓库的路径（如 `/src/plugin`）记为 `file://` 地址，pnpm 才会按 Git 仓库安装。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
 
 ```bash
 dshenv source clone https://github.com/ex/plugin.git --profile web --as demo
@@ -343,7 +343,7 @@ dshenv source sync -p web --as demo            # 快进受管 clone，并把新�
 dshenv source sync -p web --as demo --ref v1.2.0
 ```
 
-`source show` / `source sync` 不带 `--profile` 时作用于给出的目录（默认当前目录），`sync` 只快进、不写 lock；不给 `--ref` 时快进到当前分支对应的远端分支，处于 detached HEAD 时须给 `--ref`。带 `--profile` 时，Profile 里恰好有一个 Git 插件可省略 `--as`；`sync` 总是按清单中的 URL 写入完整的 lock 条目，之后 `apply --yes` 安装新 commit。
+`source show` / `source sync` 不带 `--profile` 时作用于给出的目录（不给时为当前目录），`sync` 只快进、不写 lock；不给 `--ref` 时快进到当前分支对应的远端分支，处于 detached HEAD 时须给 `--ref`。带 `--profile` 时，Profile 里恰好有一个 Git 插件可省略 `--as`；`sync` 总是按清单中的 URL 写入完整的 lock 条目，之后 `apply --yes` 安装新 commit。
 
 不是 DSH bundle 的插件包（`package.json` 没有 `dsh.bundle`，例如 [dsh-session-search](https://github.com/Tieboyh/dsh-session-search)）不能放进 bundle 列表，DSH 会跳过它。dshenv 在安装后检查包类型，这类插件改为在 `cordis.patch.yml` 里写一个受管的 `insert` 行挂载（`# dshenv:begin ... plugin=@mount:<alias>`），`enable`/`disable` 切换这一行，`verify` 按已加载的插件条目判断。
 
@@ -541,6 +541,7 @@ dshenv remove agent-teams -p web
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
 - 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。
+- 本地来源的目录必须存在（也可写成 `file://` 地址），且不能带 `#<ref>`；要按 Git 仓库安装本机仓库，写 `git+file://<路径>#<commit>`。
 - 别名默认取包名（去掉作用域与 `dsh-plugin-`、`dsh-` 前缀），`--as` 指定。本地来源的包名默认读其 `package.json` 的 `name`（读不到时用目录名），Git 来源默认用仓库名，与实际包名不同时用 `--package` 指定（`source clone --profile` 会读仓库的 `package.json`）；`--package` 只对 Git 与本地来源有效。
 - 同一别名重新 `install` 同一个包只改来源，保留 `patches` 与启用状态；输出会说明从哪个版本（来源）改成了哪个。别名已经指向另一个包时拒绝（退出码 3），用 `--as` 换一个别名，或先 `remove` 原来的。
 - npm 来源（`install` 与 `update --to`）先用 `npm view` 核对：包在而版本不存在时以退出码 3 报错并给出最新版本。npm 看不到这个包（可能是需要凭据的私有包）、拒绝凭据，或查询不了（离线、超过约 5 秒）时只警告，照常写入清单。加 `--no-npm-check` 或设 `DSHENV_NPM_CHECK=off` 跳过核对；`--json` 输出的 `npmCheck` 是 `verified`、`unverified`、`unreachable` 或 `skipped`。包名不合法（例如以 `-` 开头）时直接拒绝，不会交给 npm。

@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { loadManifest, loadLock, serializeLock, serializeManifest } from '../manifest/files.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import {
@@ -126,9 +127,11 @@ export function registerSourceCommands(ctx: CommandContext): void {
     .option('--package <name>', 'package name when --profile is set; defaults to the cloned package.json name')
     .addOption(writeLayer())
     .option('--new-profile', 'with --profile: allow a profile that is neither declared nor created yet')
-    .action(async (url: string, targetDir: string | undefined, cmdOpts) => {
+    .action(async (given: string, targetDir: string | undefined, cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      // A plain repository path in the manifest reaches pnpm as a local directory to link, not a Git repository.
+      const url = path.isAbsolute(given) || /^\.\.?[\\/]/.test(given) ? pathToFileURL(path.resolve(given)).href : given;
       // git would also keep such a URL in the clone's .git/config, so refuse it even without --profile.
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
@@ -336,10 +339,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
         resolvedTarget = targetDir
           ? path.resolve(process.cwd(), targetDir)
           : managedGitSourceDir(paths.managerDir, cmdOpts.profile, packageName);
-      } else if (targetDir) {
-        resolvedTarget = path.resolve(process.cwd(), targetDir);
       } else {
-        throw new ValidationError('source sync requires <dir> or --profile');
+        resolvedTarget = path.resolve(process.cwd(), targetDir ?? '.');
       }
 
       if (cmdOpts.profile && alias) {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { applyEnvironment } from '../../src/apply/apply.js';
 import { runCli } from '../../src/cli.js';
@@ -241,7 +242,7 @@ describe('CLI sync', () => {
     const clone = await run(['source', 'clone', upstream, '-p', 'web', '--as', 'tool', '--overlay', 'mine', '--layer', 'overlay']);
     expect(clone.code).toBe(0);
     const toolEntry = loadLock(read(paths.lockFile)).profiles.web.plugins.tool;
-    expect(toolEntry.source).toMatchObject({ type: 'git', url: upstream });
+    expect(toolEntry.source).toMatchObject({ type: 'git', url: pathToFileURL(upstream).href });
     expect(await run(['sync'])).toMatchObject({ code: 0, stdout: `Already up to date with ${team.url} at ${first}.\n` });
 
     await commitTeamFiles(team, { 'envctl/manifest.yaml': V2_MANIFEST, 'envctl/lock.json': TEAM_LOCK_V2 }, 'v2');

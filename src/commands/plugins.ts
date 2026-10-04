@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { assertConfigPath, getAtPath, parseConfigValue, readPluginConfig, unsetAtPath, upsertPluginPatch } from '../config/config.js';
@@ -116,8 +117,15 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     }
 
     if (isLocalPathSpec(spec)) {
-      const localPath = spec.startsWith('file:') ? spec.slice(5) : spec;
+      if (spec.includes('#')) {
+        throw new ValidationError(`'${spec}': a local path takes no #<ref>; for a Git repository use git+file://<path>#<commit>`);
+      }
+      const localPath = spec.startsWith('file://') ? fileURLToPath(spec) : spec.startsWith('file:') ? spec.slice(5) : spec;
       const resolved = path.resolve(localPath);
+      // apply would only fail on it, after other steps already ran.
+      if (!fs.existsSync(resolved)) {
+        throw new ValidationError(`Local plugin path not found: ${resolved}`);
+      }
       const baseName = path.basename(resolved);
       const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
       return {

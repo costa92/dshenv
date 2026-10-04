@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as os from 'node:os';
 import { execa } from 'execa';
 import { runCli } from '../../src/cli.js';
@@ -137,7 +138,7 @@ describe('CLI writes with an active overlay', () => {
     expect(overlay().profiles?.web.plugins?.demo).toEqual({
       package: 'demo-plugin',
       enabled: true,
-      source: { type: 'git', url: upstream }
+      source: { type: 'git', url: pathToFileURL(upstream).href }
     });
     expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(baseBefore);
 

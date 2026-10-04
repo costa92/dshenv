@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { execa } from 'execa';
 import * as YAML from 'yaml';
 import { runCli } from '../../src/cli.js';
+import { pathToFileURL } from 'node:url';
 
 describe('package names come from the source when it can be read', () => {
   let tempHome: string;
@@ -62,5 +63,26 @@ describe('package names come from the source when it can be read', () => {
     expect(plugins()['demo-repo'].package).toBe('@me/demo');
     expect(fs.readdirSync(path.join(tempHome, 'envctl', 'sources', 'web'))).toEqual(['@me_demo']);
     expect(fs.readdirSync(path.join(tempHome, 'envctl', 'sources')).filter((name) => name.startsWith('.'))).toEqual([]);
+  });
+
+  it('takes a file:// URL as the local path it names', async () => {
+    const dir = path.join(tempHome, 'src', 'url-plugin');
+    makeSource(dir, 'url-plugin');
+    expect((await run(['install', pathToFileURL(dir).href, '--profile', 'web'])).code).toBe(0);
+    expect(plugins()['url-plugin'].source).toEqual({ type: 'local-link', path: dir });
+  });
+
+  it('refuses a local path that does not exist, and a #ref on a local path, writing nothing', async () => {
+    const before = fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
+    const missing = await run(['install', path.join(tempHome, 'nope'), '--profile', 'web']);
+    expect(missing.code).toBe(3);
+    expect(missing.stderr).toContain(`Local plugin path not found: ${path.join(tempHome, 'nope')}`);
+
+    const dir = path.join(tempHome, 'src', 'demo');
+    makeSource(dir, 'demo');
+    const withRef = await run(['install', `${pathToFileURL(dir).href}#${'a'.repeat(40)}`, '--profile', 'web']);
+    expect(withRef.code).toBe(3);
+    expect(withRef.stderr).toContain('a local path takes no #<ref>; for a Git repository use git+file://');
+    expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
   });
 });

@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execa } from 'execa';
+import { pathToFileURL } from 'node:url';
 import { runCli } from '../../src/cli.js';
 import { loadManifest, loadLock, serializeManifest } from '../../src/manifest/files.js';
 import { buildPlan } from '../../src/planner/plan.js';
@@ -261,7 +262,7 @@ describe('CLI source clone --profile', () => {
     );
     expect(code).toBe(0);
     const lock = loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8'));
-    expect(lock.profiles.web.plugins.demo).toEqual({ package: 'demo-plugin', source: { type: 'git', url: upstream, commit: newHead } });
+    expect(lock.profiles.web.plugins.demo).toEqual({ package: 'demo-plugin', source: { type: 'git', url: pathToFileURL(upstream).href, commit: newHead } });
   });
 
   it('keeps patches and the enabled state when cloning over an existing alias', async () => {
@@ -376,5 +377,29 @@ describe('CLI source clone --profile', () => {
     expect(await run(['install', `git+${url}`, '--profile', 'web'])).toBe(0);
     expect(await run(['source', 'clone', url, '--profile', 'web'])).toBe(0);
     expect(Object.keys(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins)).toEqual(['demo']);
+  });
+
+  it('records a plain repository path as a file:// URL, which pnpm installs as Git', async () => {
+    expect(await runCli(['source', 'clone', upstream, '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} })).toBe(0);
+    const url = pathToFileURL(upstream).href;
+    expect(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url });
+    expect(loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).profiles.web.plugins.demo.source).toMatchObject({ type: 'git', url });
+  });
+
+  it('source sync without a directory or --profile fast-forwards the checkout in the working directory', async () => {
+    const checkout = path.join(tempHome, 'checkout');
+    await execa('git', ['clone', '-q', upstream, checkout]);
+    fs.writeFileSync(path.join(upstream, 'later.txt'), 'later');
+    await execa('git', ['add', '.'], { cwd: upstream });
+    await execa('git', ['commit', '-q', '-m', 'later'], { cwd: upstream });
+    const head = (await execa('git', ['rev-parse', 'HEAD'], { cwd: upstream })).stdout.trim();
+    const previous = process.cwd();
+    process.chdir(checkout);
+    try {
+      expect(await runCli(['source', 'sync', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} })).toBe(0);
+    } finally {
+      process.chdir(previous);
+    }
+    expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: checkout })).stdout.trim()).toBe(head);
   });
 });
