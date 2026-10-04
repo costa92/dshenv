@@ -273,7 +273,7 @@ dshenv rollback apply-abc123 --yes
 ```
 
 ### 8. `dshenv gc`
-删除 `envctl/trash/` 中超过保留期的条目。默认 7 天。不会删除 trash 目录之外的路径。
+删除 `envctl/trash/` 中超过保留期的条目，以及 `envctl/backups/` 中超过保留期的快照（始终保留最近 10 个，`rollback` 只能回到还在的快照）。默认 7 天。不会删除这两个目录之外的路径。
 
 ```bash
 dshenv gc --dry-run

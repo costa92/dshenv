@@ -4,6 +4,7 @@ import type { EnvironmentPaths } from '../environment/paths.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { appendJournalEntry } from '../io/journal.js';
 import { ValidationError } from '../errors.js';
+import { listEnvironmentSnapshots, snapshotTime } from '../io/backup.js';
 
 export interface GcOptions {
   olderThanDays?: number;
@@ -55,6 +56,29 @@ export async function collectTrashGcTargets(
   return { deleted, skipped };
 }
 
+// rollback can only go back to a snapshot gc left, so the newest ones stay whatever their age.
+const KEEP_SNAPSHOTS = 10;
+
+export async function collectSnapshotGcTargets(paths: EnvironmentPaths, olderThanDays: number): Promise<string[]> {
+  if (!fs.existsSync(paths.backupsDir)) {
+    return [];
+  }
+  const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+  const expired = (dir: string, time: string | null) => (time ? Date.parse(time) : fs.statSync(dir).mtimeMs) <= cutoff;
+  const targets = (await listEnvironmentSnapshots(paths))
+    .slice(KEEP_SNAPSHOTS)
+    .filter((snapshot) => expired(snapshot.snapshotDir, snapshotTime(snapshot.snapshotId)))
+    .map((snapshot) => snapshot.snapshotDir);
+  // A copy a killed operation never renamed into place; no snapshot can still be building one this old.
+  for (const entry of await fs.promises.readdir(paths.backupsDir, { withFileTypes: true })) {
+    const dir = path.join(paths.backupsDir, entry.name);
+    if (entry.isDirectory() && entry.name.startsWith('.') && entry.name.endsWith('.partial') && expired(dir, null)) {
+      targets.push(dir);
+    }
+  }
+  return targets;
+}
+
 // Collected under the lock, so a concurrent purge or gc cannot change the trash in between.
 export async function gcEnvironment(
   paths: EnvironmentPaths,
@@ -70,13 +94,15 @@ async function gcDecided(
 ): Promise<GcResult> {
   const olderThanDays = options?.olderThanDays ?? 7;
   const targets = await collectTrashGcTargets(paths, olderThanDays);
+  const snapshots = await collectSnapshotGcTargets(paths, olderThanDays);
+  const counts = `${String(targets.deleted.length)} trash item(s)${snapshots.length > 0 ? ` and ${String(snapshots.length)} snapshot(s)` : ''}`;
 
   if (options?.dryRun) {
     return {
       dryRun: true,
-      deleted: targets.deleted,
+      deleted: [...targets.deleted, ...snapshots],
       skipped: targets.skipped,
-      message: `Would delete ${String(targets.deleted.length)} trash item(s)`
+      message: `Would delete ${counts}`
     };
   }
 
@@ -85,7 +111,7 @@ async function gcDecided(
     operationId,
     type: 'gc-started',
     timestamp: new Date().toISOString(),
-    details: { olderThanDays, count: targets.deleted.length }
+    details: { olderThanDays, count: targets.deleted.length + snapshots.length }
   });
 
   for (const target of targets.deleted) {
@@ -94,18 +120,23 @@ async function gcDecided(
     }
     await fs.promises.rm(target, { recursive: true, force: true });
   }
+  for (const snapshot of snapshots) {
+    if (isPathInside(paths.backupsDir, snapshot)) {
+      await fs.promises.rm(snapshot, { recursive: true, force: true });
+    }
+  }
 
   await appendJournalEntry(paths, {
     operationId,
     type: 'gc-completed',
     timestamp: new Date().toISOString(),
-    details: { deleted: targets.deleted }
+    details: { deleted: [...targets.deleted, ...snapshots] }
   });
 
   return {
     dryRun: false,
-    deleted: targets.deleted,
+    deleted: [...targets.deleted, ...snapshots],
     skipped: targets.skipped,
-    message: `Deleted ${String(targets.deleted.length)} trash item(s)`
+    message: `Deleted ${counts}`
   };
 }
