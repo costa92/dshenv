@@ -4,6 +4,16 @@ import { execa } from 'execa';
 import { ValidationError, DshError } from '../errors.js';
 import { isValidProfileName } from '../manifest/schema.js';
 
+// Variables like these locate the repository instead of the directory git runs in; inherited from a git hook or a CI
+// step, they would make every command below inspect, merge or lock another repository.
+const REPOSITORY_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'];
+
+function isolatedGit(): { env: NodeJS.ProcessEnv; extendEnv: false } {
+  const env = { ...process.env };
+  for (const name of REPOSITORY_ENV) delete env[name];
+  return { env, extendEnv: false };
+}
+
 export interface GitWorkingTreeStatus {
   isGitRepo: boolean;
   isDirty: boolean;
@@ -73,14 +83,14 @@ export async function inspectGitWorkingTree(
   }
 
   try {
-    const statusRes = await execa('git', ['status', '--porcelain'], {
+    const statusRes = await execa('git', ['status', '--porcelain'], { ...isolatedGit(),
       cwd: repoDir,
       shell: false,
       timeout: 10000
     });
     const isDirty = statusRes.stdout.trim().length > 0;
 
-    const commitRes = await execa('git', ['rev-parse', 'HEAD'], {
+    const commitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
       cwd: repoDir,
       shell: false,
       timeout: 5000
@@ -89,7 +99,7 @@ export async function inspectGitWorkingTree(
 
     let branch: string | undefined;
     try {
-      const branchRes = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      const branchRes = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { ...isolatedGit(),
         cwd: repoDir,
         shell: false,
         timeout: 5000
@@ -133,9 +143,9 @@ export async function cloneManagedGit(
 
   await fs.promises.mkdir(path.dirname(targetDir), { recursive: true });
 
-  await execa('git', ['clone', ...(ref ? ['--branch', ref] : []), '--', url, targetDir], { shell: false, timeout: 60000 });
+  await execa('git', ['clone', ...(ref ? ['--branch', ref] : []), '--', url, targetDir], { ...isolatedGit(), shell: false, timeout: 60000 });
 
-  const commitRes = await execa('git', ['rev-parse', 'HEAD'], {
+  const commitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
     cwd: targetDir,
     shell: false,
     timeout: 5000
@@ -164,32 +174,32 @@ export async function safeFastForwardManagedGit(
 
   const previousCommit = status.commit || 'unknown';
 
-  const branch = await execa('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  const branch = await execa('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
   const targetCommitOrRef = ref ?? (branch.exitCode === 0 ? branch.stdout.trim() : undefined);
   if (targetCommitOrRef === undefined) {
     throw new ValidationError(`${repoDir} is on a detached HEAD; pass --ref <ref>`);
   }
 
-  await execa('git', ['fetch', '--all'], { cwd: repoDir, shell: false, timeout: 30000 });
+  await execa('git', ['fetch', '--all'], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 30000 });
   // A bare branch name would resolve to the local branch, which never moves on its own; follow its upstream copy.
   // show-ref matches whole ref names only, so revisions such as HEAD~1 keep their meaning; origin/HEAD is not a branch.
   const upstream =
     targetCommitOrRef === 'HEAD'
       ? null
-      : await execa('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${targetCommitOrRef}`], {
+      : await execa('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${targetCommitOrRef}`], { ...isolatedGit(),
           cwd: repoDir,
           shell: false,
           reject: false,
           timeout: 5000
         });
   const target = upstream?.exitCode === 0 ? `origin/${targetCommitOrRef}` : targetCommitOrRef;
-  await execa('git', ['merge', '--ff-only', target], {
+  await execa('git', ['merge', '--ff-only', target], { ...isolatedGit(),
     cwd: repoDir,
     shell: false,
     timeout: 10000
   });
 
-  const newCommitRes = await execa('git', ['rev-parse', 'HEAD'], {
+  const newCommitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
     cwd: repoDir,
     shell: false,
     timeout: 5000
@@ -207,7 +217,7 @@ function comparableGitUrl(url: string): string {
 
 // A lock pins what the declared URL serves, so the checkout must come from that repository and its commit be pushed there.
 export async function assertCheckoutServes(repoDir: string, declaredUrl: string): Promise<void> {
-  const origin = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  const origin = await execa('git', ['remote', 'get-url', 'origin'], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
   const originUrl = origin.exitCode === 0 ? origin.stdout.trim() : '';
   if (comparableGitUrl(originUrl) !== comparableGitUrl(declaredUrl)) {
     throw new ValidationError(
@@ -217,7 +227,7 @@ export async function assertCheckoutServes(repoDir: string, declaredUrl: string)
 }
 
 export async function assertCommitOnOrigin(repoDir: string, commit: string): Promise<void> {
-  const branches = await execa('git', ['branch', '--remotes', '--contains', commit], { cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  const branches = await execa('git', ['branch', '--remotes', '--contains', commit], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
   if (branches.exitCode !== 0 || !branches.stdout.split('\n').some((line) => line.trim().startsWith('origin/'))) {
     throw new ValidationError(`Commit ${commit} in ${repoDir} is not on any branch of origin; push it first, since the lock would pin a commit others cannot fetch`);
   }
