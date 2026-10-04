@@ -258,12 +258,15 @@ function recordInstalledOwnership(
       continue;
     }
     const plugin = manifest.profiles[operation.profile]?.plugins[operation.alias];
-    if ((operation.kind !== 'install' && operation.kind !== 'update') || !plugin || ownership[operation.profile]?.[plugin.package]) {
+    if ((operation.kind !== 'install' && operation.kind !== 'update') || !plugin) {
       continue;
     }
+    const record = pluginOwnershipRecord(plugin.package, operation.alias, plugin.source, now, operationId);
+    // An owned plugin keeps when it was first owned; what it now runs follows the manifest.
+    const owned = ownership[operation.profile]?.[plugin.package];
     ownership[operation.profile] = {
       ...ownership[operation.profile],
-      [plugin.package]: pluginOwnershipRecord(plugin.package, operation.alias, plugin.source, now, operationId)
+      [plugin.package]: owned ? { ...record, adoptedAt: owned.adoptedAt, adoptedBy: owned.adoptedBy } : record
     };
   }
   return ownership;
