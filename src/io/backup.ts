@@ -10,6 +10,8 @@ const ABSENT_FILE = 'absent.json';
 // Marks a snapshot that saved envctl/skills, so restoring one taken before skills existed leaves the directory alone.
 const SKILLS_MARKER = 'skills-saved';
 const SKILLS_DIR = 'skills';
+// Every overlay file as it was, so one a later sync takes over (remote add --replace) can be put back, not deleted.
+const EXISTING_OVERLAYS_DIR = 'existing-overlays';
 
 export interface EnvironmentSnapshot {
   snapshotId: string;
@@ -63,6 +65,15 @@ async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, o
     await fs.promises.cp(paths.skillsDir, path.join(snapshotDir, SKILLS_DIR), { recursive: true });
   }
 
+  if (fs.existsSync(paths.overlaysDir)) {
+    for (const entry of await fs.promises.readdir(paths.overlaysDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.yaml')) {
+        await fs.promises.mkdir(path.join(snapshotDir, EXISTING_OVERLAYS_DIR), { recursive: true });
+        await fs.promises.copyFile(path.join(paths.overlaysDir, entry.name), path.join(snapshotDir, EXISTING_OVERLAYS_DIR, entry.name));
+      }
+    }
+  }
+
   const remote = readRemoteConfig(paths);
   if (remote) {
     await fs.promises.copyFile(paths.remoteFile, path.join(snapshotDir, 'remote.json'));
@@ -106,9 +117,17 @@ function currentRemoteConfig(paths: EnvironmentPaths): RemoteConfig | null {
 }
 
 async function restoreRemoteFiles(snapshot: EnvironmentSnapshot, paths: EnvironmentPaths): Promise<void> {
-  // Overlays the remote owns now, or that were recorded absent, but the snapshot does not hold did not exist as saved, so they go.
-  for (const key of new Set([...remoteOverlayKeys(currentRemoteConfig(paths)), ...readAbsentKeys(snapshot)])) {
-    if (!fs.existsSync(path.join(snapshot.snapshotDir, key))) {
+  // Overlays the remote owns now, or that were recorded absent, but the snapshot does not hold: a local file that existed
+  // then is put back, any other did not exist, so it goes.
+  const absent = readAbsentKeys(snapshot);
+  for (const key of new Set([...remoteOverlayKeys(currentRemoteConfig(paths)), ...absent])) {
+    if (fs.existsSync(path.join(snapshot.snapshotDir, key))) {
+      continue;
+    }
+    const existing = path.join(snapshot.snapshotDir, EXISTING_OVERLAYS_DIR, path.basename(key));
+    if (!absent.includes(key) && fs.existsSync(existing)) {
+      await writeAtomic(remoteFilePath(paths, key), await fs.promises.readFile(existing), 'overwrite');
+    } else {
       await fs.promises.rm(remoteFilePath(paths, key), { force: true });
     }
   }

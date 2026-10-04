@@ -86,6 +86,37 @@ profiles:
     await expect(purgePlugin(paths, 'web', 'stray-pkg')).rejects.toThrow(/no ownership/);
   });
 
+  describe('with the managed clone of a plugin apply already removed', () => {
+    let cloneDir: string;
+    beforeEach(async () => {
+      cloneDir = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
+      fs.mkdirSync(cloneDir, { recursive: true });
+      await execa('git', ['init', '-q'], { cwd: cloneDir });
+      fs.writeFileSync(path.join(cloneDir, 'package.json'), '{"name":"demo-plugin"}');
+      await execa('git', ['add', '.'], { cwd: cloneDir });
+      await execa('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init'], { cwd: cloneDir });
+    });
+
+    it('moves the clone to trash although apply dropped the ownership record', async () => {
+      const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+      const preview = await purgePlugin(paths, 'web', 'demo-plugin', { dryRun: true });
+      expect(preview.moved).toEqual([cloneDir]);
+      const result = await purgePlugin(paths, 'web', 'demo-plugin');
+      expect(fs.existsSync(cloneDir)).toBe(false);
+      expect(result.moved).toHaveLength(1);
+      expect(fs.existsSync(path.join(result.moved[0], 'package.json'))).toBe(true);
+    });
+
+    it('still refuses while the manifest declares the package', async () => {
+      const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');
+      fs.appendFileSync(manifestFile, '      demo:\n        package: demo-plugin\n        source: { type: git, url: "https://example.invalid/demo.git" }\n');
+      const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+      await expect(purgePlugin(paths, 'web', 'demo-plugin')).rejects.toThrow(/no ownership/);
+      await expect(purgePlugin(paths, 'web', 'demo')).rejects.toThrow(/no ownership/);
+      expect(fs.existsSync(cloneDir)).toBe(true);
+    });
+  });
+
   it('should copy managed patch into trash and strip the live block', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     await applyEnvironment(paths);

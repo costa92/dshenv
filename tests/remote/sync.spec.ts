@@ -202,6 +202,36 @@ describe('remote sync engine', () => {
     expect(fs.existsSync(path.join(paths.skillsDir, 'wiki'))).toBe(false);
   });
 
+  it('syncs a team skill path that turns from a file into a directory and back', async () => {
+    await subscribe();
+    await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'v1', 'envctl/skills/wiki/scripts': 'one file' }, 'skills');
+    await acceptSync(paths, await prepare({ previous: true }));
+
+    await commitTeamFiles(team, { 'envctl/skills/wiki/scripts': null, 'envctl/skills/wiki/scripts/run.sh': 'echo' }, 'to dir');
+    const toDir = await prepare({ previous: true });
+    expect(toDir.files).toEqual({ added: ['skills/wiki/scripts/run.sh'], modified: [], removed: ['skills/wiki/scripts'] });
+    await acceptSync(paths, toDir);
+    expect(read(path.join(paths.skillsDir, 'wiki', 'scripts', 'run.sh'))).toBe('echo');
+
+    fs.rmSync(path.join(team.work, 'envctl', 'skills', 'wiki', 'scripts'), { recursive: true });
+    await commitTeamFiles(team, { 'envctl/skills/wiki/scripts': 'back' }, 'to file');
+    const toFile = await prepare({ previous: true });
+    expect(skillOps(toFile.plan)).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'wiki' })]));
+    await acceptSync(paths, toFile);
+    expect(read(path.join(paths.skillsDir, 'wiki', 'scripts'))).toBe('back');
+  });
+
+  it('refuses a team file where a directory still holds local files', async () => {
+    await subscribe();
+    await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'v1', 'envctl/skills/wiki/scripts/run.sh': 'echo' }, 'skills');
+    await acceptSync(paths, await prepare({ previous: true }));
+    fs.writeFileSync(path.join(paths.skillsDir, 'wiki', 'scripts', 'mine.sh'), 'local');
+
+    fs.rmSync(path.join(team.work, 'envctl', 'skills', 'wiki', 'scripts'), { recursive: true });
+    await commitTeamFiles(team, { 'envctl/skills/wiki/scripts': 'back' }, 'to file');
+    await expect(prepare({ previous: true })).rejects.toThrow(/is not owned by the remote/);
+  });
+
   it('refuses a team skill whose directory already holds a local skill, even when none of its files collide', async () => {
     await subscribe();
     fs.mkdirSync(path.join(paths.skillsDir, 'wiki'), { recursive: true });

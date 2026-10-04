@@ -282,7 +282,7 @@ dshenv gc --older-than 3 --yes
 ```
 
 ### 9. `dshenv purge`
-把有所有权的受管 patch（以及 `envctl/sources/<profile>/<package>` 下的 clone）移入 `envctl/trash/<operation-id>`。不删除外部 Git 目录、Profile 根或凭据。
+把有所有权的受管 patch（以及 `envctl/sources/<profile>/<package>` 下的 clone）移入 `envctl/trash/<operation-id>`。不删除外部 Git 目录、Profile 根或凭据。`apply` 删除插件后所有权记录随之去掉，这时用包名执行 `purge` 仍可清理它留在 `envctl/sources` 下的 clone（清单不再声明该包时）。
 
 ```bash
 dshenv purge agent-teams --profile web --dry-run
