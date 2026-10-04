@@ -194,6 +194,18 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     return requirePlugin(loadEffectiveManifest(paths, overlay).manifest, profile, alias);
   }
 
+  // The entry the write changes: a base write must not see what the overlay removes or overrides.
+  function layerPlugin(
+    paths: EnvironmentPaths,
+    selection: OverlaySelection | null,
+    overlay: OverlaySelection | null,
+    profile: string,
+    alias: string
+  ): PluginManifestEntry {
+    const manifest = overlay ? loadEffectiveManifest(paths, selection).manifest : loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+    return requirePlugin(manifest, profile, alias);
+  }
+
   // The alias a command names, also by its package name. A base write (`write` without an overlay) also needs the
   // alias in the base manifest, not only in the active overlay.
   function resolveAlias(
@@ -303,7 +315,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             throw aliasTaken(next.alias, overlayEntry.package, profile, next.packageName);
           }
           // Reinstalling a plugin the effective manifest already has only moves its source, as in the base.
-          const exists = overlayEntry ? !overlayEntry.remove : Boolean(baseEntry);
+          // An overlay entry without a package only adjusts a base plugin, so with none in the base nothing is declared yet.
+          const exists = baseEntry ? !overlayEntry?.remove : overlayEntry?.package !== undefined && !overlayEntry.remove;
           if (exists) {
             previousSource = overlayEntry?.source ?? baseEntry?.source;
           }
@@ -433,7 +446,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
               : '';
           return new ValidationError(`update --to currently supports npm sources only (got ${type})${instead}`);
         };
-        const declared = loadEffectiveManifest(paths, selection).manifest.profiles[profile].plugins[alias];
+        const declared = layerPlugin(paths, selection, overlay, profile, alias);
         if (declared.source.type !== 'npm') {
           throw npmOnly(declared.source.type);
         }
@@ -627,7 +640,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
         if (!cmdOpts.force) {
-          const plugin = loadEffectiveManifest(paths, selection).manifest.profiles[profile].plugins[alias];
+          const plugin = layerPlugin(paths, selection, overlay, profile, alias);
           await warnUnknownConfigKey(paths, opts, profile, plugin.package, dottedPath);
         }
 
