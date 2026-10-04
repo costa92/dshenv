@@ -4,7 +4,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { applyEnvironment, type ApplyOptions } from '../../src/apply/apply.js';
 import { rollbackEnvironment } from '../../src/rollback/rollback.js';
-import { isProfileOperation } from '../../src/planner/plan.js';
+import { buildStatus, isProfileOperation } from '../../src/planner/plan.js';
+import { readEnvironmentInventory } from '../../src/inventory/profile-reader.js';
+import { loadManifest, loadState } from '../../src/manifest/files.js';
+import type { EnvironmentState } from '../../src/domain.js';
+import { execFileSync } from 'node:child_process';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
 
 // Fake DSH: `add` installs a bundle package and selects it, `remove` drops it; FAIL_ON makes adds of matching packages fail.
@@ -52,6 +56,11 @@ describe('applyEnvironment ownership and recovery', () => {
   const owned = (): string[] =>
     Object.keys((JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as { resources?: { plugin?: { web?: object } } }).resources?.plugin?.web ?? {}).sort();
   const dryRun = () => applyEnvironment(paths, { ...options, dryRun: true });
+  const markHealthy = async () => {
+    const state = JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as EnvironmentState;
+    for (const record of Object.values(state.profiles.web?.plugins ?? {})) record.status = 'healthy';
+    fs.writeFileSync(paths.stateFile, JSON.stringify(state));
+  };
 
   beforeEach(() => {
     previousDshCli = process.env.DSH_CLI;
@@ -209,6 +218,80 @@ describe('applyEnvironment ownership and recovery', () => {
     declare(plugin('aa'));
     const plan = await dryRun();
     expect(plan.plan.operations.filter((op) => op.resource === 'plugin').map((op) => `${op.kind}:${op.package}`)).toEqual(['remove:bb']);
+  });
+
+  const handInstall = (spec: string) =>
+    execFileSync(process.execPath, [path.join(tempHome, 'fake-dsh.mjs'), 'plugin', '--profile', 'web', 'add', spec], { env: { ...process.env, DSH_HOME: tempHome } });
+  const pluginOps = async () => (await dryRun()).plan.operations.filter((op) => op.resource === 'plugin').map((op) => `${op.kind}:${op.package}`);
+  const stateOf = (pkg: string) => (JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as EnvironmentState).profiles.web?.plugins[pkg]?.status;
+  const status = async () => {
+    const state = loadState(fs.readFileSync(paths.stateFile, 'utf8'));
+    return buildStatus(loadManifest(fs.readFileSync(paths.manifestFile, 'utf8')), state, await readEnvironmentInventory(paths), (await dryRun()).plan);
+  };
+
+  it('drops the ownership a rollback restores for a plugin no longer installed, so a later hand install is left alone', async () => {
+    declare(plugin('aa'), plugin('bb'));
+    await applyEnvironment(paths, options);
+    declare(plugin('aa'));
+    const removal = await applyEnvironment(paths, options);
+    await rollbackEnvironment(paths, { operationId: removal.operationId });
+    expect(owned()).toEqual(['aa']);
+
+    declare(plugin('aa'));
+    handInstall('bb@2.0.0');
+    expect(await pluginOps()).toEqual([]);
+  });
+
+  it('drops the ownership of a plugin a failed apply already removed', async () => {
+    declare(plugin('aa'), plugin('bb'));
+    await applyEnvironment(paths, options);
+    declare(plugin('aa'), plugin('cc'));
+    process.env.FAIL_ON = 'cc';
+    await expect(applyEnvironment(paths, options)).rejects.toThrow();
+    delete process.env.FAIL_ON;
+    expect(owned()).toEqual(['aa']);
+  });
+
+  it('owes a restart for the steps a failed apply completed', async () => {
+    declare(plugin('aa'), plugin('zz'));
+    await applyEnvironment(paths, options);
+    await markHealthy();
+    fs.writeFileSync(paths.manifestFile, fs.readFileSync(paths.manifestFile, 'utf8').replaceAll('1.0.0', '2.0.0'));
+    process.env.FAIL_ON = 'zz';
+    await expect(applyEnvironment(paths, options)).rejects.toThrow();
+    delete process.env.FAIL_ON;
+    expect(stateOf('aa')).toBe('restart-required');
+    expect(stateOf('zz')).toBe('healthy');
+  });
+
+  it('keeps a restart owed when rolling back, since the running DSH is unchanged', async () => {
+    declare(plugin('aa'));
+    const first = await applyEnvironment(paths, options);
+    await markHealthy();
+    declare(plugin('aa'), plugin('bb'));
+    await applyEnvironment(paths, options);
+    expect(stateOf('bb')).toBe('restart-required');
+    await rollbackEnvironment(paths, { operationId: first.operationId });
+    expect(stateOf('bb')).toBe('restart-required');
+  });
+
+  it('reports restart-required for a removed plugin DSH still runs', async () => {
+    declare(plugin('aa'), plugin('bb'));
+    await applyEnvironment(paths, options);
+    await markHealthy();
+    declare(plugin('aa'));
+    await applyEnvironment(paths, options);
+    const summary = await status();
+    expect(summary.status).toBe('restart-required');
+    expect(summary.plugins).toContainEqual({ profile: 'web', package: 'bb', status: 'restart-required' });
+  });
+
+  it('reports restart-required for a declared plugin the inventory does not list', async () => {
+    fs.writeFileSync(path.join(tempHome, 'profiles', 'web', 'package.json'), JSON.stringify({ name: 'p', dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-tool-z'] } } }));
+    fs.writeFileSync(paths.manifestFile, 'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      tz:\n        package: "@deepseek-ai/dsh-tool-z"\n        source: { type: in-box }\n        enabled: false\n');
+    await applyEnvironment(paths, options);
+    expect(stateOf('@deepseek-ai/dsh-tool-z')).toBe('restart-required');
+    expect((await status()).status).toBe('restart-required');
   });
 
   it('honors allowUntestedVersion from the manifest', async () => {

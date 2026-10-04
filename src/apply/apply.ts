@@ -11,7 +11,7 @@ import type {
 } from '../domain.js';
 import { readEnvironmentInventory, type EnvironmentInventory } from '../inventory/profile-reader.js';
 import { buildPlan, isProfileOperation, onlyProfile, type EnvironmentPlan, type LocalSourceDigests, type PluginOperation } from '../planner/plan.js';
-import { applyPluginOperation, planNeedsDshCli, pluginOwnershipRecord, type PluginStepContext } from '../resources/plugin.js';
+import { applyPluginOperation, dropUninstalledOwnership, planNeedsDshCli, pluginOwnershipRecord, type PluginStepContext } from '../resources/plugin.js';
 import { applyProfilePatchOperation } from '../resources/profile-patch.js';
 import { loadLock, loadState, serializeState, serializeLock, withResources } from '../manifest/files.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
@@ -427,15 +427,18 @@ async function planAndApply(
     // Record the overlay and skill baselines even without operations, otherwise the switch warning never clears
     // and a declared skill DSH already had is never owned.
     const skills = inventory.skills?.declared ?? {};
+    const plugin = dropUninstalledOwnership(state?.resources?.plugin, inventory);
     if (
       !options?.dryRun &&
       state &&
-      (state.appliedOverlay !== options?.overlay?.name || !isDeepStrictEqual(ownedSkillDigests(state), skills))
+      (state.appliedOverlay !== options?.overlay?.name ||
+        !isDeepStrictEqual(ownedSkillDigests(state), skills) ||
+        !isDeepStrictEqual(plugin, state.resources?.plugin ?? {}))
     ) {
       const { appliedOverlay: _previous, ...rest } = state;
       const nextState = withResources(
         { ...rest, ...(options?.overlay ? { appliedOverlay: options.overlay.name } : {}) },
-        { skill: skillOwnership(skills) }
+        { plugin, skill: skillOwnership(skills) }
       );
       await writeAtomic(paths.stateFile, serializeState(nextState), 'overwrite');
     }
@@ -503,6 +506,29 @@ async function planAndApply(
   const onInstalled = async (operation: PluginOperation): Promise<void> => {
     installed.push(operation);
     await recordInstalled();
+  };
+  // Restoring state.json must not forget what the steps that did take effect changed: DSH still runs the old code
+  // of what they updated, and nothing is left to remove of what they removed.
+  const recordFailedApply = async (): Promise<void> => {
+    const base: EnvironmentState = state ?? { apiVersion: 'dshenv-state/v1', lastApplied: '', appliedLockHash: '', profiles: {} };
+    let plugin = recordInstalledOwnership(base.resources?.plugin, installed, manifest, now, operationId);
+    let profiles = base.profiles;
+    try {
+      const live = onlyProfile(await readEnvironmentInventory(paths), options?.profile);
+      const remaining = new Set(
+        buildPlan(manifest, lock, live, state, localDigests).operations
+          .filter((op): op is PluginOperation => op.resource === 'plugin')
+          .map((op) => `${op.profile}\0${op.alias}\0${op.kind}`)
+      );
+      const done = plan.operations.filter((op) => op.resource === 'plugin' && !remaining.has(`${op.profile}\0${op.alias}\0${op.kind}`));
+      profiles = recordRestartState(base.profiles, { ...plan, operations: done }, live, now, restart);
+      plugin = dropUninstalledOwnership(plugin, live);
+    } catch {
+      // Without the profiles on disk, keep at least the ownership of what was installed.
+    }
+    if (installed.length > 0 || !isDeepStrictEqual(profiles, base.profiles) || !isDeepStrictEqual(plugin, base.resources?.plugin ?? {})) {
+      await writeAtomic(paths.stateFile, serializeState(withResources({ ...base, profiles }, { plugin })), 'overwrite');
+    }
   };
 
   try {
@@ -607,9 +633,7 @@ async function planAndApply(
     if (snapshot) {
       try {
         await restoreSnapshotFiles(snapshot, [paths.lockFile, paths.stateFile]);
-        if (installed.length > 0) {
-          await recordInstalled();
-        }
+        await recordFailedApply();
         await appendJournalEntry(paths, {
           operationId,
           type: 'apply-rollback',

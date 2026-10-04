@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
 import type { EnvironmentPaths } from '../environment/paths.js';
-import type { CaptureDocument, EnvironmentLock, EnvironmentManifest, EnvironmentState, PluginLockEntry, PluginOwnershipRecord, PluginSource } from '../domain.js';
+import type { CaptureDocument, EnvironmentLock, EnvironmentManifest, EnvironmentState, PluginLockEntry, PluginOwnership, PluginOwnershipRecord, PluginSource } from '../domain.js';
 import type { EnvironmentInventory, InstalledPluginInfo } from '../inventory/profile-reader.js';
 import { captureEnvironment } from '../import/capture.js';
 import { calculateSourceDigest } from '../source/local.js';
@@ -604,6 +604,20 @@ export function pluginOwnershipRecord(packageName: string, alias: string, source
     adoptedAt,
     adoptedBy
   };
+}
+
+// A record for a package no longer in its profile has nothing left to remove; kept, it would make a later
+// hand install of that package look like dshenv's.
+export function dropUninstalledOwnership(ownership: PluginOwnership | undefined, inventory: EnvironmentInventory): PluginOwnership {
+  const next: PluginOwnership = {};
+  for (const [profileName, packages] of Object.entries(ownership ?? {})) {
+    const live = inventory.profiles[profileName]?.plugins;
+    const kept = live ? Object.fromEntries(Object.entries(packages).filter(([name]) => live[name]?.installed)) : packages;
+    if (Object.keys(kept).length > 0) {
+      next[profileName] = kept;
+    }
+  }
+  return next;
 }
 
 // A captured alias can already name another declared package; overwriting that entry would drop it and its patches.
