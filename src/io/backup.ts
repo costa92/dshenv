@@ -154,6 +154,12 @@ export async function restoreEnvironmentSnapshot(
   }
 }
 
+// The time in a snapshot id, `<ISO time with ':' and '.' as '-'>-<operation id>`.
+export function snapshotTime(snapshotId: unknown): string | null {
+  const match = typeof snapshotId === 'string' ? snapshotId.match(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z-/) : null;
+  return match ? `${match[1]}:${match[2]}:${match[3]}.${match[4]}Z` : null;
+}
+
 export async function listEnvironmentSnapshots(paths: EnvironmentPaths): Promise<EnvironmentSnapshot[]> {
   if (!fs.existsSync(paths.backupsDir)) {
     return [];

@@ -6,7 +6,7 @@ import type { EnvironmentLock, EnvironmentManifest } from '../domain.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { ValidationError } from '../errors.js';
 import { writeAtomic } from '../io/atomic-file.js';
-import { createEnvironmentSnapshot, restoreEnvironmentSnapshot } from '../io/backup.js';
+import { createEnvironmentSnapshot, restoreEnvironmentSnapshot, snapshotTime } from '../io/backup.js';
 import { appendJournalEntry, readJournalEntries } from '../io/journal.js';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { loadState, parseOverlay, serializeLock } from '../manifest/files.js';
@@ -183,12 +183,6 @@ async function declaredSkillsAfter(paths: EnvironmentPaths, snapshot: RemoteSnap
   } finally {
     await fs.promises.rm(scratch, { recursive: true, force: true });
   }
-}
-
-// The time in a snapshot id, `<ISO time with ':' and '.' as '-'>-<operation id>`.
-function snapshotTime(snapshotId: unknown): string | null {
-  const match = typeof snapshotId === 'string' ? snapshotId.match(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z-/) : null;
-  return match ? `${match[1]}:${match[2]}:${match[3]}.${match[4]}Z` : null;
 }
 
 // A killed accept leaves files half-written and remote.json stale; drift errors would then give the wrong advice.

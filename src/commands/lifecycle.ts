@@ -150,8 +150,8 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
 
   program
     .command('gc')
-    .description('Delete expired entries under envctl/trash')
-    .option('--older-than <days>', 'delete trash older than this many days', '7')
+    .description('Delete expired entries under envctl/trash, and expired snapshots beyond the newest 10 under envctl/backups')
+    .option('--older-than <days>', 'delete trash and snapshots older than this many days', '7')
     .option('--dry-run', 'list trash that would be deleted; exit code 2 when there is any')
     .option('-y, --yes', 'delete it; without it gc only previews, like --dry-run')
     .action(async (cmdOpts) => {

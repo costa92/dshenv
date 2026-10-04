@@ -2,6 +2,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 变更
+
+- `gc` 同时删除 `envctl/backups` 中早于 `--older-than` 的快照（始终保留最近 10 个），以及被中断的操作留下、超过同一期限的 `.…partial` 临时目录；此前快照只增不减，每次有变更的 `apply` 都会复制一份 `envctl/skills`。
+
 ## 0.7.0 - 2026-10-04
 
 ### 升级须知
