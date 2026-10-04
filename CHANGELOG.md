@@ -24,6 +24,9 @@
 - base 已声明、但本机 DSH 从本地路径（`link:`、`file:`）安装的插件，`adopt --yes` 保留 base 中的条目，把本机路径写进 overlay（没有生效 overlay 时新建并选中 `local`）；此前会把本机路径写进共享的 base，推到团队仓库时被拒。
 - 对 base 已按安装方式声明的本地来源插件再次 `adopt --yes`，保留 `lock.json` 中 apply 记录的摘要并输出「Nothing to adopt」；此前会抹掉摘要，之后 `plan` 对每个这类插件都提示更新。
 - `pull` 与 `adopt` 给新插件选别名时避开当前 overlay 新增的别名；此前与 overlay 别名相同时，前者整体失败、后者被拒绝（「an overlay cannot change package」）。
+- 团队 skill 里同一路径在文件与目录之间互换时，`remote sync` 能正常预览与接受（先删除再写入）；此前预览报 `EEXIST`（退出码 1），或误报该路径「not owned by the remote」（退出码 3），之后每次 sync 都失败。目录里仍有本机文件时照旧拒绝。
+- 快照另存当时所有 overlay 文件；`rollback` 跨过一次 `remote add --replace` 时，把被团队接管的本机 overlay 恢复为原内容；此前会删除它。
+- `apply` 删除插件后，`purge <包名>` 能清理它留在 `envctl/sources` 下的 clone（清单不再声明该包时）；此前因所有权记录已去掉而拒绝，与 `remove` 帮助所说的流程不符。
 - 帮助的环境变量部分补上 `DSHENV_NPM_CHECK`；README 与使用教程中需要 `--layer` 的命令补上 `plugins config unset` 与 `tools reset`；README 说明没有快照时的 `rollback` 与没有订阅时的 `remote remove` 以退出码 3 结束。
 
 ### 变更

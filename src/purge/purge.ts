@@ -45,12 +45,19 @@ async function assertSafeManagedPath(target: string, allowedRoot: string): Promi
   }
 }
 
+interface PurgeTarget {
+  alias: string;
+  packageName: string;
+  // Apply already removed the plugin and its config blocks; only the managed clone is left.
+  cloneOnly?: boolean;
+}
+
 function findOwnedPlugin(
   state: EnvironmentState,
   manifest: EnvironmentManifest | null,
   profileName: string,
   pluginRef: string
-): { alias: string; packageName: string } {
+): PurgeTarget | null {
   const owned = state.resources?.plugin?.[profileName] ?? {};
   for (const [packageName, record] of Object.entries(owned)) {
     if (packageName === pluginRef || record.alias === pluginRef) {
@@ -62,7 +69,16 @@ function findOwnedPlugin(
   if (fromManifest && owned[fromManifest.package]) {
     return { alias: pluginRef, packageName: fromManifest.package };
   }
-  throw new ValidationError(`Refusing to purge '${pluginRef}' in '${profileName}': no ownership record`);
+  return null;
+}
+
+// Apply drops the ownership record when it removes a plugin, but a clone under envctl/sources is dshenv's own either way.
+function leftoverClone(paths: EnvironmentPaths, manifest: EnvironmentManifest | null, profileName: string, packageName: string): PurgeTarget | null {
+  const plugins = manifest?.profiles[profileName]?.plugins ?? {};
+  if (Object.hasOwn(plugins, packageName) || Object.values(plugins).some((plugin) => plugin.package === packageName)) {
+    return null;
+  }
+  return fs.existsSync(managedGitSourceDir(paths.managerDir, profileName, packageName)) ? { alias: packageName, packageName, cloneOnly: true } : null;
 }
 
 // Decided under the lock, so state and the clone cannot change between the checks and the move.
@@ -91,7 +107,10 @@ async function purgeDecided(
     : fs.existsSync(paths.manifestFile)
       ? loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'))
       : null;
-  const owned = findOwnedPlugin(state, manifest, profileName, pluginRef);
+  const owned = findOwnedPlugin(state, manifest, profileName, pluginRef) ?? leftoverClone(paths, manifest, profileName, pluginRef);
+  if (!owned) {
+    throw new ValidationError(`Refusing to purge '${pluginRef}' in '${profileName}': no ownership record, and no managed clone of a package by that name the manifest no longer declares`);
+  }
 
   const moved: string[] = [];
   const patchFile = profilePatchFile(paths, profileName);
@@ -102,7 +121,7 @@ async function purgeDecided(
   }
 
   if (options?.dryRun) {
-    if (fs.existsSync(patchFile)) moved.push(patchFile);
+    if (!owned.cloneOnly && fs.existsSync(patchFile)) moved.push(patchFile);
     if (fs.existsSync(cloneDir)) moved.push(cloneDir);
     return {
       dryRun: true,
@@ -125,7 +144,7 @@ async function purgeDecided(
   });
 
   // Both are checked before either changes, so a refusal leaves everything as it was.
-  const hasPatchFile = fs.existsSync(patchFile);
+  const hasPatchFile = !owned.cloneOnly && fs.existsSync(patchFile);
   const hasClone = fs.existsSync(cloneDir);
   if (hasPatchFile) {
     await assertSafeManagedPath(patchFile, paths.profilesDir);

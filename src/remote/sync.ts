@@ -95,7 +95,7 @@ function assertNoConflicts(input: PrepareSyncInput, snapshot: RemoteSnapshot, lo
   }
   for (const key of Object.keys(snapshot.files).sort(compareRemoteKeys)) {
     const file = remoteFilePath(paths, key);
-    if (Object.hasOwn(ownedFiles, key) || !fs.existsSync(file)) {
+    if (Object.hasOwn(ownedFiles, key) || !fs.existsSync(file) || holdsOnlyOwnedFiles(file, key, ownedFiles, snapshot.files)) {
       continue;
     }
     if (previous) {
@@ -113,6 +113,20 @@ function assertNoConflicts(input: PrepareSyncInput, snapshot: RemoteSnapshot, lo
       throw new ValidationError(`Local lock entry '${entry}' already exists; pass --replace to overwrite it with the remote entry (a snapshot is taken first)`);
     }
   }
+}
+
+// A team file can replace a directory of team files the same update removes; a local file left in it still clashes.
+function holdsOnlyOwnedFiles(dir: string, key: string, owned: Record<string, string>, next: Record<string, unknown>): boolean {
+  if (!fs.lstatSync(dir).isDirectory()) {
+    return false;
+  }
+  return fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => !entry.isDirectory())
+    .every((entry) => {
+      const rel = path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join('/');
+      const fileKey = `${key}/${rel}`;
+      return Object.hasOwn(owned, fileKey) && !Object.hasOwn(next, fileKey);
+    });
 }
 
 function computeChanges(paths: EnvironmentPaths, owned: Record<string, string>, next: Record<string, string>): RemoteFileChanges {
@@ -169,7 +183,9 @@ async function declaredSkillsAfter(paths: EnvironmentPaths, snapshot: RemoteSnap
       // Symlinks are left out as copySkillDir leaves them out; copied as links, the preview would write through them.
       await fs.promises.cp(paths.skillsDir, scratch, { recursive: true, filter: (source) => !fs.lstatSync(source).isSymbolicLink() });
     }
-    for (const key of changed) {
+    // Removals first, as accepting does, so a path can turn from a file into a directory or back.
+    const removed = changed.filter((key) => files.removed.includes(key));
+    for (const key of [...removed, ...changed.filter((key) => !files.removed.includes(key))]) {
       const file = path.join(scratch, ...(skillPathFromKey(key) as string[]));
       if (files.removed.includes(key)) {
         await fs.promises.rm(file, { force: true });
@@ -269,6 +285,11 @@ export async function acceptSync(paths: EnvironmentPaths, preview: SyncPreview):
 
   const created: string[] = [];
   try {
+    // Removals first, so a path can turn from a file into a directory or back.
+    for (const key of preview.files.removed) {
+      await fs.promises.rm(remoteFilePath(paths, key), { force: true });
+      await removeEmptySkillDirs(paths.skillsDir, key);
+    }
     for (const key of [...preview.files.added, ...preview.files.modified].sort(compareRemoteKeys)) {
       const file = remoteFilePath(paths, key);
       if (!fs.existsSync(file)) {
@@ -281,10 +302,6 @@ export async function acceptSync(paths: EnvironmentPaths, preview: SyncPreview):
       if (next !== mode) {
         await fs.promises.chmod(file, next);
       }
-    }
-    for (const key of preview.files.removed) {
-      await fs.promises.rm(remoteFilePath(paths, key), { force: true });
-      await removeEmptySkillDirs(paths.skillsDir, key);
     }
     // Local entries are untouched by the merge, so the lock is only rewritten when a team entry changes.
     if (preview.lock && hasChanges(preview.lockEntries)) {
