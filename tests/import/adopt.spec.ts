@@ -259,6 +259,22 @@ profiles:
       await expect(adoptEnvironment(paths, candidateWith({ type: 'local-link', path: '/src/agent-teams' }))).rejects.toThrow(/stale/);
     });
 
+    it('keeps the ref or commit the base declares for a git plugin it adopts again', async () => {
+      const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+      setLiveSpec('git+https://github.com/x/y.git#aaaaaaa');
+      for (const pin of [{ ref: 'main' }, { commit: 'aaaaaaa' }]) {
+        fs.mkdirSync(paths.managerDir, { recursive: true });
+        fs.writeFileSync(
+          paths.manifestFile,
+          `apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        package: "@nanmicoder/dsh-agent-teams"\n        source: ${JSON.stringify({ type: 'git', url: 'git+https://github.com/x/y.git', ...pin })}\n`
+        );
+        await adoptEnvironment(paths, candidateWith({ type: 'git', url: 'git+https://github.com/x/y.git' }, 'aaaaaaa'));
+        expect(loadManifest(fs.readFileSync(paths.manifestFile, 'utf8')).profiles.web.plugins['agent-teams'].source).toEqual({ type: 'git', url: 'git+https://github.com/x/y.git', ...pin });
+        const again = await adoptEnvironment(paths, candidateWith({ type: 'git', url: 'git+https://github.com/x/y.git' }, 'aaaaaaa'), { dryRun: true });
+        expect(again.details.every((detail) => detail.alreadyAdopted)).toBe(true);
+      }
+    });
+
     it('but adopts a git candidate that still matches', async () => {
       const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
       setLiveSpec('git+https://github.com/x/y.git#aaaaaaa');

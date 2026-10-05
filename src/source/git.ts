@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { ValidationError, DshError } from '../errors.js';
 import { isValidProfileName } from '../manifest/schema.js';
@@ -46,6 +47,14 @@ export function managedGitSourceDir(
     throw new ValidationError(`Managed source path escapes envctl: ${dir}`);
   }
   return dir;
+}
+
+// pnpm reads a plain repository path as a local directory to link, or a GitHub shorthand, never as a Git repository.
+export function normalizeGitUrl(url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) || /^[^/\\@]+@[^/\\:]+:/.test(url)) {
+    return url;
+  }
+  return path.isAbsolute(url) || /^\.\.?[\\/]/.test(url) || fs.existsSync(url) ? pathToFileURL(path.resolve(url)).href : url;
 }
 
 export function packageNameFromGitUrl(url: string): string {
@@ -165,9 +174,17 @@ export async function checkoutCommit(repoDir: string, commit: string): Promise<s
   return head.stdout.trim();
 }
 
+export interface FastForwardOptions {
+  // A clone dshenv manages may also move back, e.g. to the commit the manifest pins.
+  managed?: boolean;
+  // What a detached HEAD follows when no ref is given.
+  detachedRef?: string;
+}
+
 export async function safeFastForwardManagedGit(
   repoDir: string,
-  ref?: string
+  ref?: string,
+  options: FastForwardOptions = {}
 ): Promise<{ previousCommit: string; newCommit: string }> {
   if (ref !== undefined) {
     assertNotOptionLike('Git ref', ref);
@@ -186,7 +203,7 @@ export async function safeFastForwardManagedGit(
   const previousCommit = status.commit || 'unknown';
 
   const branch = await execa('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
-  const targetCommitOrRef = ref ?? (branch.exitCode === 0 ? branch.stdout.trim() : undefined);
+  const targetCommitOrRef = ref ?? (branch.exitCode === 0 ? branch.stdout.trim() : options.detachedRef);
   if (targetCommitOrRef === undefined) {
     throw new ValidationError(`${repoDir} is on a detached HEAD; pass --ref <ref>`);
   }
@@ -204,11 +221,19 @@ export async function safeFastForwardManagedGit(
           timeout: 5000
         });
   const target = upstream?.exitCode === 0 ? `origin/${targetCommitOrRef}` : targetCommitOrRef;
-  await execa('git', ['merge', '--ff-only', target], { ...isolatedGit(),
-    cwd: repoDir,
-    shell: false,
-    timeout: 10000
-  });
+  const resolved = await execa('git', ['rev-parse', '--verify', '--quiet', `${target}^{commit}`], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  if (resolved.exitCode !== 0) {
+    throw new ValidationError(`Git ref not found in ${repoDir}: ${targetCommitOrRef}`);
+  }
+  // merge --ff-only to a commit behind HEAD says "Already up to date" and succeeds, moving nothing.
+  const ahead = await execa('git', ['merge-base', '--is-ancestor', 'HEAD', resolved.stdout.trim()], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  if (ahead.exitCode === 0) {
+    await execa('git', ['merge', '--ff-only', target], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 10000 });
+  } else if (options.managed) {
+    await execa('git', ['checkout', '--quiet', '--detach', resolved.stdout.trim()], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 30000 });
+  } else {
+    throw new ValidationError(`${targetCommitOrRef} is not ahead of the checked-out commit; source sync only fast-forwards a checkout outside envctl`);
+  }
 
   const newCommitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
     cwd: repoDir,

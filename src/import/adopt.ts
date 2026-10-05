@@ -26,7 +26,7 @@ import {
 import { writeAtomic } from '../io/atomic-file.js';
 import { ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
-import { freeAlias, pluginOwnershipRecord } from '../resources/plugin.js';
+import { freeAlias, isSameCommit, pluginOwnershipRecord } from '../resources/plugin.js';
 
 export interface AdoptDetail {
   profile: string;
@@ -247,7 +247,19 @@ async function adoptUnderLock(
       );
       // Capture cannot see declared patches, so a candidate without any must not erase them.
       const existingPatches = existingEntry?.patches;
-      const entry = plugin.patches === undefined && existingPatches ? { ...plugin, patches: existingPatches } : plugin;
+      const withPatches = plugin.patches === undefined && existingPatches ? { ...plugin, patches: existingPatches } : plugin;
+      // Capture reads only the URL of a git install, so the ref or commit the base pins stays, moved to what is installed.
+      const capturedCommit = candLockProf[candidateAlias]?.source;
+      const pinned = existingEntry?.source.type === 'git' && plugin.source.type === 'git' && existingEntry.source.url === plugin.source.url
+        ? existingEntry.source
+        : undefined;
+      const liveCommit = capturedCommit?.type === 'git' ? capturedCommit.commit : undefined;
+      const entry = pinned
+        ? {
+            ...withPatches,
+            source: pinned.commit !== undefined && liveCommit !== undefined && !isSameCommit(pinned.commit, liveCommit) ? { ...pinned, commit: liveCommit } : pinned
+          }
+        : withPatches;
       mergedManifest.profiles[profileName].plugins[alias] = entry;
 
       const capturedLock = candLockProf[candidateAlias];
