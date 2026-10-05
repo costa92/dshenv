@@ -197,6 +197,28 @@ describe('pullProfilePatches', () => {
     }
   });
 
+  it('refuses in the preview a team overlay whose patches DSH dropped, though nothing new goes into it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dshenv-pull-remote-'));
+    try {
+      paths = await writeRemoteOwnedFixture(home);
+      setupProfile(home);
+      fs.rmSync(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      tempHome = home;
+      const teamBase = `apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins: {}\n    patches:\n      - ${JSON.stringify(LOCALE)}\n`;
+      const teamOverlay = `apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    patches:\n      - { id: extra, config: { on: true } }\n`;
+      fs.writeFileSync(paths.manifestFile, teamBase);
+      fs.writeFileSync(path.join(paths.overlaysDir, 'team.yaml'), teamOverlay);
+      const config = readRemoteConfig(paths)!;
+      await writeRemoteConfig(paths, { ...config, files: { ...config.files, 'manifest.yaml': sha256Hex(teamBase), 'overlays/team.yaml': sha256Hex(teamOverlay) } });
+      // The user removed the overlay's entry in DSH; only the team's base entry is left.
+      fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([LOCALE])}`);
+
+      await expect(pull({ dryRun: true, prefer: 'dsh', selection: { name: 'team', via: 'file' } })).rejects.toThrow(/Overlay 'team' is owned by remote/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  });
+
   it('keeps an override of a machine-local insert after it, in the overlay', async () => {
     const insert = { insert: [{ id: 'fs', config: { dir: '/home/me/fs' } }] };
     const override = { id: 'fs', config: { mode: 'rw' } };

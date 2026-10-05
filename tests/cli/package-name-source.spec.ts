@@ -85,4 +85,12 @@ describe('package names come from the source when it can be read', () => {
     expect(withRef.stderr).toContain('a local path takes no #<ref>; for a Git repository use git+file://');
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
   });
+
+  it('refuses a local path that is a file, such as a packed .tgz', async () => {
+    const file = path.join(tempHome, 'pkg-1.0.0.tgz');
+    fs.writeFileSync(file, '');
+    const out = await run(['install', file, '--profile', 'web']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain(`Local plugin path is not a directory: ${file}`);
+  });
 });

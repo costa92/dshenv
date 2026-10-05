@@ -18,6 +18,12 @@
 - `skills` 目录下的 `node_modules`（在 skills 目录里 `npm install` 留下的）不再被当作 skill，团队仓库的 `skills/node_modules/` 也被忽略；此前 `pull --yes`、`adopt --yes` 因此报 ENOENT 失败。
 - 子命令层面的未知命令加 `--help`（如 `dshenv web foo --help`、`dshenv help web foo`）与未知命令加 `--version`（`dshenv foo --version`）按未知命令处理，退出码 3；`dshenv help web start` 显示 `web start` 的帮助，不再是 `web` 的。
 - 文档：使用教程关于 rollback 跨过 `remote add --replace` 与「不带 id 的 rollback」的说明、锁的重试间隔已更正；GitHub Actions 示例的注释不再说 `plan` 会以 4 结束；模板 README 改用 `mark-restarted`；README 说明 DSH 配置了 `webserver.port` 时忽略 `--port`。
+- `install --layer base` 在生效 overlay 用 `remove: true` 去掉或改了来源的插件上，像 `update` 一样在 stderr 提示这台机器上实际没变（`update`、`config set/unset` 写被 overlay 去掉的插件时同样提示）。
+- `install` 的本地路径必须是目录；此前一个文件（如打包的 `.tgz`）被登记成链接目录，到 `apply` 才失败。
+- DSH 组合出的插件配置含 `${...}` 时，`config set` 不再抄它（清单不允许），只写这个键并说明；此前以退出码 3 失败。
+- `config unset` 从该插件所有设置了这个键的补丁里删掉它；此前只删第一个，其余补丁里的值仍然生效。
+- `adopt` 选别名时也避开 `lock.json` 里已有的别名（它们可能属于其他 overlay）；此前会覆盖那条锁定。
+- 选中的团队 overlay 只因 DSH 里删掉了它的条目而需要改写时，`pull` 的预览也以退出码 3 拒绝；此前预览通过，`--yes` 才被拒绝。
 
 ## 0.9.0 - 2026-10-05
 

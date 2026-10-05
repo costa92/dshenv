@@ -345,4 +345,13 @@ warnings: []
       expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
     });
   });
+
+  it('warns when the overlay keeps a base install from taking effect', async () => {
+    const removed = await run(['install', 'heavy-plugin@2.0.0', '--as', 'heavy', '--profile', 'web', '--layer', 'base', '--no-npm-check']);
+    expect(removed.code).toBe(0);
+    expect(removed.stderr).toBe("Overlay 'laptop' sets remove: true for heavy in profile 'web', so it stays uninstalled on this machine; use --layer overlay to change it here\n");
+    fs.writeFileSync(overlayFile(), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      shared:\n        source: { type: npm, version: "1.9.0" }\n');
+    const pinned = await run(['install', 'shared-plugin@2.0.0', '--as', 'shared', '--profile', 'web', '--layer', 'base', '--no-npm-check']);
+    expect(pinned.stderr).toBe("Overlay 'laptop' sets the source of shared in profile 'web', so it stays at 1.9.0 on this machine; use --layer overlay to change it here\n");
+  });
 });
