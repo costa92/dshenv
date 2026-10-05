@@ -62,12 +62,12 @@ pnpm add -g @costa92/dshenv
 dshenv --version
 ```
 
-npm 包已含构建好的 `lib/`，安装时不需要构建；固定版本用 `@costa92/dshenv@0.8.1`。各版本见 [Releases](https://github.com/costa92/dshenv/releases)（附同一份 `.tgz`），变更见 [CHANGELOG](CHANGELOG.md)。
+npm 包已含构建好的 `lib/`，安装时不需要构建；固定版本用 `@costa92/dshenv@0.9.0`。各版本见 [Releases](https://github.com/costa92/dshenv/releases)（附同一份 `.tgz`），变更见 [CHANGELOG](CHANGELOG.md)。
 
 ### 从 Git 地址安装
 
 ```bash
-pnpm add -g --allow-build=@costa92/dshenv "git+https://github.com/costa92/dshenv.git#v0.8.1"
+pnpm add -g --allow-build=@costa92/dshenv "git+https://github.com/costa92/dshenv.git#v0.9.0"
 ```
 
 `#` 后可换成其他 tag、commit 或 `master`（未发布的最新代码）。安装时 pnpm 会在克隆中执行 `prepare` 构建 `lib/`；pnpm 10 默认不运行依赖的构建脚本，所以必须带 `--allow-build=@costa92/dshenv`，否则安装后缺少 `lib/` 无法运行。npm 从 Git 地址安装时会在准备阶段崩溃（npm 10.9 arborist 缺陷），请使用 pnpm。
