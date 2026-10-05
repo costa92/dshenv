@@ -62,6 +62,25 @@ describe('CLI remote', () => {
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
   });
 
+  it('ignores a GIT_WORK_TREE inherited from a hook or CI step', async () => {
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other, { recursive: true });
+    await execa('git', ['init', '-q'], { cwd: other });
+    fs.mkdirSync(path.join(other, 'sub'));
+    const previous = process.cwd();
+    // As in a git hook: the working directory inside another repository, its work tree exported.
+    process.chdir(path.join(other, 'sub'));
+    process.env.GIT_WORK_TREE = other;
+    try {
+      const { code, stdout } = await run(['remote', 'add', team.url]);
+      expect(code).toBe(2);
+      expect(stdout).toContain('+ manifest.yaml');
+    } finally {
+      delete process.env.GIT_WORK_TREE;
+      process.chdir(previous);
+    }
+  });
+
   it('accepts the commit it previewed when the branch has moved on since', async () => {
     const previewed = await teamHead(team);
     await run(['remote', 'add', team.url]);

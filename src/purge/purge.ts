@@ -60,12 +60,14 @@ function findOwnedPlugin(
   pluginRef: string
 ): PurgeTarget | null {
   const owned = state.resources?.plugin?.[profileName] ?? {};
+  const plugins = manifest?.profiles[profileName]?.plugins ?? {};
   for (const [packageName, record] of Object.entries(owned)) {
     if (packageName === pluginRef || record.alias === pluginRef) {
-      return { alias: record.alias, packageName };
+      // The record keeps the alias of the last install; a rename since writes the config blocks under the new one.
+      const declared = Object.entries(plugins).find(([, plugin]) => plugin.package === packageName)?.[0];
+      return { alias: declared ?? record.alias, packageName };
     }
   }
-  const plugins = manifest?.profiles[profileName]?.plugins ?? {};
   const fromManifest = plugins[pluginRef];
   if (fromManifest && owned[fromManifest.package]) {
     return { alias: pluginRef, packageName: fromManifest.package };
@@ -117,6 +119,9 @@ async function purgeDecided(
   const patchFile = profilePatchFile(paths, profileName);
   const cloneDir = managedGitSourceDir(paths.managerDir, profileName, owned.packageName);
   const cloneStatus = await inspectGitWorkingTree(cloneDir);
+  if (cloneStatus.statusError !== undefined) {
+    throw new ValidationError(`Refusing to purge ${cloneDir}: git cannot tell whether the managed clone has uncommitted changes (${cloneStatus.statusError})`);
+  }
   if (cloneStatus.isDirty) {
     throw new ValidationError(`Refusing to purge ${cloneDir}: the managed clone has uncommitted changes`);
   }
