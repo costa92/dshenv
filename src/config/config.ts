@@ -99,7 +99,7 @@ export async function readPluginConfig(
     };
   }
 
-  const declared = plugin.patches?.[0];
+  const declared = plugin.patches?.find((patch) => patch.enabled !== false);
   return {
     source: 'manifest',
     id: declared?.id ?? alias,
@@ -107,6 +107,12 @@ export async function readPluginConfig(
     digest: declared ? computePatchDigest(declared.config) : undefined,
     digestValid: declared ? true : undefined
   };
+}
+
+export function disabledPatches(alias: string, profileName: string): ValidationError {
+  return new ValidationError(
+    `Every config patch of '${alias}' in profile '${profileName}' is disabled (enabled: false), so apply would never write the key; enable one or remove them first`
+  );
 }
 
 export function upsertPluginPatch(
@@ -121,9 +127,13 @@ export function upsertPluginPatch(
   if (!plugin) {
     throw new ValidationError(`Plugin '${alias}' not found in profile '${profileName}'`);
   }
-  const current: PatchEntry = plugin.patches?.[0] ?? { id: newId, config: {} };
-  const config = setAtPath(current.config, dottedPath, value);
-  const next: PatchEntry = { ...current, config };
-  plugin.patches = [next, ...(plugin.patches?.slice(1) ?? [])];
+  const patches = plugin.patches ?? [];
+  const index = patches.findIndex((patch) => patch.enabled !== false);
+  if (patches.length > 0 && index === -1) {
+    throw disabledPatches(alias, profileName);
+  }
+  const current: PatchEntry = patches[index] ?? { id: newId, config: {} };
+  const next: PatchEntry = { ...current, config: setAtPath(current.config, dottedPath, value) };
+  plugin.patches = index === -1 ? [next] : patches.map((patch, i) => (i === index ? next : patch));
   return next;
 }

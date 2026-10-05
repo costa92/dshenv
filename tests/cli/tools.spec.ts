@@ -171,6 +171,38 @@ profiles:
     expect(json.status).toBe('set');
   });
 
+  describe('a base write does not copy into the shared base what DSH composes from elsewhere', () => {
+    const LOCAL_ROW = `- id: tool-web\n  name: '@deepseek-ai/dsh-tool-web'\n  config:\n    storeDir: /home/me/private\n`;
+    const dumping = (dump: string) => {
+      const fakeDsh = path.join(tempHome, 'fake-dsh-2.mjs');
+      fs.writeFileSync(fakeDsh, `if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(dump)}); process.exit(0); }\nprocess.exit(1);\n`);
+      process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
+    };
+    const manifestText = () => fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
+
+    it('refuses while a dshenv patch the base does not declare is in effect, as an applied overlay leaves it', async () => {
+      dumping(LOCAL_ROW);
+      fs.writeFileSync(
+        path.join(tempHome, 'profiles', 'headless', 'cordis.patch.yml'),
+        `# dshenv:begin profile=headless plugin=@profile digest=x\n- id: tool-web\n  name: '@deepseek-ai/dsh-tool-web'\n  config:\n    storeDir: /home/me/private\n# dshenv:end profile=headless plugin=@profile\n`
+      );
+      const before = manifestText();
+      const out = await run(['--no-overlay', 'tools', 'config', 'set', 'tool-web', 'foo', '1', '-p', 'headless']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(/holds a dshenv patch for 'tool-web' that the base manifest does not declare.*--layer overlay/);
+      expect(manifestText()).toBe(before);
+    });
+
+    it('refuses to copy a machine-local path into the base', async () => {
+      dumping(LOCAL_ROW);
+      const before = manifestText();
+      const out = await run(['tools', 'config', 'set', 'tool-web', 'foo', '1', '-p', 'headless']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(/machine-local paths.*--layer overlay/);
+      expect(manifestText()).toBe(before);
+    });
+  });
+
   it('keeps both edits when two commands change the same preset at once', async () => {
     const results = await Promise.all([
       run(['tools', 'disable', 'tool-web', '-p', 'web']),

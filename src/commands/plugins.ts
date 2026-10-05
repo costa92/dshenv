@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
-import { assertConfigPath, getAtPath, parseConfigValue, readPluginConfig, setAtPath, unsetAtPath, upsertPluginPatch } from '../config/config.js';
+import { assertConfigPath, disabledPatches, getAtPath, parseConfigValue, readPluginConfig, setAtPath, unsetAtPath, upsertPluginPatch } from '../config/config.js';
 import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
 import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
@@ -361,6 +361,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           const exists = baseEntry ? !overlayEntry?.remove : overlayEntry?.package !== undefined && !overlayEntry.remove;
           if (exists) {
             previousSource = overlayEntry?.source ?? baseEntry?.source;
+            // Restating the source the overlay inherits would pin it there, so a later base update stops reaching this machine.
+            if (JSON.stringify(previousSource) === JSON.stringify(next.source)) {
+              return next;
+            }
           }
           setOverlayPluginFields(doc, profile, next.alias, exists
             ? { source: next.source }
@@ -715,7 +719,12 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         let seed: Record<string, unknown> | undefined;
         // A patch id DSH has no row for is never applied, and a bundle names its rows apart from the alias.
         const row = !declared.patches?.length && 'rows' in composed ? pluginRow(composed.rows, declared.package, alias) : undefined;
-        const patchId = declared.patches?.[0]?.id ?? row?.id ?? alias;
+        // Apply skips a patch with enabled: false, so a key set there would never reach DSH.
+        const active = declared.patches?.find((patch) => patch.enabled !== false);
+        if (declared.patches?.length && !active) {
+          throw disabledPatches(alias, profile);
+        }
+        const patchId = active?.id ?? row?.id ?? alias;
         if (patchId !== alias && row) {
           ctx.writeErr(`DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch targets that id\n`);
         }

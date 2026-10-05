@@ -97,6 +97,15 @@ describe('CLI manifest write commands', () => {
       expect(same.stdout).toBe(`${PKG} (agent-teams) is already declared at 0.1.22 in profile 'web' in the manifest; nothing changed.\n`);
     });
 
+    it('writes nothing into the overlay for an install at the version the base already declares', async () => {
+      useOverlay('laptop');
+      const before = fs.readFileSync(path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'), 'utf8');
+      const same = await run(['install', `${PKG}@0.1.21`, '-p', 'web', '--layer', 'overlay']);
+      expect(same.code).toBe(0);
+      expect(same.stdout).toContain('nothing changed');
+      expect(fs.readFileSync(path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'), 'utf8')).toBe(before);
+    });
+
     it('refuses an install whose alias already names another package, in the base and in an overlay', async () => {
       const base = await run(['install', 'dsh-plugin-other@1.0.0', '-p', 'web', '--as', 'agent-teams']);
       expect(base.code).toBe(3);
@@ -418,6 +427,29 @@ describe('CLI manifest write commands', () => {
         );
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
       });
+    });
+
+    it('sets the key in the first enabled patch, never in one apply skips', async () => {
+      const file = path.join(tempHome, 'envctl', 'manifest.yaml');
+      const doc = parseYaml(fs.readFileSync(file, 'utf8'));
+      doc.profiles.web.plugins['agent-teams'].patches = [
+        { id: 'old', enabled: false, config: { x: 1 } },
+        { id: 'agent-teams', config: { team: { lead: 'captain' } } }
+      ];
+      fs.writeFileSync(file, stringifyYaml(doc));
+      expect((await run(['config', 'set', 'agent-teams', 'y', '2', '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([
+        { id: 'old', enabled: false, config: { x: 1 } },
+        { id: 'agent-teams', config: { team: { lead: 'captain' }, y: 2 } }
+      ]);
+
+      doc.profiles.web.plugins['agent-teams'].patches = [{ id: 'old', enabled: false, config: { x: 1 } }];
+      fs.writeFileSync(file, stringifyYaml(doc));
+      const before = fs.readFileSync(file, 'utf8');
+      const refused = await run(['config', 'set', 'agent-teams', 'y', '2', '-p', 'web']);
+      expect(refused.code).toBe(3);
+      expect(refused.stderr).toMatch(/Every config patch of 'agent-teams' in profile 'web' is disabled/);
+      expect(fs.readFileSync(file, 'utf8')).toBe(before);
     });
 
     it('unsets a key from every patch of the plugin that sets it', async () => {

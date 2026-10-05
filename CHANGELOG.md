@@ -6,6 +6,9 @@
 
 ### 修复
 
+- `tools config set`、`tools enable/disable` 写 base 时，若 base 还没有这一条而 DSH 当前组合出的配置已含 dshenv 补丁（如已 apply 的 overlay 写的），或含本机路径，以退出码 3 拒绝；此前把 overlay 的值（本机路径等）抄进共享的 base。
+- `install --layer overlay` 装的版本与生效的来源相同时不再写 overlay；此前提示「nothing changed」却在 overlay 里固定了来源，之后 base 的升级到不了这台机器。
+- `plugins config set` 只把键写进 `enabled` 不为 `false` 的补丁，全部禁用时以退出码 3 拒绝；`config get` 同样跳过禁用的补丁。此前写进禁用的补丁，`apply` 跳过它，值永远到不了 DSH。
 - rollback 到 `remote add`（或 pull）之前时，若删掉的正是选中的 overlay，会清掉选择并在输出里说明；此前选择悬空，之后所有命令都报 `Overlay 'team' not found`。
 - rollback 后仍在安装着、清单仍声明同一路径的本地来源插件，保留回滚前 `lock.json` 记录的摘要；此前恢复旧 lock 丢掉摘要，清单没变也会重装并要求重启。
 - skill 的摘要算整个目录，不再套用其 `package.json` 的 `files` 过滤；此前名单外文件（如 `run.sh`）的改动在 `plan` 中显示已同步，永远到不了 DSH。
