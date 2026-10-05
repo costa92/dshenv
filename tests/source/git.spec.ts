@@ -101,9 +101,13 @@ describe('Managed Git Source Lifecycle', () => {
     const checkout = (await execa('git', ['rev-parse', 'HEAD'], { cwd: cloneDir })).stdout.trim();
 
     // origin/HEAD and origin/HEAD~1 point at the upstream default branch, which is not what the caller asked for.
-    const result = await safeFastForwardManagedGit(cloneDir, ref);
-
-    expect(result.newCommit).toBe(checkout);
+    if (ref === 'HEAD') {
+      expect((await safeFastForwardManagedGit(cloneDir, ref)).newCommit).toBe(checkout);
+    } else {
+      // Behind the checkout: a checkout outside envctl only fast-forwards, so this is refused rather than a silent no-op.
+      await expect(safeFastForwardManagedGit(cloneDir, ref)).rejects.toThrow('HEAD~1 is not ahead of the checked-out commit');
+      expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: cloneDir })).stdout.trim()).toBe(checkout);
+    }
   });
 
   it('follows the checked-out branch upstream when no ref is given, and asks for one on a detached HEAD', async () => {

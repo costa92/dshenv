@@ -40,6 +40,8 @@ import { withEnvironmentLock } from '../io/lock.js';
 import { renderPluginTable } from '../output/render.js';
 import { resolveWrite, writeBase, writeOverlay } from './manifest-write.js';
 import { readPackageJsonName } from '../source/local.js';
+import { normalizeGitUrl } from '../source/git.js';
+import { isSameCommit } from '../resources/plugin.js';
 
 export interface InstallPluginRequest {
   spec: string;
@@ -100,10 +102,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
   const { program, writeOut } = ctx;
 
   function parsePluginSpec(spec: string, optsAlias?: string, optsPackage?: string): { alias: string; packageName: string; source: PluginSource } {
-    if (spec.startsWith('git+') || spec.startsWith('http://') || spec.startsWith('https://') || spec.startsWith('git@') || spec.endsWith('.git')) {
+    if (/^(?:git\+|https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(spec) || spec.split('#')[0].endsWith('.git')) {
       const cleanUrl = spec.startsWith('git+') ? spec.slice(4) : spec;
       const urlParts = cleanUrl.split('#');
-      const repoUrl = urlParts[0];
+      const repoUrl = normalizeGitUrl(urlParts[0]);
       const commitOrRef = urlParts[1] || undefined;
       const baseName = path.basename(repoUrl, '.git');
       const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
@@ -420,7 +422,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       .description('Add a plugin to the manifest for a profile (apply installs it)')
       .addOption(targetProfile())
       .option('--as <alias>', 'custom alias name for the plugin', aliasOption)
-      .option('--package <name>', 'package name for a git or local source; defaults to its package.json name')
+      .option('--package <name>', "package name for a git or local source; defaults to a local source's package.json name, or a git repository's name (source clone --profile then reads its package.json)")
       .addOption(writeLayer())
       .option('--new-profile', 'allow a profile that is neither declared nor created yet (guards against typos)')
       .option('--no-npm-check', 'do not ask npm whether the package version exists (also: DSHENV_NPM_CHECK=off)')
@@ -447,6 +449,17 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
               : `Added ${result.packageName} (${result.alias}) to profile '${cmdOpts.profile}'`,
           result.unchanged
         );
+        // Only the lock decides the commit that is installed; one that pins another makes plan block.
+        const lockedSource = result.source.type === 'git' && result.source.commit !== undefined && fs.existsSync(resolveCliPaths(opts).lockFile)
+          ? loadLock(fs.readFileSync(resolveCliPaths(opts).lockFile, 'utf8')).profiles[cmdOpts.profile]?.plugins[result.alias]?.source
+          : undefined;
+        if (!opts.json && result.source.type === 'git' && result.source.commit !== undefined && lockedSource?.type === 'git' &&
+          lockedSource.url === result.source.url && !isSameCommit(lockedSource.commit, result.source.commit)) {
+          ctx.writeErr(
+            `lock.json pins ${result.alias} to ${lockedSource.commit}; lock ${result.source.commit} with: ` +
+              `dshenv source sync --profile ${cmdOpts.profile} --as ${result.alias} --ref ${result.source.commit}\n`
+          );
+        }
       });
   }
 

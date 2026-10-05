@@ -153,6 +153,23 @@ describe('applyEnvironment failure recovery', () => {
     expect(status().aa.status).toBe('healthy');
   });
 
+  it('drops lock entries for aliases no layer declares any more, keeping those an overlay still declares', async () => {
+    const gitEntry = (commit: string) => ({ package: 'g-plugin', source: { type: 'git', url: 'https://example.invalid/g.git', commit } });
+    fs.writeFileSync(paths.lockFile, JSON.stringify({ apiVersion: 'dshenv-lock/v1', profiles: { web: { plugins: { gone: gitEntry('a'.repeat(40)), kept: gitEntry('b'.repeat(40)) } } } }));
+    // Declared only in an overlay this apply does not use: its entry still belongs to that overlay.
+    fs.writeFileSync(overlayFile(), overlay(`      kept:\n        package: g-plugin\n        source: { type: git, url: "https://example.invalid/g.git" }\n`));
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa')));
+    await applyEnvironment(paths, options);
+
+    const lock = JSON.parse(fs.readFileSync(paths.lockFile, 'utf8'));
+    expect(Object.keys(lock.profiles.web.plugins).sort()).toEqual(['kept']);
+
+    // Re-adding the dropped alias at another ref must wait for a locked commit, not reuse the old one.
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa'), `      gone:\n        package: g-plugin\n        source: { type: git, url: "https://example.invalid/g.git", ref: v2 }\n`));
+    const preview = await applyEnvironment(paths, { ...options, dryRun: true });
+    expect(preview.plan.operations.find((op) => op.resource === 'plugin' && op.alias === 'gone')?.kind).toBe('blocked');
+  });
+
   it('saves the active overlay in the snapshot and restores it on rollback', async () => {
     fs.writeFileSync(paths.manifestFile, manifest(plugin('aa')));
     const goodOverlay = overlay(plugin('bb'));

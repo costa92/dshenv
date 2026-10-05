@@ -1,7 +1,6 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { loadManifest, loadLock, serializeLock, serializeManifest } from '../manifest/files.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import {
@@ -10,6 +9,7 @@ import {
   safeFastForwardManagedGit,
   managedGitSourceDir,
   packageNameFromGitUrl,
+  normalizeGitUrl,
   checkoutCommit,
   assertCheckoutServes,
   assertCommitOnOrigin
@@ -25,6 +25,7 @@ import { readPackageJsonName } from '../source/local.js';
 import { assertLockEntryNotRemoteOwned, assertNotRemoteOwned } from '../remote/ownership.js';
 import { assertBaseMergesWithOverlay, resolveWriteLayer, saveOverlay, setOverlayPluginFields, type WriteLayer } from '../overlay/write.js';
 import { overlayFilePath, type OverlaySelection } from '../overlay/selection.js';
+import { isSameCommit } from '../resources/plugin.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { PluginSource } from '../domain.js';
 import { resolveCliPaths, resolveCliOverlay, profileOption, aliasOption, assertKnownProfile, writeLayer, type CommandContext } from './context.js';
@@ -130,8 +131,7 @@ export function registerSourceCommands(ctx: CommandContext): void {
     .action(async (given: string, targetDir: string | undefined, cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
-      // A plain repository path in the manifest reaches pnpm as a local directory to link, not a Git repository.
-      const url = path.isAbsolute(given) || /^\.\.?[\\/]/.test(given) ? pathToFileURL(path.resolve(given)).href : given;
+      const url = normalizeGitUrl(given);
       // git would also keep such a URL in the clone's .git/config, so refuse it even without --profile.
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
@@ -195,6 +195,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
           const packageName: string = cmdOpts.package ?? readPackageJsonName(cloneDir) ?? packageNameFromGitUrl(url);
           let writeManifest: () => Promise<void>;
           const base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+          // install names a git plugin after its repository, not knowing its package.json; the clone does know it.
+          const sameRepository = (declaredSource: PluginSource | undefined) => declaredSource?.type === 'git' && declaredSource.url === url;
           // Replacing the entry would drop the other package's patches and enabled state without a word.
           const aliasTaken = (current: string) => new ValidationError(
             `Alias '${alias}' is '${current}' in profile '${profile}'; clone '${packageName}' under another alias with --as <alias>, or remove '${alias}' first`
@@ -209,7 +211,10 @@ export function registerSourceCommands(ctx: CommandContext): void {
             }
             const overlayEntry = overlayDoc.profiles?.[profile]?.plugins?.[alias];
             if (overlayEntry && !overlayEntry.remove && overlayEntry.package !== undefined && overlayEntry.package !== packageName) {
-              throw aliasTaken(overlayEntry.package);
+              if (!sameRepository(overlayEntry.source)) {
+                throw aliasTaken(overlayEntry.package);
+              }
+              overlayEntry.package = packageName;
             }
             // An overlay entry without a package only adjusts a base plugin, so with none in the base nothing is declared yet.
             const exists = baseEntry ? !overlayEntry?.remove : overlayEntry?.package !== undefined && !overlayEntry.remove;
@@ -225,11 +230,11 @@ export function registerSourceCommands(ctx: CommandContext): void {
               base.profiles[profile] = { plugins: {} };
             }
             const current = base.profiles[profile].plugins[alias];
-            if (current && current.package !== packageName) {
+            if (current && current.package !== packageName && !sameRepository(current.source)) {
               throw aliasTaken(current.package);
             }
             base.profiles[profile].plugins[alias] = current
-              ? { ...current, source }
+              ? { ...current, package: packageName, source }
               : { package: packageName, enabled: true, source };
             assertBaseMergesWithOverlay(paths, selection, base);
             writeManifest = () => writeAtomic(paths.manifestFile, serializeManifest(base), 'overwrite');
@@ -317,6 +322,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
       let alias: string | undefined;
       let packageName: string | undefined;
       let gitUrl: string | undefined;
+      let declaredRef: string | undefined;
+      let pinnedCommit: string | undefined;
       if (cmdOpts.profile) {
         const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
         alias = cmdOpts.as;
@@ -336,6 +343,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
         }
         packageName = plugin.package;
         gitUrl = plugin.source.url;
+        declaredRef = plugin.source.ref;
+        pinnedCommit = plugin.source.commit;
         resolvedTarget = targetDir
           ? path.resolve(process.cwd(), targetDir)
           : managedGitSourceDir(paths.managerDir, cmdOpts.profile, packageName);
@@ -351,7 +360,10 @@ export function registerSourceCommands(ctx: CommandContext): void {
         await assertCheckoutServes(resolvedTarget, gitUrl);
       }
 
-      const res = await safeFastForwardManagedGit(resolvedTarget, ref);
+      // A clone under envctl/sources is dshenv's to move either way; a pinned clone is detached, so it follows the declared ref.
+      const res = await safeFastForwardManagedGit(resolvedTarget, ref, cmdOpts.profile && !targetDir
+        ? { managed: true, detachedRef: declaredRef ?? 'origin/HEAD' }
+        : {});
       if (gitUrl) {
         await assertCommitOnOrigin(resolvedTarget, res.newCommit);
       }
@@ -368,6 +380,13 @@ export function registerSourceCommands(ctx: CommandContext): void {
           (lock.profiles[profile] ??= { plugins: {} }).plugins[pluginAlias] = lockedPlugin;
           await writeAtomic(paths.lockFile, serializeLock(lock), 'overwrite');
         });
+      }
+
+      if (cmdOpts.profile && pinnedCommit !== undefined && !isSameCommit(pinnedCommit, res.newCommit)) {
+        ctx.writeErr(
+          `The manifest pins commit ${pinnedCommit} for ${alias} in profile '${cmdOpts.profile}', so plan stays blocked until it matches the locked ${res.newCommit}: ` +
+            `declare it with dshenv install git+${gitUrl}#${res.newCommit} --as ${alias} -p ${cmdOpts.profile}, or move the lock back with --ref ${pinnedCommit}\n`
+        );
       }
 
       if (opts.json) {

@@ -344,7 +344,7 @@ dshenv source sync -p web --as demo            # 快进受管 clone，并把新�
 dshenv source sync -p web --as demo --ref v1.2.0
 ```
 
-`source show` / `source sync` 不带 `--profile` 时作用于给出的目录（不给时为当前目录），`sync` 只快进、不写 lock；不给 `--ref` 时快进到当前分支对应的远端分支，处于 detached HEAD 时须给 `--ref`。带 `--profile` 时，Profile 里恰好有一个 Git 插件可省略 `--as`；`sync` 总是按清单中的 URL 写入完整的 lock 条目，之后 `apply --yes` 安装新 commit。
+`source show` / `source sync` 不带 `--profile` 时作用于给出的目录（不给时为当前目录），`sync` 只快进、不写 lock，`--ref` 指向更旧的 commit 时以退出码 3 拒绝；不给 `--ref` 时快进到当前分支对应的远端分支，处于 detached HEAD 时须给 `--ref`。带 `--profile` 时，Profile 里恰好有一个 Git 插件可省略 `--as`；`envctl/sources` 下的受管 clone 也可以用 `--ref` 退回到更旧的 commit（如 `plan` 提示的清单 commit），处于 detached HEAD 且不给 `--ref` 时跟随清单的 `ref`，没有时跟随远端默认分支；清单锁定的 `commit` 与新 commit 不一致时在 stderr 提示（`plan` 会显示 blocked）。`sync` 总是按清单中的 URL 写入完整的 lock 条目，之后 `apply --yes` 安装新 commit。base 与所有 overlay 都不再声明的别名，其 lock 条目在下次 `apply` 时删除，之后用同一别名重新加入的 Git 插件须重新锁定 commit。
 
 不是 DSH bundle 的插件包（`package.json` 没有 `dsh.bundle`，例如 [dsh-session-search](https://github.com/Tieboyh/dsh-session-search)）不能放进 bundle 列表，DSH 会跳过它。dshenv 在安装后检查包类型，这类插件改为在 `cordis.patch.yml` 里写一个受管的 `insert` 行挂载（`# dshenv:begin ... plugin=@mount:<alias>`），`enable`/`disable` 切换这一行，`verify` 按已加载的插件条目判断。
 

@@ -8,6 +8,11 @@
 
 - `plugins config set` 只在没有 dshenv 补丁生效时抄 DSH 组合出的配置；此前有生效 overlay 给该插件写了补丁时，`--layer base` 会把 overlay 的值（本机路径、内网地址等）抄进共享的 base。抄来的配置含本机路径时，写 base 以退出码 3 拒绝。
 - `plugins config set` 读不到 DSH 的组合配置（Profile 未创建、找不到 DSH、`--dump-config` 失败）时在 stderr 说明原因；此前静默只写这个键，与 0.9.0 的说明不符。
+- 成功的 `apply` 从 `lock.json` 删掉 base 与所有 overlay 都不再声明的别名的条目（团队条目保留）；此前删掉的 Git 插件用同一别名、另一个 ref 重新加入时，`plan` 不报 blocked，`apply` 装回旧 commit。
+- 再次 `adopt` 由 dshenv 安装的 Git 插件时保留 base 声明的 `ref`/`commit`（`commit` 跟随实际安装的版本）；此前被替换成只有 URL 的来源。
+- `source clone --profile` 读到的 `package.json` 包名与 `install` 按仓库名记下的不同时，同一仓库地址的条目改用读到的包名；此前以别名冲突拒绝。`install --package` 的帮助改为说明 Git 来源默认取仓库名。
+- Git 地址里的本机路径（相对路径、不带 `#` 的 `/abs/x.git`）统一记为 `file://` 地址；此前 `repos/x` 会被 pnpm 当成 GitHub 简写。`install` 把 `ssh://`、`git://` 地址按 Git 处理；此前不带 `.git` 时被当成 npm 包名。
+- `source sync --profile` 可以把受管 clone 退回到更旧的 commit，`plan` 提示的 `--ref <清单 commit>` 由此生效（此前输出「Updated … from X to X」并以 0 退出，什么都没变）；detached HEAD 不给 `--ref` 时跟随清单的 `ref` 或远端默认分支（此前报错）；移动后与清单锁定的 `commit` 不一致时在 stderr 提示。对 `envctl` 之外的检出指向更旧的 commit 时以退出码 3 拒绝，不再静默成功。`install <url>#<commit>` 与 lock 中的 commit 不同时提示如何锁定。
 
 ## 0.9.0 - 2026-10-05
 

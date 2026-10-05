@@ -13,7 +13,7 @@ import { readEnvironmentInventory, type EnvironmentInventory } from '../inventor
 import { buildPlan, isProfileOperation, onlyProfile, type EnvironmentPlan, type LocalSourceDigests, type PluginOperation } from '../planner/plan.js';
 import { applyPluginOperation, dropUninstalledOwnership, planNeedsDshCli, pluginOwnershipRecord, type PluginStepContext } from '../resources/plugin.js';
 import { applyProfilePatchOperation } from '../resources/profile-patch.js';
-import { loadLock, loadState, serializeState, serializeLock, withResources } from '../manifest/files.js';
+import { loadLock, loadManifest, loadState, parseOverlay, serializeState, serializeLock, withResources } from '../manifest/files.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
 import type { OverlaySelection } from '../overlay/selection.js';
 import { acquireEnvironmentLock } from '../io/lock.js';
@@ -208,6 +208,43 @@ function recordLocalDigests(
       }
       next = structuredClone(next ?? { apiVersion: 'dshenv-lock/v1', profiles: {} });
       (next.profiles[profileName] ??= { plugins: {} }).plugins[alias] = entry;
+    }
+  }
+  return next;
+}
+
+// An entry for an alias no layer declares any more would pin the plugin re-added under it to the commit it had then.
+// The lock serves every overlay, so an alias any overlay still declares keeps its entry, as does a team entry.
+function dropUndeclaredLockEntries(paths: EnvironmentPaths, lock: EnvironmentLock | null, onlyProfileName?: string): EnvironmentLock | null {
+  if (!lock) {
+    return lock;
+  }
+  const declared = new Set<string>();
+  try {
+    const layers: Array<{ profiles?: Record<string, { plugins?: Record<string, unknown> }> }> = [loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'))];
+    for (const name of fs.existsSync(paths.overlaysDir) ? fs.readdirSync(paths.overlaysDir) : []) {
+      if (name.endsWith('.yaml')) {
+        const file = path.join(paths.overlaysDir, name);
+        layers.push(parseOverlay(fs.readFileSync(file, 'utf8'), file));
+      }
+    }
+    for (const layer of layers) {
+      for (const [profile, { plugins }] of Object.entries(layer.profiles ?? {})) {
+        for (const alias of Object.keys(plugins ?? {})) declared.add(lockEntryId(profile, alias));
+      }
+    }
+  } catch {
+    // A layer that cannot be read may declare anything; keep every entry.
+    return lock;
+  }
+  const team = readRemoteConfig(paths)?.lockEntries ?? {};
+  let next = lock;
+  for (const [profile, { plugins }] of Object.entries(lock.profiles)) {
+    if (onlyProfileName && profile !== onlyProfileName) continue;
+    for (const alias of Object.keys(plugins)) {
+      if (declared.has(lockEntryId(profile, alias)) || team[profile]?.[alias] !== undefined) continue;
+      if (next === lock) next = structuredClone(lock);
+      delete next.profiles[profile].plugins[alias];
     }
   }
   return next;
@@ -583,7 +620,7 @@ async function planAndApply(
     }
 
     // Never commit successful state until the actual environment converges.
-    const nextLock = recordLocalDigests(lock, manifest, localDigests);
+    const nextLock = dropUndeclaredLockEntries(paths, recordLocalDigests(lock, manifest, localDigests), options?.profile);
     const verifiedInventory = onlyProfile(await readEnvironmentInventory(paths), options?.profile);
     const remainingPlan = buildPlan(manifest, nextLock, verifiedInventory, state, localDigests);
     if (remainingPlan.hasChanges) {

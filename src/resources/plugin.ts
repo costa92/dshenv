@@ -60,7 +60,7 @@ function localPathMoved(
   return current !== undefined && path.normalize(current) !== path.normalize(declared);
 }
 
-function isSameCommit(a: string, b: string): boolean {
+export function isSameCommit(a: string, b: string): boolean {
   const left = a.toLowerCase();
   const right = b.toLowerCase();
   return left.startsWith(right) || right.startsWith(left);
