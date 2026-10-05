@@ -10,7 +10,8 @@ import { resolveDshCommand } from '../dsh/command.js';
 import { dumpProfileConfig } from '../dsh/hmr.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import type { OverlaySelection } from '../overlay/selection.js';
-import { mergeProfilePatches, overrideKey } from '../profile-patches/entries.js';
+import { readProfilePatchFile } from '../apply/patches.js';
+import { containsLocalPath, mergeProfilePatches, overrideKey, readProfilePatchState } from '../profile-patches/entries.js';
 import {
   TOOL_CATEGORIES,
   declaredToolRow,
@@ -181,6 +182,9 @@ export function registerToolsCommands(ctx: CommandContext): void {
     if (!overlay && selection && readOverlay(paths, selection.name).profiles?.[cmdOpts.profile]?.patches?.some((entry) => overrideKey(entry) === patchId)) {
       throw new ValidationError(`The active overlay '${selection.name}' declares '${patchId}', which overrides the base; use --layer overlay`);
     }
+    const livePatched = overlay
+      ? []
+      : (readProfilePatchState(await readProfilePatchFile(paths, cmdOpts.profile), cmdOpts.profile).block?.entries ?? []).map(overrideKey);
     // Built under the write lock from the layer written, so a concurrent edit of the same preset is kept and
     // a base write never takes in what the overlay declares. An overlay entry replaces the base one, so it starts from both.
     const patch = overlay
@@ -192,7 +196,19 @@ export function registerToolsCommands(ctx: CommandContext): void {
         })
       : await writeBase(paths, selection, (manifest) => {
           const profile = (manifest.profiles[cmdOpts.profile] ??= { plugins: {} });
+          // A new base entry starts from what DSH composes, which must hold nothing but DSH's own config.
+          const seeded = !profile.patches?.some((entry) => overrideKey(entry) === patchId);
+          if (seeded && livePatched.includes(patchId)) {
+            throw new ValidationError(
+              `What DSH composes in profile '${cmdOpts.profile}' holds a dshenv patch for '${patchId}' that the base manifest does not declare (an overlay applied, or an entry apply has not removed yet), so a base write would copy its values; use --layer overlay, or apply without it first`
+            );
+          }
           const next = toolPatch(tree, profile.patches ?? [], target, toolChange);
+          if (seeded && containsLocalPath(next)) {
+            throw new ValidationError(
+              `The config DSH composes for '${patchId}' in profile '${cmdOpts.profile}' has machine-local paths, which do not belong in the shared base manifest; set it in an overlay with --layer overlay`
+            );
+          }
           profile.patches = upsertPatch(profile.patches, next);
           return next;
         });

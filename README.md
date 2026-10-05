@@ -316,7 +316,7 @@ dshenv plugins config unset agent-teams taskPlanning --profile web     # 删掉�
 ```
 
 - 值按 JSON 解析（`3`、`true`、`{"a":1}`），解析不了时当作字符串；要写字符串 `"3"` 就传 `'"3"'`。
-- DSH 用补丁的 `config` 整体替换插件的配置，所以清单里还没有这个插件的补丁时，`config set` 先把 DSH 当前为它组合出的全部配置（`dsh --dump-config`，含 `!!js` 表达式）抄进补丁，再改这个键，插件的默认值得以保留；之后的 `config set` 只改各自的键。只在没有 dshenv 补丁生效时这样做（含 overlay 给它的补丁，否则抄到的是那份补丁而不是默认值）；抄来的配置含本机路径时写 base 以退出码 3 拒绝，改用 `--layer overlay`。抄不了时（DSH 还没有这个插件、Profile 未创建、DSH 无法运行，或已有补丁生效）只写这个键，并在 stderr 说明原因。
+- DSH 用补丁的 `config` 整体替换插件的配置，所以清单里还没有这个插件的补丁时，`config set` 先把 DSH 当前为它组合出的全部配置（`dsh --dump-config`，含 `!!js` 表达式）抄进补丁，再改这个键，插件的默认值得以保留；之后的 `config set` 只改各自的键。只在没有 dshenv 补丁生效时这样做（含 overlay 给它的补丁，否则抄到的是那份补丁而不是默认值）；抄来的配置含本机路径时写 base 以退出码 3 拒绝，改用 `--layer overlay`。抄不了时（DSH 还没有这个插件、Profile 未创建、DSH 无法运行，或已有补丁生效）只写这个键，并在 stderr 说明原因。新补丁的 id 取 DSH 加载该插件的那一行（bundle 插件的行 id 可能与别名不同）；键只写进 `enabled` 不为 `false` 的补丁，全都禁用时以退出码 3 拒绝。
 - DSH 为该插件组合出了配置而其中没有这个顶层键时，`config set` 在 stderr 提示一行（附相近的键名）后照常写入：DSH 只组合出带默认值的键，插件文档里的键可能不在其中。`--force` 不再提示。
 - 读取或删除不存在的键时以退出码 3 报错；只认配置里自己的键，不会读到 `toString` 这类继承来的属性。路径为空，或含 `__proto__`、`prototype`、`constructor` 时以退出码 3 拒绝。
 - `config unset` 在该插件声明的所有 patch 里找这个键；删完后什么都不设的 patch 会一并删掉，不留下 `config: {}`。
@@ -497,7 +497,7 @@ dshenv tools reset tool-web -p web                         # 删掉改动它的 
 dshenv apply --yes                                         # 写进 DSH
 ```
 
-- `tools config get|set|unset` 与 `plugins config` 写法相同；旧写法 `tools config <tool> [路径] [值]` 仍可使用。
+- `tools config get|set|unset` 与 `plugins config` 写法相同；旧写法 `tools config <tool> [路径] [值]` 仍可使用。tools 写 base 时，若这条在清单 base 里还没有，而 DSH 当前组合出的配置已含 dshenv 补丁（如已 apply 的 overlay 写的），或含本机路径，以退出码 3 拒绝，改用 `--layer overlay`。
 - 结果写进清单的 `profiles.<profile>.patches`，与 `pull` 管理的条目相同；overlay 激活时用 `--layer base|overlay` 选择写入层。
 - 顶层工具行（如 headless Profile）只写一条小 patch：`{id, name, disabled}` 或 `config`。DSH 的 patch 会整体替换一行的 `config`，所以 `config` 设置时会把当前整份配置连同改动一起写入。
 - web 等 Profile 的工具在 agent 预设（`preset-standard`、`preset-ptc` 等）里，按 id 的 patch 够不到预设内部，只能整份替换预设的 `config`。dshenv 会把当前预设整份复制进清单再改目标工具（`!!js` 条件原样保留），这个预设从此**固定**：DSH 升级对它的改动不再生效，`plan` 会在 `Pinned agent presets` 下列出。删掉清单里那条预设 patch 并 `apply`，即恢复跟随 DSH。
