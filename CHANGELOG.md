@@ -2,7 +2,13 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
-## 未发布
+## 0.9.0 - 2026-10-05
+
+### 升级须知
+
+- `plugins config set` 为插件新建补丁时，把 DSH 当前为该插件组合出的全部配置抄进清单，之后的 `config set` 只改各自的键；DSH 还没有该插件时照旧只写这个键并在 stderr 提示。已有的只含个别键的补丁不会自动补全：要找回丢失的默认值，先 `config unset` 去掉这些键、`apply`，再重新 `config set`。
+- `source clone <本机路径>` 把路径记为 `file://` 地址；`install` 本地路径时要求目录存在，带 `#<ref>` 的本地路径被拒绝（退出码 3）。
+- 没有清单时 `status` 只输出缺少清单的错误（`--json` 时 stdout 为空）。
 
 ### 修复
 
