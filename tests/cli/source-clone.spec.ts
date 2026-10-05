@@ -431,7 +431,8 @@ describe('CLI source clone --profile', () => {
       process.chdir(previous);
     }
     const plugins = () => loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins;
-    expect(plugins().demo.source).toEqual({ type: 'git', url: pathToFileURL(upstream).href });
+    // A relative path resolves against process.cwd(), which on macOS is the real path (/private/var for /var).
+    expect(plugins().demo.source).toEqual({ type: 'git', url: pathToFileURL(fs.realpathSync(upstream)).href });
 
     const bare = path.join(tempHome, 'qux.git');
     expect(await run(['install', bare, '--profile', 'web'])).toBe(0);
