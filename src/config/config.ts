@@ -114,13 +114,14 @@ export function upsertPluginPatch(
   profileName: string,
   alias: string,
   dottedPath: string,
-  value: unknown
+  value: unknown,
+  newId = alias
 ): PatchEntry {
   const plugin = manifest.profiles[profileName]?.plugins[alias];
   if (!plugin) {
     throw new ValidationError(`Plugin '${alias}' not found in profile '${profileName}'`);
   }
-  const current: PatchEntry = plugin.patches?.[0] ?? { id: alias, config: {} };
+  const current: PatchEntry = plugin.patches?.[0] ?? { id: newId, config: {} };
   const config = setAtPath(current.config, dottedPath, value);
   const next: PatchEntry = { ...current, config };
   plugin.patches = [next, ...(plugin.patches?.slice(1) ?? [])];

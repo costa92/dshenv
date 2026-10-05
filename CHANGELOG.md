@@ -6,6 +6,8 @@
 
 ### 修复
 
+- `plugins config set` 新建补丁时用 DSH 实际加载该插件的那一行的 id（bundle 插件、`--as` 改名的插件与别名不同），并在 stderr 说明；此前用别名，DSH 报 `entry not found`、配置从不生效，`plan` 却显示已同步。
+- 再次 `adopt` 时，只有 overlay 声明插件的 Profile 保留它在 `lock.json` 里的条目和所有权记录；此前输出「Nothing to adopt」却把它们清空，之后 `plan` 要求重装、锁定的版本或 commit 丢失。
 - `plugins config set` 只在没有 dshenv 补丁生效时抄 DSH 组合出的配置；此前有生效 overlay 给该插件写了补丁时，`--layer base` 会把 overlay 的值（本机路径、内网地址等）抄进共享的 base。抄来的配置含本机路径时，写 base 以退出码 3 拒绝。
 - `plugins config set` 读不到 DSH 的组合配置（Profile 未创建、找不到 DSH、`--dump-config` 失败）时在 stderr 说明原因；此前静默只写这个键，与 0.9.0 的说明不符。
 - 成功的 `apply` 从 `lock.json` 删掉 base 与所有 overlay 都不再声明的别名的条目（团队条目保留）；此前删掉的 Git 插件用同一别名、另一个 ref 重新加入时，`plan` 不报 blocked，`apply` 装回旧 commit。

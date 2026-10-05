@@ -138,6 +138,31 @@ warnings: []
       expect(plan.code).toBe(0);
     });
 
+    it('keeps the lock and ownership of a profile only the overlay declares when adopted again', async () => {
+      const devProfile = path.join(tempHome, 'profiles', 'dev');
+      fs.mkdirSync(path.join(devProfile, 'node_modules'), { recursive: true });
+      fs.symlinkSync(source, path.join(devProfile, 'node_modules', 'local-tool'), 'junction');
+      fs.writeFileSync(
+        path.join(devProfile, 'package.json'),
+        JSON.stringify({ name: 'dsh-profile-dev', private: true, dependencies: { 'local-tool': `link:${source}` }, dsh: { profile: { bundles: ['local-tool'] } } })
+      );
+      const first = path.join(tempHome, 'first.yaml');
+      expect((await run(['capture', '-o', first])).code).toBe(0);
+      expect((await run(['adopt', first, '--yes'])).code).toBe(0);
+      const lockBefore = fs.readFileSync(envctl('lock.json'), 'utf8');
+      const stateBefore = JSON.parse(fs.readFileSync(envctl('state.json'), 'utf8'));
+      expect(stateBefore.resources.plugin.dev['local-tool']).toBeDefined();
+
+      const again = path.join(tempHome, 'again.yaml');
+      expect((await run(['capture', '-o', again])).code).toBe(0);
+      expect((await run(['adopt', again, '--yes'])).code).toBe(0);
+      expect(fs.readFileSync(envctl('lock.json'), 'utf8')).toBe(lockBefore);
+      expect(JSON.parse(fs.readFileSync(envctl('state.json'), 'utf8')).resources.plugin.dev).toEqual(stateBefore.resources.plugin.dev);
+      const plan = await run(['plan']);
+      expect(plan.stdout).not.toMatch(/local-tool/);
+      expect(plan.code).toBe(0);
+    });
+
     it('keeps the base entry of a plugin linked here and records the link in the local overlay', async () => {
       fs.writeFileSync(
         envctl('manifest.yaml'),

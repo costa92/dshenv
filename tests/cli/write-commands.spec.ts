@@ -342,6 +342,19 @@ describe('CLI manifest write commands', () => {
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd', memberProvider: 'fork', when: { __jsExpr: 'ctx.ready' } });
       });
 
+      it('targets the row DSH loads the plugin as, which a bundle names apart from the alias', async () => {
+        fakeDump(`- id: teams-row\n  name: '${PKG}'\n  config:\n    stateDir: .agent-teams\n`);
+        const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toBe(`DSH loads ${PKG} in profile 'web' as 'teams-row', so the patch targets that id\n`);
+        expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([{ id: 'teams-row', config: { stateDir: '.sd' } }]);
+
+        useOverlay('laptop');
+        expect((await run(['config', 'unset', 'agent-teams', 'stateDir', '-p', 'web', '--layer', 'base'])).code).toBe(0);
+        expect((await run(['config', 'set', 'agent-teams', 'stateDir', '.ov', '-p', 'web', '--layer', 'overlay'])).code).toBe(0);
+        expect(overlay('laptop').profiles?.web?.plugins?.['agent-teams'].patches).toEqual([{ id: 'teams-row', config: { stateDir: '.ov' } }]);
+      });
+
       it('in the overlay', async () => {
         fakeDump(ROW);
         useOverlay('laptop');
