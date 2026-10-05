@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ValidationError } from '../errors.js';
+import { normalizeGitUrl } from '../source/git.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { hasEmbeddedCredentials } from '../manifest/schema.js';
 import { renderPlan } from '../output/render.js';
@@ -145,6 +146,8 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       if (cmdOpts.branch !== undefined && !isValidBranchName(cmdOpts.branch)) {
         throw new ValidationError(`Invalid --branch '${cmdOpts.branch}'`);
       }
+      // A relative path means something only in this directory; the clone may run again from anywhere (sync after a rollback).
+      url = normalizeGitUrl(url);
 
       const { subscription, preview, accepted } = await withEnvironmentLock(paths, async () => {
         if (fs.existsSync(paths.remoteFile)) {

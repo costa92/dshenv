@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { runCli } from '../../src/cli.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
@@ -302,6 +303,21 @@ describe('CLI remote', () => {
   it('shows that nothing is subscribed', async () => {
     expect(await run(['remote', 'show'])).toMatchObject({ code: 0, stdout: 'No remote configured.\n' });
     expect(JSON.parse((await run(['remote', 'show', '--json'])).stdout)).toEqual({ subscribed: false });
+  });
+
+  it('records a relative repository path as a file:// URL, so a sync from another directory still finds it', async () => {
+    const previous = process.cwd();
+    process.chdir(path.dirname(team.bare));
+    try {
+      expect((await run(['remote', 'add', path.basename(team.bare), '--yes'])).code).toBe(0);
+    } finally {
+      process.chdir(previous);
+    }
+    expect(readRemoteConfig(paths)?.url).toBe(pathToFileURL(fs.realpathSync(team.bare)).href);
+    fs.rmSync(paths.remoteDir, { recursive: true, force: true });
+    const sync = await run(['remote', 'sync']);
+    expect(sync.stderr).toBe('');
+    expect(sync.code).toBe(0);
   });
 
   it('clears the selection of a team overlay that a rollback to before the subscription removes', async () => {

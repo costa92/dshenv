@@ -220,8 +220,9 @@ async function adoptUnderLock(
       // Capture derives its own alias; keep the one the manifest already uses for this package.
       const existingAlias = Object.entries(mergedManifest.profiles[profileName].plugins)
         .find(([, entry]) => entry.package === plugin.package)?.[0];
-      // What DSH has installed there is what the overlay says, not what the base says.
-      if (existingAlias !== undefined && Object.hasOwn(options?.overlay?.profiles?.[profileName]?.plugins ?? {}, existingAlias)) {
+      // What DSH has installed there is what the overlay says, not what the base says, once the overlay sets the source.
+      const overlayEntry = existingAlias !== undefined ? options?.overlay?.profiles?.[profileName]?.plugins?.[existingAlias] : undefined;
+      if (existingAlias !== undefined && overlayEntry && (overlayEntry.source !== undefined || overlayEntry.package !== undefined || overlayEntry.remove)) {
         details.push({ profile: profileName, alias: existingAlias, package: plugin.package, sourceType: plugin.source.type, alreadyAdopted: true });
         continue;
       }
@@ -261,6 +262,11 @@ async function adoptUnderLock(
             source: pinned.commit !== undefined && liveCommit !== undefined && !isSameCommit(pinned.commit, liveCommit) ? { ...pinned, commit: liveCommit } : pinned
           }
         : withPatches;
+      // The live enabled state is the overlay's then; the base keeps its own.
+      if (overlayEntry?.enabled !== undefined && existingEntry) {
+        if (existingEntry.enabled === undefined) delete entry.enabled;
+        else entry.enabled = existingEntry.enabled;
+      }
       mergedManifest.profiles[profileName].plugins[alias] = entry;
 
       const capturedLock = candLockProf[candidateAlias];
