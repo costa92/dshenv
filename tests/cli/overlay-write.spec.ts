@@ -300,7 +300,9 @@ warnings: []
     expect((await run(['update', 'heavy', '--profile', 'web', '--to', '1.1.0', '--layer', 'base', '--no-npm-check'])).code).toBe(0);
     expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.heavy.source).toEqual({ type: 'npm', version: '1.1.0' });
     const set = await run(['config', 'set', 'heavy', 'mode', 'x', '--profile', 'web', '--layer', 'base']);
-    expect(set).toEqual({ code: 0, stderr: '' });
+    expect(set.code).toBe(0);
+    // The test DSH cannot dump the profile, so the patch holds only this key, and says so.
+    expect(set.stderr).toMatch(/^Could not read the config DSH composes for heavy-plugin in profile 'web'/);
     expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.heavy.patches).toEqual([{ id: 'heavy', config: { mode: 'x' } }]);
   });
 

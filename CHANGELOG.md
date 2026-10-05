@@ -2,6 +2,13 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- `plugins config set` 只在没有 dshenv 补丁生效时抄 DSH 组合出的配置；此前有生效 overlay 给该插件写了补丁时，`--layer base` 会把 overlay 的值（本机路径、内网地址等）抄进共享的 base。抄来的配置含本机路径时，写 base 以退出码 3 拒绝。
+- `plugins config set` 读不到 DSH 的组合配置（Profile 未创建、找不到 DSH、`--dump-config` 失败）时在 stderr 说明原因；此前静默只写这个键，与 0.9.0 的说明不符。
+
 ## 0.9.0 - 2026-10-05
 
 ### 升级须知
