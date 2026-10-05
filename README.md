@@ -518,7 +518,7 @@ dshenv verify -p web              # 没设 DSHENV_DSH_URL 时自动连这个 dsh
 dshenv web stop -p web             # 停止它以及它启动的子进程（如 stdio MCP 服务），等全部退出后返回
 ```
 
-- 启动命令为 `dsh --profile <P> --no-open --port <端口>`，DSH CLI 的选择与其他命令相同（`DSH_CLI`、`--harness-source`、`environment.harness.sourceDir`、`PATH`）。dsh web 在独立的进程组中运行，dshenv 退出或关闭终端后继续运行。
+- 启动命令为 `dsh --profile <P> --no-open --port <端口>`，DSH CLI 的选择与其他命令相同（`DSH_CLI`、`--harness-source`、`environment.harness.sourceDir`、`PATH`）。DSH 的 `cordis.patch.yml`（如 `$DSH_HOME/cordis.patch.yml`）设置了 `webserver.port` 时，DSH 忽略 `--port`，`web start --port` 与 `verify --start` 的随机空闲端口都不起作用。dsh web 在独立的进程组中运行，dshenv 退出或关闭终端后继续运行。
 - 地址（含登录 token）与 pid 记在 `envctl/run/<profile>.json`，输出写到 `envctl/run/<profile>.log`，两者权限均为 `0600`；不在快照、同步与团队仓库范围内。`start` 打印地址，已在运行时再次 `start` 也会打印现有的地址；`web list`（旧名 `web status`）从不打印 token。
 - 已在运行时 `start` 只报告现有的那个；它自己退出后，`status` 显示 `not running`，再次 `start` 会启动新的。dsh web 自己退出但它启动的子进程还在时，`status` 显示 `not running (leftover processes)`，`start` 先停掉这些子进程再启动，`stop` 也会停掉它们。
 - 记录里保存了 dsh web 的启动时间，`stop` 只停止 pid 与启动时间都对得上的进程，被系统复用的 pid 不会被误停；无法确认时（`status` 显示 `unknown`）`stop` 和 `start` 报错并保留记录，不做任何停止。SIGKILL 后仍未退出时 `stop` 以非零退出码报错并保留记录，可以再次执行。
