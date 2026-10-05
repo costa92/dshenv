@@ -40,7 +40,8 @@ export async function readSkillDigests(dir: string): Promise<Record<string, stri
   const entries = await fs.promises.readdir(dir, { withFileTypes: true });
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const isDir = entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(path.join(dir, entry.name), { throwIfNoEntry: false })?.isDirectory());
-    if (isDir && SkillNameRegex.test(entry.name)) {
+    // npm install in a skills directory leaves node_modules there; it is no skill.
+    if (isDir && SkillNameRegex.test(entry.name) && !SKIPPED.has(entry.name)) {
       digests[entry.name] = await calculateSourceDigest(path.join(dir, entry.name));
     }
   }

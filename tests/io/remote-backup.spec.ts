@@ -90,6 +90,18 @@ describe('snapshots with a remote subscription', () => {
     expect(fs.existsSync(paths.remoteFile)).toBe(false);
   });
 
+  // Windows needs extra rights to create symlinks.
+  it.skipIf(process.platform === 'win32')('keeps a relative symlink in envctl/skills relative through a snapshot and its restore', async () => {
+    const skill = path.join(paths.skillsDir, 'demo');
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'demo');
+    fs.symlinkSync('SKILL.md', path.join(skill, 'README.md'));
+    const snapshot = await createEnvironmentSnapshot(paths, 'op-links');
+    expect(fs.readlinkSync(path.join(snapshot.snapshotDir, 'skills', 'demo', 'README.md'))).toBe('SKILL.md');
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    expect(fs.readlinkSync(path.join(skill, 'README.md'))).toBe('SKILL.md');
+  });
+
   it('restoring a snapshot from before the subscription removes remote.json and owned overlays', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     fs.writeFileSync(paths.manifestFile, EMPTY_MANIFEST);

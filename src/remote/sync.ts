@@ -12,7 +12,8 @@ import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { loadState, parseOverlay, serializeLock } from '../manifest/files.js';
 import { readOverlay } from '../overlay/effective.js';
 import { mergeManifest } from '../overlay/merge.js';
-import { readSelectionFile, type OverlaySelection } from '../overlay/selection.js';
+import { overlayFilePath, readSelectionFile, type OverlaySelection } from '../overlay/selection.js';
+import { assertMergesWithSavedSelection } from '../overlay/write.js';
 import { buildPlan, type EnvironmentPlan } from '../planner/plan.js';
 import { readSkillDigests, remoteSkillNames } from '../resources/skill.js';
 import { readLocalSourceDigests } from '../source/local.js';
@@ -157,6 +158,13 @@ function manifestAfter(
   files: RemoteFileChanges,
   selection: OverlaySelection | null
 ): EnvironmentManifest {
+  // The overlay saved as selected comes from the update too when the remote owns it.
+  assertMergesWithSavedSelection(paths, selection, snapshot.manifest, (name) => {
+    const key = `overlays/${name}.yaml`;
+    if (files.removed.includes(key)) return null;
+    if (Object.hasOwn(snapshot.files, key)) return parseOverlay(snapshot.files[key].toString('utf8'), key);
+    return fs.existsSync(overlayFilePath(paths, name)) ? readOverlay(paths, name) : null;
+  });
   if (!selection) {
     return snapshot.manifest;
   }

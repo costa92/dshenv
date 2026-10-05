@@ -62,7 +62,8 @@ async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, o
 
   await fs.promises.writeFile(path.join(snapshotDir, SKILLS_MARKER), '');
   if (fs.existsSync(paths.skillsDir)) {
-    await fs.promises.cp(paths.skillsDir, path.join(snapshotDir, SKILLS_DIR), { recursive: true });
+    // verbatimSymlinks: a relative link inside a skill would otherwise come back as an absolute, machine-specific one.
+    await fs.promises.cp(paths.skillsDir, path.join(snapshotDir, SKILLS_DIR), { recursive: true, verbatimSymlinks: true });
   }
 
   if (fs.existsSync(paths.overlaysDir)) {
@@ -168,7 +169,7 @@ export async function restoreEnvironmentSnapshot(
     await fs.promises.rm(paths.skillsDir, { recursive: true, force: true });
     const saved = path.join(snapshot.snapshotDir, SKILLS_DIR);
     if (fs.existsSync(saved)) {
-      await fs.promises.cp(saved, paths.skillsDir, { recursive: true });
+      await fs.promises.cp(saved, paths.skillsDir, { recursive: true, verbatimSymlinks: true });
     }
   }
 }

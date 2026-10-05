@@ -319,4 +319,30 @@ warnings: []
     const listed = await runOut(['--json', 'plugins', 'list', '--profile', 'web']);
     expect(listed.stdout).toContain('"gone"');
   });
+
+  describe('with --no-overlay, against the overlay saved as selected', () => {
+    it('refuses a base write that overlay could not merge onto', async () => {
+      const before = fs.readFileSync(manifestFile(), 'utf8');
+      const out = await run(['--no-overlay', 'install', 'other-plugin@1.0.0', '--as', 'extra', '--profile', 'web']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toContain("an overlay cannot change package");
+      expect(out.stderr).toContain("overlay 'laptop' is selected on this machine");
+      expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
+    });
+
+    it('refuses a pull that would declare in the base a package that overlay declares', async () => {
+      const profileDir = path.join(tempHome, 'profiles', 'web');
+      fs.mkdirSync(path.join(profileDir, 'node_modules', 'extra-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(profileDir, 'node_modules', 'extra-plugin', 'package.json'), JSON.stringify({ name: 'extra-plugin', version: '2.0.0', dsh: { bundle: {} } }));
+      const pkg = JSON.parse(fs.readFileSync(path.join(profileDir, 'package.json'), 'utf8'));
+      pkg.dependencies['extra-plugin'] = '2.0.0';
+      pkg.dsh.profile.bundles.push('extra-plugin');
+      fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify(pkg));
+      const before = fs.readFileSync(manifestFile(), 'utf8');
+      const out = await run(['--no-overlay', 'pull', '--yes']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toContain("overlay 'laptop' is selected on this machine");
+      expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
+    });
+  });
 });

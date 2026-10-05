@@ -19,7 +19,7 @@ import { readOverlay } from '../overlay/effective.js';
 import type { OverlaySource } from './adopt.js';
 import { mergeManifest } from '../overlay/merge.js';
 import { overlayFilePath, writeSelectionFile, type OverlaySelection } from '../overlay/selection.js';
-import { saveOverlay, setOverlayPluginFields } from '../overlay/write.js';
+import { assertMergesWithSavedSelection, saveOverlay, setOverlayPluginFields } from '../overlay/write.js';
 import { readRemoteConfig } from '../remote/schema.js';
 import { assertNotRemoteOwned, readLocalLock, remoteOwnedKey } from '../remote/ownership.js';
 import { rewriteProfilePatchFile } from '../apply/patches.js';
@@ -338,6 +338,7 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
 
   // Validates both files the way every later command will load them.
   loadManifest(serializeManifest(nextBase));
+  assertMergesWithSavedSelection(paths, options.selection, nextBase);
   loadLock(serializeLock(nextLock));
   const merged = nextOverlay && overlayName ? mergeManifest(nextBase, nextOverlay, overlayName).manifest : nextBase;
 
