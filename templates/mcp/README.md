@@ -8,4 +8,4 @@ DSH MCP server 配置包，由 `dshenv new mcp` 生成。
 
 1. 登记：`dshenv install <本目录> -p <profile>`（`dshenv new -p` 已登记时跳过）。
 2. 预览并应用：`dshenv plan`，`dshenv apply --yes`。
-3. 修改配置后重启 DSH，然后运行 `dshenv restarted`。
+3. 修改配置后重启 DSH，然后运行 `dshenv mark-restarted`。

@@ -61,8 +61,8 @@ jobs:
           DSHENV: npx --yes @costa92/dshenv@${{ env.DSHENV_VERSION }}
         run: |
           set -uo pipefail
-          # dshenv plan exits 0 when in sync, 2 on drift, 3 on an invalid manifest,
-          # 4 when DSH is unsupported and 5 when the environment is degraded.
+          # dshenv plan exits 0 when in sync, 2 on drift, 3 on an invalid manifest and
+          # 5 when a step is blocked; it reads DSH's files and never runs DSH itself.
           status=0
           $DSHENV plan || status=$?
           case "$status" in

@@ -16,6 +16,8 @@
 - 写 base 的命令（`install` 等、`adopt`、`pull`、`remote sync`）在 `--no-overlay` 或 `--overlay <其他>` 下也检查新 base 能否与本机保存的选中 overlay 合并，不能时以退出码 3 拒绝并说明；此前会写成之后所有命令都报 `cannot change package` 或 `Duplicate package` 的状态。
 - 快照与 rollback（以及 pull、sync 失败时的恢复）原样保留 `envctl/skills` 里的软链接；此前相对链接被改成绝对路径，`plan` 随之报告 skill 改动。
 - `skills` 目录下的 `node_modules`（在 skills 目录里 `npm install` 留下的）不再被当作 skill，团队仓库的 `skills/node_modules/` 也被忽略；此前 `pull --yes`、`adopt --yes` 因此报 ENOENT 失败。
+- 子命令层面的未知命令加 `--help`（如 `dshenv web foo --help`、`dshenv help web foo`）与未知命令加 `--version`（`dshenv foo --version`）按未知命令处理，退出码 3；`dshenv help web start` 显示 `web start` 的帮助，不再是 `web` 的。
+- 文档：使用教程关于 rollback 跨过 `remote add --replace` 与「不带 id 的 rollback」的说明、锁的重试间隔已更正；GitHub Actions 示例的注释不再说 `plan` 会以 4 结束；模板 README 改用 `mark-restarted`；README 说明 DSH 配置了 `webserver.port` 时忽略 `--port`。
 
 ## 0.9.0 - 2026-10-05
 

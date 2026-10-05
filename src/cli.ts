@@ -89,27 +89,41 @@ function commandUsage(cmd: Command): string {
   return `${ancestors}${cmd.name()} ${cmd.usage()}`;
 }
 
-// commander answers help for a command it does not know with the root help and exit 0; without the help request it
-// reports the unknown command (with a suggestion) as the usage error it is.
+// commander answers help or --version for a command it does not know, at any level, with the parent's help or the
+// version and exit 0; without them it reports the unknown command (with a suggestion) as the usage error it is.
+// `help <group> <command>` shows that command's help, which commander's help command does not reach.
 function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[] {
-  const valued = new Set(program.options.filter((option) => option.required || option.optional).flatMap((option) => [option.long, option.short]));
-  const operands: number[] = [];
-  for (let index = 0; index < argv.length && operands.length < 2; index++) {
+  const HELP = new Set(['--help', '-h']);
+  const VERSION = new Set(['--version', '-v']);
+  let cmd = program;
+  let helpCommand: number | undefined;
+  let unknown = false;
+  for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === '--') break;
     if (arg.startsWith('-')) {
-      if (!arg.includes('=') && valued.has(arg)) index++;
+      const valued = cmd.options.concat(program.options).some((option) => (option.required || option.optional) && (option.long === arg || option.short === arg));
+      if (valued && !arg.includes('=')) index++;
       continue;
     }
-    operands.push(index);
+    if (cmd === program && arg === 'help' && helpCommand === undefined) {
+      helpCommand = index;
+      continue;
+    }
+    const sub = (cmd.commands as Command[]).find((child) => child.name() === arg || child.aliases().includes(arg));
+    if (sub) {
+      cmd = sub;
+      continue;
+    }
+    // A command with subcommands takes no arguments of its own, so anything else names a subcommand it lacks.
+    unknown = cmd.commands.length > 0;
+    break;
   }
-  const known = (name: string) => name === 'help' || program.commands.some((cmd) => cmd.name() === name || cmd.aliases().includes(name));
-  const [first, second] = operands;
-  if (first !== undefined && argv[first] === 'help' && second !== undefined && !known(argv[second])) {
-    return argv.filter((_, index) => index !== first);
+  if (unknown) {
+    return argv.filter((arg, index) => index !== helpCommand && !HELP.has(arg) && !VERSION.has(arg));
   }
-  if (first !== undefined && !known(argv[first]) && argv.some((arg) => arg === '--help' || arg === '-h')) {
-    return argv.filter((arg) => arg !== '--help' && arg !== '-h');
+  if (helpCommand !== undefined && cmd.parent && cmd.parent !== program) {
+    return [...argv.filter((_, index) => index !== helpCommand), '--help'];
   }
   return argv;
 }

@@ -9,4 +9,4 @@ DSH tool 插件（纯 JavaScript，免构建），由 `dshenv new tool` 生成�
 
 1. 登记：`dshenv install <本目录> -p <profile>`（`dshenv new -p` 已登记时跳过）。
 2. 预览并应用：`dshenv plan`，`dshenv apply --yes`。
-3. 修改代码后 `dshenv plan` 会显示本地源摘要变化；`dshenv apply --yes` 后重启 DSH，再运行 `dshenv restarted`。
+3. 修改代码后 `dshenv plan` 会显示本地源摘要变化；`dshenv apply --yes` 后重启 DSH，再运行 `dshenv mark-restarted`。

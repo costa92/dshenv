@@ -112,6 +112,25 @@ describe('CLI surface', () => {
       }
     });
 
+    it('treats help and version for an unknown subcommand as the unknown command, and shows help for a nested one', async () => {
+      for (const args of [['web', 'foo', '--help'], ['plugins', 'nope', '-h'], ['help', 'web', 'foo'], ['foo', '--version'], ['plugins', 'config', 'nope', '--help']]) {
+        const out = await run(args, false);
+        expect(out.code, args.join(' ')).toBe(3);
+        expect(out.stdout, args.join(' ')).toBe('');
+        expect(out.stderr, args.join(' ')).toMatch(/unknown command '(foo|nope)'/);
+      }
+      const json = await run(['--json', 'web', 'foo', '--help'], false);
+      expect(json.stdout).toBe('');
+      expect(JSON.parse(json.stderr.split('\n').filter(Boolean).at(-1)!).error.exitCode).toBe(3);
+
+      const nested = await run(['help', 'web', 'start'], false);
+      expect(nested.code).toBe(0);
+      expect(nested.stdout).toContain('Usage: dshenv web start');
+      for (const args of [['web', 'start', '--help'], ['help', 'web'], ['plugins', 'config', 'set', '--help'], ['--version'], ['web', 'start', '-p', 'web', '--help']]) {
+        expect((await run(args, false)).code, args.join(' ')).toBe(0);
+      }
+    });
+
     it('still exits 0 for help and version, and shows help when run without a command', async () => {
       expect((await run(['--help'], false)).code).toBe(0);
       expect((await run(['-v'], false)).code).toBe(0);
