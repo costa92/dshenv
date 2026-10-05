@@ -96,6 +96,15 @@ describe('resolveDshCommand', () => {
     })).toThrow(/Harness source not found: \/nonexistent\/harness/);
   });
 
+  it('lets an explicit --harness-source win over DSH_CLI, which only the manifest source yields to', () => {
+    const fromFlag = resolveDshCommand({ cliHarnessSource: '/src/harness', envDshCli: '/usr/bin/dsh', sourceDirExists: () => true });
+    expect(fromFlag).toEqual({ file: 'pnpm', args: ['--silent', '--dir', '/src/harness', 'dsh'], cwd: '/src/harness' });
+    expect(() => resolveDshCommand({ cliHarnessSource: '/nonexistent/harness', envDshCli: '/usr/bin/dsh', sourceDirExists: () => false })).toThrow(
+      /Harness source not found/
+    );
+    expect(resolveDshCommand({ manifestHarnessSource: '/src/harness', envDshCli: '/usr/bin/dsh', sourceDirExists: () => true })).toEqual({ file: '/usr/bin/dsh', args: [] });
+  });
+
   it('resolves a relative --harness-source against the working directory', () => {
     const absolute = path.resolve('hs');
     const cmd = resolveDshCommand({ cliHarnessSource: 'hs', sourceDirExists: (dir) => dir === absolute });

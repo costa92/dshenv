@@ -62,6 +62,19 @@ describe('resolveEnvironmentPaths', () => {
     expect(posix(paths.home)).toBe('/work/dir/env-dsh');
   });
 
+  it('expands a leading ~ as DSH does, in DSH_HOME and in --dsh-home', () => {
+    expect(posix(resolveEnvironmentPaths({ envDshHome: '~/.dsh-work', cwd: '/work/dir', userHome }).home)).toBe(`${posix(userHome)}/.dsh-work`);
+    expect(posix(resolveEnvironmentPaths({ envDshHome: '~', cwd: '/work/dir', userHome }).home)).toBe(posix(userHome));
+    expect(posix(resolveEnvironmentPaths({ cliDshHome: '~\\alt', cwd: '/work/dir', userHome }).home)).toBe(`${posix(userHome)}/alt`);
+    // Only the user's own home: ~other is a plain relative name.
+    expect(posix(resolveEnvironmentPaths({ envDshHome: '~other', cwd: '/work/dir', userHome }).home)).toBe('/work/dir/~other');
+  });
+
+  it('treats an empty or blank DSH_HOME as unset, as DSH does', () => {
+    expect(posix(resolveEnvironmentPaths({ envDshHome: '', userHome }).home)).toBe(`${posix(userHome)}/.dsh`);
+    expect(posix(resolveEnvironmentPaths({ envDshHome: '  ', userHome }).home)).toBe(`${posix(userHome)}/.dsh`);
+  });
+
   it('should reject empty explicit path', () => {
     expect(() => {
       resolveEnvironmentPaths({

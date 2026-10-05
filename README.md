@@ -37,15 +37,16 @@
 
 Harness 主目录解析优先级：
 1. CLI 参数 `--dsh-home <path>`
-2. 环境变量 `DSH_HOME`
+2. 环境变量 `DSH_HOME`（为空或只有空白时视为未设置，与 DSH 一致）
 3. 默认用户主目录 `~/.dsh`
 
-相对路径先按当前工作目录转为绝对路径。盘点读取 Profile 的 `package.json`（`dsh.profile.bundles` + `dependencies`），不把 `node_modules` 中的传递依赖当成插件，也不跟随 Profile 外的 symlink 读取包元数据。
+开头的 `~`、`~/`、`~\` 按 DSH 的规则展开为用户主目录（`.env`、Docker `ENV` 里的 `~` 不经 shell 展开）；其余相对路径先按当前工作目录转为绝对路径。盘点读取 Profile 的 `package.json`（`dsh.profile.bundles` + `dependencies`），不把 `node_modules` 中的传递依赖当成插件，也不跟随 Profile 外的 symlink 读取包元数据。
 
 DSH 运行时命令解析优先级：
-1. 环境变量 `DSH_CLI`（支持 JSON 数组或字面执行文件名，绝不进入 shell）
-2. `--harness-source <path>` / 清单中的 `environment.harness.sourceDir`（转换为 `pnpm --dir <sourceDir> dsh`）。`--harness-source` 的相对路径按当前目录解析，目录不存在时以退出码 3 报错，不会改用其他 DSH；清单的 `sourceDir` 在本机不存在时继续往下找
-3. 系统 `PATH` 中的 `dsh`
+1. 命令行 `--harness-source <path>`（转换为 `pnpm --dir <sourceDir> dsh`）。相对路径按当前目录解析，目录不存在时以退出码 3 报错，不会改用其他 DSH
+2. 环境变量 `DSH_CLI`（支持 JSON 数组或字面执行文件名，绝不进入 shell）
+3. 清单中的 `environment.harness.sourceDir`（同样转换为 `pnpm --dir <sourceDir> dsh`），在本机不存在时继续往下找
+4. 系统 `PATH` 中的 `dsh`
 
 跨机器同步 `manifest.yaml` 与 `overlays/`；`state.json`、`overlay-selection.json` 只属于本机。`lock.json` 由本机维护，但订阅团队 remote 后，团队 lock 中的条目归远程、随 `sync` 更新（见第 20 节）。
 

@@ -4,8 +4,13 @@
 
 ## 未发布
 
+### 变更
+
+- 显式的 `--harness-source` 优先于环境变量 `DSH_CLI`（此前被 `DSH_CLI` 静默覆盖，`doctor` 还提示「请提供 `--harness-source`」）；清单的 `environment.harness.sourceDir` 仍排在 `DSH_CLI` 之后。
+
 ### 修复
 
+- `DSH_HOME`、`--dsh-home` 开头的 `~`（`~`、`~/`、`~\`）按 DSH 的规则展开，`DSH_HOME` 为空或只有空白时视为未设置；此前 dshenv 管的是当前目录下字面量 `~` 的目录或直接报错，与 DSH 实际读取的目录不同。
 - `remote add <本机路径>` 把相对路径记为 `file://` 地址；此前原样记下，换个目录再 clone（如 rollback 后 `remote sync`）会失败或拿到别的仓库，origin 校验也被跳过。
 - 选中的 overlay 对某个插件只改了 `enabled`（或补丁）时，`adopt` 仍把 base 更新到实际安装的版本，base 自己的 `enabled` 不变；此前直接跳过，base 停在旧版本，下一次 `apply` 会降级。
 - `tools config set`、`tools enable/disable` 写 base 时，若 base 还没有这一条而 DSH 当前组合出的配置已含 dshenv 补丁（如已 apply 的 overlay 写的），或含本机路径，以退出码 3 拒绝；此前把 overlay 的值（本机路径等）抄进共享的 base。
