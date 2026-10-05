@@ -14,7 +14,8 @@ export interface LocalSourceInfo {
   packageJson?: Record<string, unknown>;
 }
 
-export async function calculateSourceDigest(dirPath: string): Promise<string> {
+// A skill is copied whole, so every file counts; only a plugin source is narrowed to what npm would publish.
+export async function calculateSourceDigest(dirPath: string, options: { publishedOnly?: boolean } = {}): Promise<string> {
   const hash = crypto.createHash('sha256');
 
   async function walk(current: string): Promise<string[]> {
@@ -44,7 +45,7 @@ export async function calculateSourceDigest(dirPath: string): Promise<string> {
     return files;
   }
 
-  const publishes = await publishedFilter(dirPath);
+  const publishes = options.publishedOnly === false ? () => true : await publishedFilter(dirPath);
   const allFiles = (await walk(dirPath)).filter((file) => publishes(path.relative(dirPath, file).split(path.sep).join('/')));
   allFiles.sort();
 

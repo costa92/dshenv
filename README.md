@@ -541,7 +541,7 @@ dshenv remove agent-teams -p web
 
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
-- 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。
+- 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。skill 总是算整个目录，不看 `files`。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。
 - 本地来源的目录必须存在（也可写成 `file://` 地址），且不能带 `#<ref>`；要按 Git 仓库安装本机仓库，写 `git+file://<路径>#<commit>`。
 - 别名默认取包名（去掉作用域与 `dsh-plugin-`、`dsh-` 前缀），`--as` 指定。本地来源的包名默认读其 `package.json` 的 `name`（读不到时用目录名），Git 来源默认用仓库名，与实际包名不同时用 `--package` 指定（`source clone --profile` 会读仓库的 `package.json`）；`--package` 只对 Git 与本地来源有效。
 - 同一别名重新 `install` 同一个包只改来源，保留 `patches` 与启用状态；输出会说明从哪个版本（来源）改成了哪个。别名已经指向另一个包时拒绝（退出码 3），用 `--as` 换一个别名，或先 `remove` 原来的。

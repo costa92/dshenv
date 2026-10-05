@@ -74,6 +74,17 @@ describe('skill files', () => {
     expect(inventory.declared.wiki).not.toBe(inventory.live.wiki);
   });
 
+  it('counts every file of a skill, not only those its package.json files list names', async () => {
+    for (const dir of [paths.skillsDir, paths.dshSkillsDir]) {
+      write(path.join(dir, 'tool', 'package.json'), JSON.stringify({ name: 'tool', files: ['SKILL.md'] }));
+      write(path.join(dir, 'tool', 'SKILL.md'), '# tool');
+    }
+    write(path.join(paths.skillsDir, 'tool', 'run.sh'), 'echo v2');
+    write(path.join(paths.dshSkillsDir, 'tool', 'run.sh'), 'echo v1');
+    const inventory = await readSkillInventory(paths);
+    expect(inventory.declared.tool).not.toBe(inventory.live.tool);
+  });
+
   it('does not take a node_modules directory for a skill', async () => {
     write(path.join(paths.dshSkillsDir, 'node_modules', 'dep', 'package.json'), '{}');
     write(path.join(paths.skillsDir, 'node_modules', 'dep', 'package.json'), '{}');
