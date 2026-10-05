@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { EnvironmentManifest, EnvironmentOverlay, OverlayPatchEntry, OverlayPluginEntry } from '../domain.js';
 import { ValidationError } from '../errors.js';
@@ -7,7 +8,7 @@ import { setAtPath } from '../config/config.js';
 import { assertNotRemoteOwned } from '../remote/ownership.js';
 import { mergeManifest } from './merge.js';
 import { readOverlay } from './effective.js';
-import { overlayFilePath, type OverlaySelection } from './selection.js';
+import { overlayFilePath, readSelectionFile, type OverlaySelection } from './selection.js';
 
 export type WriteLayer = 'base' | 'overlay';
 
@@ -98,6 +99,29 @@ export async function saveOverlay(
   await writeAtomic(file, content, 'overwrite');
 }
 
+// Later commands fall back to the overlay saved as selected, so a base written under --no-overlay (or another
+// --overlay) must merge with it too.
+export function assertMergesWithSavedSelection(
+  paths: EnvironmentPaths,
+  selection: OverlaySelection | null,
+  newBase: EnvironmentManifest,
+  overlayOf: (name: string) => EnvironmentOverlay | null = (name) => (fs.existsSync(overlayFilePath(paths, name)) ? readOverlay(paths, name) : null)
+): void {
+  const saved = readSelectionFile(paths);
+  const overlay = saved !== null && saved !== selection?.name ? overlayOf(saved) : null;
+  if (saved === null || overlay === null) {
+    return;
+  }
+  try {
+    mergeManifest(newBase, overlay, saved);
+  } catch (err) {
+    if (err instanceof Error) {
+      err.message += `; overlay '${saved}' is selected on this machine, so every later command would fail on it (dshenv overlay use --none to drop it)`;
+    }
+    throw err;
+  }
+}
+
 // A base edit must not leave the active overlay unmergeable, or every later command would fail.
 export function assertBaseMergesWithOverlay(
   paths: EnvironmentPaths,
@@ -109,4 +133,5 @@ export function assertBaseMergesWithOverlay(
   if (selection) {
     mergeManifest(newBase, readOverlay(paths, selection.name), selection.name);
   }
+  assertMergesWithSavedSelection(paths, selection, newBase);
 }

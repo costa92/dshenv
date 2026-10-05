@@ -74,6 +74,14 @@ describe('skill files', () => {
     expect(inventory.declared.wiki).not.toBe(inventory.live.wiki);
   });
 
+  it('does not take a node_modules directory for a skill', async () => {
+    write(path.join(paths.dshSkillsDir, 'node_modules', 'dep', 'package.json'), '{}');
+    write(path.join(paths.skillsDir, 'node_modules', 'dep', 'package.json'), '{}');
+    const inventory = await readSkillInventory(paths);
+    expect(Object.keys(inventory.live)).toEqual(['wiki']);
+    expect(Object.keys(inventory.declared)).toEqual(['wiki']);
+  });
+
   // Windows needs extra rights to create symlinks.
   it.skipIf(process.platform === 'win32')('keeps symlinks inside a skill as symlinks, so both sides digest alike', async () => {
     fs.symlinkSync('SKILL.md', path.join(paths.skillsDir, 'wiki', 'link.md'));

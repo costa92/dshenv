@@ -451,6 +451,14 @@ describe('remote sync engine', () => {
     );
   });
 
+  it('refuses an update the overlay saved as selected cannot merge onto, even when the sync runs without it', async () => {
+    await subscribe();
+    fs.writeFileSync(overlayFile('mine'), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      extra:\n        package: my-extra\n        source: { type: npm, version: "1.0.0" }\n');
+    await writeSelectionFile(paths, 'mine');
+    await commitTeamFiles(team, { 'envctl/manifest.yaml': `${TEAM_MANIFEST}      extra:\n        package: extra-plugin\n        source: { type: npm, version: "1.0.0" }\n` }, 'add extra');
+    await expect(prepare({ previous: true, selection: null })).rejects.toThrow(/an overlay cannot change package.*overlay 'mine' is selected on this machine/);
+  });
+
   it('accepts an update that drops a plugin the active local overlay removes or adjusts', async () => {
     await subscribe();
     fs.writeFileSync(overlayFile('laptop'), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      shared:\n        enabled: false\n');

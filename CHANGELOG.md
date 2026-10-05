@@ -13,6 +13,9 @@
 - `source clone --profile` 读到的 `package.json` 包名与 `install` 按仓库名记下的不同时，同一仓库地址的条目改用读到的包名；此前以别名冲突拒绝。`install --package` 的帮助改为说明 Git 来源默认取仓库名。
 - Git 地址里的本机路径（相对路径、不带 `#` 的 `/abs/x.git`）统一记为 `file://` 地址；此前 `repos/x` 会被 pnpm 当成 GitHub 简写。`install` 把 `ssh://`、`git://` 地址按 Git 处理；此前不带 `.git` 时被当成 npm 包名。
 - `source sync --profile` 可以把受管 clone 退回到更旧的 commit，`plan` 提示的 `--ref <清单 commit>` 由此生效（此前输出「Updated … from X to X」并以 0 退出，什么都没变）；detached HEAD 不给 `--ref` 时跟随清单的 `ref` 或远端默认分支（此前报错）；移动后与清单锁定的 `commit` 不一致时在 stderr 提示。对 `envctl` 之外的检出指向更旧的 commit 时以退出码 3 拒绝，不再静默成功。`install <url>#<commit>` 与 lock 中的 commit 不同时提示如何锁定。
+- 写 base 的命令（`install` 等、`adopt`、`pull`、`remote sync`）在 `--no-overlay` 或 `--overlay <其他>` 下也检查新 base 能否与本机保存的选中 overlay 合并，不能时以退出码 3 拒绝并说明；此前会写成之后所有命令都报 `cannot change package` 或 `Duplicate package` 的状态。
+- 快照与 rollback（以及 pull、sync 失败时的恢复）原样保留 `envctl/skills` 里的软链接；此前相对链接被改成绝对路径，`plan` 随之报告 skill 改动。
+- `skills` 目录下的 `node_modules`（在 skills 目录里 `npm install` 留下的）不再被当作 skill，团队仓库的 `skills/node_modules/` 也被忽略；此前 `pull --yes`、`adopt --yes` 因此报 ENOENT 失败。
 
 ## 0.9.0 - 2026-10-05
 

@@ -24,8 +24,8 @@ function candidateKey(rel: string): string | null {
   if (rel === 'manifest.yaml' || rel === 'lock.json') {
     return rel;
   }
-  // A file directly under skills/ (a README, .DS_Store) belongs to no skill.
-  return /^overlays\/[^/]+\.yaml$/.test(rel) || /^skills\/[^/]+\/./.test(rel) ? rel : null;
+  // A file directly under skills/ (a README, .DS_Store) belongs to no skill, and neither does skills/node_modules.
+  return /^overlays\/[^/]+\.yaml$/.test(rel) || (/^skills\/[^/]+\/./.test(rel) && !rel.startsWith('skills/node_modules/')) ? rel : null;
 }
 
 // Only a network URL (scheme://, or scp-style host:path) names the same repository on every machine.
