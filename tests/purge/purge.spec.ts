@@ -117,6 +117,29 @@ profiles:
     });
   });
 
+  it('purges the config blocks a renamed alias writes, though the ownership record keeps the old alias', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');
+    fs.writeFileSync(manifestFile, fs.readFileSync(manifestFile, 'utf8').replace('      agent-teams:\n', '      teams:\n').replace('id: agent-teams', 'id: teams'));
+    await applyEnvironment(paths);
+    const patchFile = path.join(tempHome, 'profiles', 'web', 'cordis.patch.yml');
+    expect(fs.readFileSync(patchFile, 'utf8')).toContain('plugin=teams');
+
+    const result = await purgePlugin(paths, 'web', '@nanmicoder/dsh-agent-teams');
+    expect(result.plugin).toBe('teams');
+    expect(fs.readFileSync(patchFile, 'utf8')).not.toContain('plugin=teams');
+  });
+
+  it('refuses to purge a managed clone with untracked work and no commit yet', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const cloneDir = path.join(tempHome, 'envctl', 'sources', 'web', '@nanmicoder_dsh-agent-teams');
+    fs.mkdirSync(cloneDir, { recursive: true });
+    await execa('git', ['init', '-q'], { cwd: cloneDir });
+    fs.writeFileSync(path.join(cloneDir, 'work.js'), 'unsaved');
+    await expect(purgePlugin(paths, 'web', 'agent-teams', { dryRun: true })).rejects.toThrow(/uncommitted changes/);
+    expect(fs.existsSync(path.join(cloneDir, 'work.js'))).toBe(true);
+  });
+
   it('should copy managed patch into trash and strip the live block', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     await applyEnvironment(paths);

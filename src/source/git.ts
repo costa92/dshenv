@@ -9,7 +9,7 @@ import { isValidProfileName } from '../manifest/schema.js';
 // step, they would make every command below inspect, merge or lock another repository.
 const REPOSITORY_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'];
 
-function isolatedGit(): { env: NodeJS.ProcessEnv; extendEnv: false } {
+export function isolatedGit(): { env: NodeJS.ProcessEnv; extendEnv: false } {
   const env = { ...process.env };
   for (const name of REPOSITORY_ENV) delete env[name];
   return { env, extendEnv: false };
@@ -18,6 +18,8 @@ function isolatedGit(): { env: NodeJS.ProcessEnv; extendEnv: false } {
 export interface GitWorkingTreeStatus {
   isGitRepo: boolean;
   isDirty: boolean;
+  // Why git could not tell whether the tree is clean; isDirty is then true, so nothing treats it as clean.
+  statusError?: string;
   commit?: string;
   branch?: string;
   trackingBranch?: string;
@@ -91,20 +93,30 @@ export async function inspectGitWorkingTree(
     return { isGitRepo: false, isDirty: false };
   }
 
+  let isDirty: boolean;
+  let statusError: string | undefined;
   try {
     const statusRes = await execa('git', ['status', '--porcelain'], { ...isolatedGit(),
       cwd: repoDir,
       shell: false,
       timeout: 10000
     });
-    const isDirty = statusRes.stdout.trim().length > 0;
+    isDirty = statusRes.stdout.trim().length > 0;
+  } catch (err) {
+    isDirty = true;
+    const stderr = (err as { stderr?: unknown }).stderr;
+    statusError = (typeof stderr === 'string' && stderr.trim().split('\n')[0]) || (err instanceof Error ? err.message : String(err));
+  }
 
-    const commitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
+  try {
+    // A repository without commits yet has no HEAD, but its status above still counts.
+    const commitRes = await execa('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { ...isolatedGit(),
       cwd: repoDir,
       shell: false,
+      reject: false,
       timeout: 5000
     });
-    const commit = commitRes.stdout.trim();
+    const commit = commitRes.exitCode === 0 ? commitRes.stdout.trim() : undefined;
 
     let branch: string | undefined;
     try {
@@ -121,11 +133,12 @@ export async function inspectGitWorkingTree(
     return {
       isGitRepo: true,
       isDirty,
-      commit,
+      ...(statusError !== undefined ? { statusError } : {}),
+      ...(commit !== undefined ? { commit } : {}),
       branch
     };
   } catch {
-    return { isGitRepo: false, isDirty: false };
+    return { isGitRepo: true, isDirty, ...(statusError !== undefined ? { statusError } : {}) };
   }
 }
 

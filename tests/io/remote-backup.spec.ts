@@ -102,6 +102,20 @@ describe('snapshots with a remote subscription', () => {
     expect(fs.readlinkSync(path.join(skill, 'README.md'))).toBe('SKILL.md');
   });
 
+  it.skipIf(process.platform === 'win32')('saves a linked envctl/skills by its content and restores it through the link', async () => {
+    const target = path.join(home, 'dotfiles', 'skills');
+    fs.mkdirSync(path.join(target, 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'demo', 'SKILL.md'), 'v1');
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.symlinkSync(target, paths.skillsDir);
+    const snapshot = await createEnvironmentSnapshot(paths, 'op-linked');
+    fs.writeFileSync(path.join(target, 'demo', 'SKILL.md'), 'v2');
+
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    expect(fs.lstatSync(paths.skillsDir).isSymbolicLink()).toBe(true);
+    expect(read(path.join(target, 'demo', 'SKILL.md'))).toBe('v1');
+  });
+
   it('restoring a snapshot from before the subscription removes remote.json and owned overlays', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     fs.writeFileSync(paths.manifestFile, EMPTY_MANIFEST);

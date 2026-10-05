@@ -24,6 +24,10 @@
 - `config unset` 从该插件所有设置了这个键的补丁里删掉它；此前只删第一个，其余补丁里的值仍然生效。
 - `adopt` 选别名时也避开 `lock.json` 里已有的别名（它们可能属于其他 overlay）；此前会覆盖那条锁定。
 - 选中的团队 overlay 只因 DSH 里删掉了它的条目而需要改写时，`pull` 的预览也以退出码 3 拒绝；此前预览通过，`--yes` 才被拒绝。
+- `envctl/skills` 本身是软链接时，快照保存其内容、rollback 写回链接指向的目录；此前快照只存链接，回滚不会恢复内容。
+- 插件改了别名后，`purge <包名>` 清理新别名下的配置块；此前按所有权记录里的旧别名查找，报「Nothing to purge」。
+- `purge` 在 git 无法判断受管 clone 是否干净时拒绝执行；还没有提交的 clone 里的未跟踪文件也算未提交改动。此前这两种情况都当作干净，把 clone 移进 trash。
+- `remote` 系列命令调用 git 时不再继承 `GIT_WORK_TREE`、`GIT_DIR` 等变量（`source` 系列 0.8.0 已如此）；此前在 git hook 里运行时 `remote add` 报仓库没有 `envctl/manifest.yaml`。
 
 ## 0.9.0 - 2026-10-05
 

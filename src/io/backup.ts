@@ -63,7 +63,8 @@ async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, o
   await fs.promises.writeFile(path.join(snapshotDir, SKILLS_MARKER), '');
   if (fs.existsSync(paths.skillsDir)) {
     // verbatimSymlinks: a relative link inside a skill would otherwise come back as an absolute, machine-specific one.
-    await fs.promises.cp(paths.skillsDir, path.join(snapshotDir, SKILLS_DIR), { recursive: true, verbatimSymlinks: true });
+    // A linked skills directory is saved by its content, not as the link, which would follow later edits.
+    await fs.promises.cp(await fs.promises.realpath(paths.skillsDir), path.join(snapshotDir, SKILLS_DIR), { recursive: true, verbatimSymlinks: true });
   }
 
   if (fs.existsSync(paths.overlaysDir)) {
@@ -166,10 +167,14 @@ export async function restoreEnvironmentSnapshot(
   await restoreSnapshotFiles(snapshot, [paths.manifestFile, paths.lockFile, paths.stateFile]);
   await restoreRemoteFiles(snapshot, paths);
   if (fs.existsSync(path.join(snapshot.snapshotDir, SKILLS_MARKER))) {
-    await fs.promises.rm(paths.skillsDir, { recursive: true, force: true });
+    // A linked skills directory stays a link: its target gets the saved content.
+    const skillsDir = fs.lstatSync(paths.skillsDir, { throwIfNoEntry: false })?.isSymbolicLink() && fs.existsSync(paths.skillsDir)
+      ? await fs.promises.realpath(paths.skillsDir)
+      : paths.skillsDir;
+    await fs.promises.rm(skillsDir, { recursive: true, force: true });
     const saved = path.join(snapshot.snapshotDir, SKILLS_DIR);
     if (fs.existsSync(saved)) {
-      await fs.promises.cp(saved, paths.skillsDir, { recursive: true, verbatimSymlinks: true });
+      await fs.promises.cp(saved, skillsDir, { recursive: true, verbatimSymlinks: true });
     }
   }
 }
