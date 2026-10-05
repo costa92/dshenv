@@ -351,6 +351,43 @@ describe('CLI manifest write commands', () => {
         ]);
       });
 
+      it('copies nothing into the base from a config the active overlay already patches', async () => {
+        fakeDump(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    endpoint: https://overlay-only.internal\n`);
+        useOverlay('laptop');
+        fs.writeFileSync(
+          path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'),
+          'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        patches:\n          - id: agent-teams\n            config: { endpoint: https://overlay-only.internal }\n'
+        );
+        const out = await run(['config', 'set', 'agent-teams', 'memberProvider', 'claude', '-p', 'web', '--layer', 'base', '--force']);
+        expect(out.code).toBe(0);
+        expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([{ id: 'agent-teams', config: { memberProvider: 'claude' } }]);
+        expect(out.stderr).toBe(
+          `What DSH composes for ${PKG} in profile 'web' already holds a dshenv patch for it, not only its defaults, so the patch holds only memberProvider; ` +
+            "DSH replaces the plugin's whole config with it, dropping its defaults.\n"
+        );
+      });
+
+      it('refuses to copy a machine-local path into the shared base', async () => {
+        fakeDump(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    dataDir: /home/alice/private\n`);
+        const before = manifestText();
+        const out = await run(['config', 'set', 'agent-teams', 'memberProvider', 'claude', '-p', 'web']);
+        expect(out.code).toBe(3);
+        expect(out.stderr).toContain(`The config DSH composes for ${PKG} has machine-local paths, which do not belong in the shared base manifest; set it in an overlay with --layer overlay`);
+        expect(manifestText()).toBe(before);
+      });
+
+      it('says why it could not copy the config when DSH cannot tell', async () => {
+        const failing = path.join(tempHome, 'failing-dsh.mjs');
+        fs.writeFileSync(failing, 'process.exit(1);\n');
+        process.env.DSH_CLI = JSON.stringify([process.execPath, failing]);
+        const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toMatch(
+          new RegExp(`^Could not read the config DSH composes for ${PKG.replace(/[/.@-]/g, '\\$&')} in profile 'web' \\(dsh --dump-config exited with code 1\\), so the patch holds only stateDir; `)
+        );
+        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
+      });
+
       it('says the defaults are dropped when DSH has no config for the plugin yet', async () => {
         fakeDump('- id: other\n  name: other-plugin\n  config: {}\n');
         const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
@@ -468,6 +505,8 @@ describe('CLI manifest write commands', () => {
       const set = await run(['config', 'set', 'agent-teams', 'stateDir', '.b', '-p', 'web', '--layer', 'base', '--force']);
       expect(set.code).toBe(0);
       expect(set.stderr).toBe(
+        `What DSH composes for ${PKG} in profile 'web' already holds a dshenv patch for it, not only its defaults, so the patch holds only stateDir; ` +
+          "DSH replaces the plugin's whole config with it, dropping its defaults.\n" +
         "Overlay 'laptop' sets stateDir of agent-teams in profile 'web', so it stays \".o\" on this machine; use --layer overlay to change it here\n"
       );
       const unset = await run(['config', 'unset', 'agent-teams', 'stateDir', '-p', 'web', '--layer', 'base']);
@@ -476,7 +515,7 @@ describe('CLI manifest write commands', () => {
         "Overlay 'laptop' sets stateDir of agent-teams in profile 'web', so it stays \".o\" on this machine; use --layer overlay to change it here\n"
       );
       // Writes the overlay does not override say nothing.
-      expect((await run(['config', 'set', 'agent-teams', 'other', '1', '-p', 'web', '--layer', 'base', '--force'])).stderr).toBe('');
+      expect((await run(['config', 'set', 'agent-teams', 'other', '1', '-p', 'web', '--layer', 'base', '--force'])).stderr).not.toContain("Overlay 'laptop' sets");
     });
 
     it('hides --layer on adopt, which only writes the base', async () => {

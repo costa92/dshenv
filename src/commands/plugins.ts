@@ -33,6 +33,9 @@ import { checkNpmVersion } from '../source/npm-registry.js';
 import { resolveDshCommand } from '../dsh/command.js';
 import { dumpProfileConfig } from '../dsh/hmr.js';
 import { parseComposedProfile, pluginConfigKeys, pluginRowConfig } from '../tools/catalog.js';
+import { readProfilePatchFile } from '../apply/patches.js';
+import { extractPluginBlocks } from '../patch/patch.js';
+import { containsLocalPath } from '../profile-patches/entries.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { renderPluginTable } from '../output/render.js';
 import { resolveWrite, writeBase, writeOverlay } from './manifest-write.js';
@@ -566,29 +569,33 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       });
   }
 
-  // DSH composes only the keys that have a default, so a key it does not show may still be real: warn, don't refuse.
-  // The rows DSH composes for a profile; null when DSH cannot tell (no profile yet, no DSH, an unreadable dump).
-  async function composedRows(paths: EnvironmentPaths, opts: { harnessSource?: string; overlay?: string | false }, profile: string): Promise<ProfilePatch[] | null> {
+  // The rows DSH composes for a profile, or why DSH cannot tell.
+  async function composedRows(
+    paths: EnvironmentPaths,
+    opts: { harnessSource?: string; overlay?: string | false },
+    profile: string
+  ): Promise<{ rows: ProfilePatch[] } | { reason: string }> {
     // dsh --dump-config creates a missing profile, which a manifest write must not do.
     if (!fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))) {
-      return null;
+      return { reason: 'the profile does not exist yet' };
     }
     const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
     const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest.environment?.harness?.sourceDir });
     if (!command) {
-      return null;
+      return { reason: 'DSH CLI was not found' };
     }
     const dump = await dumpProfileConfig(profile, { command, dshHome: paths.home });
     if (!dump.ok) {
-      return null;
+      return { reason: dump.reason };
     }
     try {
-      return parseComposedProfile(dump.yaml);
+      return { rows: parseComposedProfile(dump.yaml) };
     } catch {
-      return null;
+      return { reason: 'its output could not be read' };
     }
   }
 
+  // DSH composes only the keys that have a default, so a key it does not show may still be real: warn, don't refuse.
   function warnUnknownConfigKey(rows: ProfilePatch[], packageName: string, dottedPath: string): void {
     const keys = pluginConfigKeys(rows, packageName);
     const head = dottedPath.split('.')[0];
@@ -678,19 +685,30 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
         const declared = overlay ? effectivePlugin(paths, overlay, profile, alias) : layerPlugin(paths, selection, overlay, profile, alias);
-        const rows = await composedRows(paths, opts, profile);
-        if (!cmdOpts.force && rows) {
-          warnUnknownConfigKey(rows, declared.package, dottedPath);
+        const composed = await composedRows(paths, opts, profile);
+        if (!cmdOpts.force && 'rows' in composed) {
+          warnUnknownConfigKey(composed.rows, declared.package, dottedPath);
         }
-        // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes now.
+        // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes
+        // now. That is the plugin's defaults only while no dshenv patch for it is in effect, the overlay's included.
         let seed: Record<string, unknown> | undefined;
-        if (!declared.patches?.length && rows) {
-          seed = pluginRowConfig(rows, declared.package, alias);
-          if (!seed) {
-            ctx.writeErr(
-              `DSH has no config for ${declared.package} in profile '${profile}' yet, so the patch holds only ${dottedPath}; ` +
-                "DSH replaces the plugin's whole config with it, dropping its defaults. To keep them: config unset it, apply, then config set it again\n"
-            );
+        const effective = loadEffectiveManifest(paths, selection).manifest.profiles[profile]?.plugins[alias];
+        if (!declared.patches?.length) {
+          const unknown = (why: string, advice = ' To keep them: config unset it, apply, then config set it again') =>
+            ctx.writeErr(`${why}, so the patch holds only ${dottedPath}; DSH replaces the plugin's whole config with it, dropping its defaults.${advice}\n`);
+          if (effective?.patches?.length || extractPluginBlocks(await readProfilePatchFile(paths, profile), profile, alias).trim() !== '') {
+            unknown(`What DSH composes for ${declared.package} in profile '${profile}' already holds a dshenv patch for it, not only its defaults`, '');
+          } else if ('reason' in composed) {
+            unknown(`Could not read the config DSH composes for ${declared.package} in profile '${profile}' (${composed.reason})`);
+          } else {
+            seed = pluginRowConfig(composed.rows, declared.package, alias);
+            if (!seed) {
+              unknown(`DSH has no config for ${declared.package} in profile '${profile}' yet`);
+            } else if (!overlay && containsLocalPath(seed)) {
+              throw new ValidationError(
+                `The config DSH composes for ${declared.package} has machine-local paths, which do not belong in the shared base manifest; set it in an overlay with --layer overlay`
+              );
+            }
           }
         }
         const restate = (patch: PatchEntry | OverlayPatchEntry) => {
