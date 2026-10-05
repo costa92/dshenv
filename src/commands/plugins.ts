@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { assertConfigPath, getAtPath, parseConfigValue, readPluginConfig, setAtPath, unsetAtPath, upsertPluginPatch } from '../config/config.js';
-import { loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
+import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
 import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
@@ -64,6 +64,7 @@ export interface InstallPluginResult {
   packageName: string;
   source: PluginSource;
   overlay: OverlaySelection | null;
+  selection: OverlaySelection | null;
   // The source the alias had before, when the install only moved it (to another version, say).
   previousSource?: PluginSource;
   // The alias already declared this package from this source, so nothing changed.
@@ -130,6 +131,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       // apply would only fail on it, after other steps already ran.
       if (!fs.existsSync(resolved)) {
         throw new ValidationError(`Local plugin path not found: ${resolved}`);
+      }
+      // It is linked as a directory; a file such as a packed .tgz would only fail at apply.
+      if (!fs.statSync(resolved).isDirectory()) {
+        throw new ValidationError(`Local plugin path is not a directory: ${resolved}`);
       }
       const baseName = path.basename(resolved);
       const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
@@ -221,7 +226,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       return;
     }
     const entry = readOverlay(paths, selection.name).profiles?.[profile]?.plugins?.[alias];
-    const what = entry && !entry.remove ? kept(entry) : undefined;
+    const what = entry?.remove ? `remove: true for ${alias} in profile '${profile}', so it stays uninstalled` : entry ? kept(entry) : undefined;
     if (what) {
       ctx.writeErr(`Overlay '${selection.name}' sets ${what} on this machine; use --layer overlay to change it here\n`);
     }
@@ -383,7 +388,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           return next;
         });
     const moved = previousSource !== undefined && JSON.stringify(previousSource) !== JSON.stringify(parsed.source);
-    return { ...parsed, overlay, npmCheck, ...(moved ? { previousSource } : {}), ...(previousSource !== undefined && !moved ? { unchanged: true } : {}) };
+    return { ...parsed, overlay, selection, npmCheck, ...(moved ? { previousSource } : {}), ...(previousSource !== undefined && !moved ? { unchanged: true } : {}) };
   }
 
   // A version npm does not have fails only at apply, minutes later. Only a version missing from a package npm has is
@@ -449,6 +454,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
               : `Added ${result.packageName} (${result.alias}) to profile '${cmdOpts.profile}'`,
           result.unchanged
         );
+        warnOverlayKeeps(opts, resolveCliPaths(opts), result.selection, result.overlay, cmdOpts.profile, result.alias, (entry) =>
+          entry.source ? `the source of ${result.alias} in profile '${cmdOpts.profile}', so it stays at ${describeSource(entry.source)}` : undefined);
         // Only the lock decides the commit that is installed; one that pins another makes plan block.
         const lockedSource = result.source.type === 'git' && result.source.commit !== undefined && fs.existsSync(resolveCliPaths(opts).lockFile)
           ? loadLock(fs.readFileSync(resolveCliPaths(opts).lockFile, 'utf8')).profiles[cmdOpts.profile]?.plugins[result.alias]?.source
@@ -618,18 +625,19 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     }
   }
 
-  // Takes the key out of whichever declared patch has it; a patch left with nothing to set goes too.
+  // Takes the key out of the declared patches that have it; a patch left with nothing to set goes too.
   function unsetFromPatches<T extends { id: string; config?: Record<string, unknown> }>(
     patches: T[] | undefined,
     dottedPath: string
   ): T[] | undefined | false {
-    const index = (patches ?? []).findIndex((patch) => patch.config && unsetAtPath(patch.config, dottedPath));
-    if (index === -1) {
+    // Every patch that sets it: a key left in another one would still reach DSH.
+    const changed = new Set((patches ?? []).filter((patch) => patch.config && unsetAtPath(patch.config, dottedPath)));
+    if (changed.size === 0) {
       return false;
     }
     const setsSomething = (patch: T) =>
       Object.keys(patch.config ?? {}).length > 0 || Object.keys(patch).some((key) => key !== 'id' && key !== 'config');
-    const rest = patches!.filter((patch, i) => i !== index || setsSomething(patch));
+    const rest = patches!.filter((patch) => !changed.has(patch) || setsSomething(patch));
     return rest.length > 0 ? rest : undefined;
   }
 
@@ -717,6 +725,9 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             seed = pluginRowConfig(composed.rows, declared.package, alias);
             if (!seed) {
               unknown(`DSH has no config for ${declared.package} in profile '${profile}' yet`);
+            } else if (hasInterpolation(JSON.stringify(seed))) {
+              seed = undefined;
+              unknown(`The config DSH composes for ${declared.package} holds \${...}, which the manifest does not allow`, '');
             } else if (!overlay && containsLocalPath(seed)) {
               throw new ValidationError(
                 `The config DSH composes for ${declared.package} has machine-local paths, which do not belong in the shared base manifest; set it in an overlay with --layer overlay`

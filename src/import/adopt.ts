@@ -242,7 +242,8 @@ async function adoptUnderLock(
       }
       // An alias the active overlay adds for another package would make the two collide when merged.
       const alias = existingAlias ?? freeAlias(
-        { ...mergedManifest.profiles[profileName].plugins, ...options?.overlay?.profiles?.[profileName]?.plugins },
+        // The lock is shared by every overlay, so an alias it holds may be another overlay's plugin.
+        { ...mergedManifest.profiles[profileName].plugins, ...options?.overlay?.profiles?.[profileName]?.plugins, ...mergedLock.profiles[profileName]?.plugins },
         candidateAlias
       );
       // Capture cannot see declared patches, so a candidate without any must not erase them.

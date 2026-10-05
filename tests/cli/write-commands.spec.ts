@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import { runCli } from '../../src/cli.js';
 import { loadManifest, serializeManifest } from '../../src/manifest/files.js';
 import { OverlaySchema } from '../../src/overlay/schema.js';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 const PKG = '@nanmicoder/dsh-agent-teams';
 const NEXT = 'Next: dshenv plan, then dshenv apply --yes.';
@@ -388,6 +388,14 @@ describe('CLI manifest write commands', () => {
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
       });
 
+      it('does not copy a composed config holding ${...}, which the manifest refuses', async () => {
+        fakeDump(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    stateDir: \${HOME}/teams\n`);
+        const out = await run(['config', 'set', 'agent-teams', 'memberProvider', 'spawn', '-p', 'web', '--force']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toContain(`The config DSH composes for ${PKG} holds \${...}, which the manifest does not allow, so the patch holds only memberProvider`);
+        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ memberProvider: 'spawn' });
+      });
+
       it('says the defaults are dropped when DSH has no config for the plugin yet', async () => {
         fakeDump('- id: other\n  name: other-plugin\n  config: {}\n');
         const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
@@ -397,6 +405,21 @@ describe('CLI manifest write commands', () => {
         );
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
       });
+    });
+
+    it('unsets a key from every patch of the plugin that sets it', async () => {
+      const file = path.join(tempHome, 'envctl', 'manifest.yaml');
+      const doc = parseYaml(fs.readFileSync(file, 'utf8'));
+      doc.profiles.web.plugins['agent-teams'].patches = [
+        { id: 'agent-teams', config: { team: { lead: 'captain' }, mode: 'a' } },
+        { id: 'second', config: { mode: 'b', keep: 1 } }
+      ];
+      fs.writeFileSync(file, stringifyYaml(doc));
+      expect((await run(['config', 'unset', 'agent-teams', 'mode', '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([
+        { id: 'agent-teams', config: { team: { lead: 'captain' } } },
+        { id: 'second', config: { keep: 1 } }
+      ]);
     });
 
     it('refuses __proto__, prototype and constructor in a path and never reaches inherited keys', async () => {

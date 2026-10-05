@@ -283,6 +283,21 @@ profiles:
     });
   });
 
+  it('adopts under an alias the lock does not already hold for another overlay', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.writeFileSync(paths.lockFile, JSON.stringify({ apiVersion: 'dshenv-lock/v1', profiles: { web: { plugins: { 'agent-teams': { package: 'other-pkg', source: { type: 'git', url: 'https://example.invalid/o.git', commit: 'c'.repeat(40) } } } } } }));
+    const candidate: CaptureDocument = {
+      apiVersion: 'dshenv-capture/v1',
+      manifest: { apiVersion: 'dshenv/v1', profiles: { web: { plugins: { 'agent-teams': { package: '@nanmicoder/dsh-agent-teams', enabled: true, source: { type: 'npm', version: '0.1.21' } } } } } },
+      lock: { apiVersion: 'dshenv-lock/v1', profiles: {} },
+      warnings: []
+    };
+    await adoptEnvironment(paths, candidate);
+    expect(Object.keys(loadManifest(fs.readFileSync(paths.manifestFile, 'utf8')).profiles.web.plugins)).toEqual(['agent-teams-1']);
+    expect(JSON.parse(fs.readFileSync(paths.lockFile, 'utf8')).profiles.web.plugins['agent-teams'].package).toBe('other-pkg');
+  });
+
   it('leaves the base entry alone for a plugin the active overlay overrides', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     fs.mkdirSync(paths.managerDir, { recursive: true });

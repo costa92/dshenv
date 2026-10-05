@@ -359,6 +359,10 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(overlayCreated ? { overlayCreated } : {})
   };
+  // Checked before the preview returns too, so it does not promise a write --yes then refuses.
+  if (nextOverlay && overlayName && !isDeepStrictEqual(nextOverlay, selectedOverlay)) {
+    assertNotRemoteOwned(paths, overlayFilePath(paths, overlayName));
+  }
   if (options.dryRun || (reads.length === 0 && !skillChanges && plugins.length === 0)) {
     return { dryRun: Boolean(options.dryRun), ...reported };
   }
