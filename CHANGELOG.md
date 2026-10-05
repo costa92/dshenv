@@ -6,6 +6,8 @@
 
 ### 修复
 
+- `remote add <本机路径>` 把相对路径记为 `file://` 地址；此前原样记下，换个目录再 clone（如 rollback 后 `remote sync`）会失败或拿到别的仓库，origin 校验也被跳过。
+- 选中的 overlay 对某个插件只改了 `enabled`（或补丁）时，`adopt` 仍把 base 更新到实际安装的版本，base 自己的 `enabled` 不变；此前直接跳过，base 停在旧版本，下一次 `apply` 会降级。
 - `tools config set`、`tools enable/disable` 写 base 时，若 base 还没有这一条而 DSH 当前组合出的配置已含 dshenv 补丁（如已 apply 的 overlay 写的），或含本机路径，以退出码 3 拒绝；此前把 overlay 的值（本机路径等）抄进共享的 base。
 - `install --layer overlay` 装的版本与生效的来源相同时不再写 overlay；此前提示「nothing changed」却在 overlay 里固定了来源，之后 base 的升级到不了这台机器。
 - `plugins config set` 只把键写进 `enabled` 不为 `false` 的补丁，全部禁用时以退出码 3 拒绝；`config get` 同样跳过禁用的补丁。此前写进禁用的补丁，`apply` 跳过它，值永远到不了 DSH。

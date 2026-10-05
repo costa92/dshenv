@@ -91,6 +91,33 @@ warnings: []
     expect(stdout).not.toContain('Adopted');
   });
 
+  it('moves the base to the installed version when the selected overlay only turns the plugin off', async () => {
+    const run = async (args: string[]) => {
+      let stdout = '';
+      let stderr = '';
+      const code = await runCli([...args, '--dsh-home', tempHome], { stdout: (chunk) => { stdout += chunk; }, stderr: (chunk) => { stderr += chunk; } });
+      return { code, stdout, stderr };
+    };
+    fs.mkdirSync(path.join(tempHome, 'envctl', 'overlays'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempHome, 'envctl', 'manifest.yaml'),
+      'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        package: "@nanmicoder/dsh-agent-teams"\n        source: { type: npm, version: "0.1.20" }\n'
+    );
+    fs.writeFileSync(
+      path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml'),
+      'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      agent-teams:\n        enabled: false\n'
+    );
+    expect((await run(['overlay', 'use', 'laptop'])).code).toBe(0);
+    const candidate = path.join(tempHome, 'candidate.yaml');
+    expect((await run(['capture', '-o', candidate])).code).toBe(0);
+    const out = await run(['adopt', candidate, '--yes']);
+    expect(out.code).toBe(0);
+    const plugin = loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins['agent-teams'];
+    expect(plugin.source).toEqual({ type: 'npm', version: '0.1.21' });
+    // The overlay turns it off on this machine; the base keeps its own setting.
+    expect(plugin.enabled).not.toBe(false);
+  });
+
   describe('with a plugin linked from a local checkout', () => {
     let source: string;
     const run = async (args: string[]) => {
