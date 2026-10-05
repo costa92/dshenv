@@ -112,6 +112,21 @@ describe('applyEnvironment failure recovery', () => {
     expect(preview.plan.operations.filter((op) => op.resource === 'plugin').map((op) => `${op.kind} ${op.alias}`)).toEqual(['install zz']);
   });
 
+  it('keeps the digest of a local plugin still installed when rolling back the apply that installed it', async () => {
+    const source = path.join(tempHome, 'src', 'aa-local');
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'aa-local', version: '1.0.0', dsh: { bundle: {} } }));
+    const local = `      aa-local:\n        package: aa-local\n        source: { type: local-link, path: ${JSON.stringify(source)} }\n`;
+    fs.writeFileSync(paths.manifestFile, manifest(local));
+    const applied = await applyEnvironment(paths, options);
+    const digest = JSON.parse(fs.readFileSync(paths.lockFile, 'utf8')).profiles.web.plugins['aa-local'].source.digest;
+
+    await rollbackEnvironment(paths, { operationId: applied.operationId });
+    expect(JSON.parse(fs.readFileSync(paths.lockFile, 'utf8')).profiles.web.plugins['aa-local'].source.digest).toBe(digest);
+    const preview = await applyEnvironment(paths, { ...options, dryRun: true });
+    expect(preview.plan.operations.filter((op) => op.resource === 'plugin')).toEqual([]);
+  });
+
   it('does not report a failed restore when only looking up the way back fails', async () => {
     fs.writeFileSync(paths.manifestFile, manifest(plugin('aa'), plugin('bb')));
     process.env.FAIL_ON = 'bb';

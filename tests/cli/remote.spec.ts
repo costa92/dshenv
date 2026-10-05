@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { execa } from 'execa';
 import { runCli } from '../../src/cli.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
+import { createEnvironmentSnapshot } from '../../src/io/backup.js';
 import { loadLock, serializeLock } from '../../src/manifest/files.js';
 import { lockEntryDigest } from '../../src/remote/lock-entries.js';
 import { readRemoteConfig, sha256Hex } from '../../src/remote/schema.js';
@@ -301,6 +302,23 @@ describe('CLI remote', () => {
   it('shows that nothing is subscribed', async () => {
     expect(await run(['remote', 'show'])).toMatchObject({ code: 0, stdout: 'No remote configured.\n' });
     expect(JSON.parse((await run(['remote', 'show', '--json'])).stdout)).toEqual({ subscribed: false });
+  });
+
+  it('clears the selection of a team overlay that a rollback to before the subscription removes', async () => {
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.writeFileSync(paths.manifestFile, LOCAL_MANIFEST);
+    // As an apply before the subscription saves it: the team overlay did not exist, so the snapshot does not name it.
+    const earlier = await createEnvironmentSnapshot(paths, 'apply-0123456789ab');
+    expect((await run(['remote', 'add', team.url, '--replace', '--yes'])).code).toBe(0);
+    expect((await run(['overlay', 'use', 'team'])).code).toBe(0);
+
+    const out = await run(['rollback', 'apply-0123456789ab', '--yes']);
+    expect(out.code).toBe(0);
+    expect(earlier.snapshotId).toContain('apply-0123456789ab');
+    expect(fs.existsSync(overlayFile('team'))).toBe(false);
+    expect(out.stdout).toContain("overlay 'team' it removed was selected; no overlay is selected now");
+    const status = await run(['status']);
+    expect(status.stderr).not.toContain("Overlay 'team' not found");
   });
 
   it('clones the remote again when a rollback brought back the subscription that remote remove dropped', async () => {

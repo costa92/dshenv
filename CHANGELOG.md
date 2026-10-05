@@ -6,6 +6,9 @@
 
 ### 修复
 
+- rollback 到 `remote add`（或 pull）之前时，若删掉的正是选中的 overlay，会清掉选择并在输出里说明；此前选择悬空，之后所有命令都报 `Overlay 'team' not found`。
+- rollback 后仍在安装着、清单仍声明同一路径的本地来源插件，保留回滚前 `lock.json` 记录的摘要；此前恢复旧 lock 丢掉摘要，清单没变也会重装并要求重启。
+- skill 的摘要算整个目录，不再套用其 `package.json` 的 `files` 过滤；此前名单外文件（如 `run.sh`）的改动在 `plan` 中显示已同步，永远到不了 DSH。
 - `plugins config set` 新建补丁时用 DSH 实际加载该插件的那一行的 id（bundle 插件、`--as` 改名的插件与别名不同），并在 stderr 说明；此前用别名，DSH 报 `entry not found`、配置从不生效，`plan` 却显示已同步。
 - 再次 `adopt` 时，只有 overlay 声明插件的 Profile 保留它在 `lock.json` 里的条目和所有权记录；此前输出「Nothing to adopt」却把它们清空，之后 `plan` 要求重装、锁定的版本或 commit 丢失。
 - `plugins config set` 只在没有 dshenv 补丁生效时抄 DSH 组合出的配置；此前有生效 overlay 给该插件写了补丁时，`--layer base` 会把 overlay 的值（本机路径、内网地址等）抄进共享的 base。抄来的配置含本机路径时，写 base 以退出码 3 拒绝。

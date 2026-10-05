@@ -13,14 +13,14 @@ import {
 import { appendJournalEntry, readJournalEntries } from '../io/journal.js';
 import { ValidationError } from '../errors.js';
 import { overlayFilePath, readSelectionFile, writeSelectionFile } from '../overlay/selection.js';
-import { loadLock, loadManifest, loadState, serializeState, withResources } from '../manifest/files.js';
+import { loadLock, loadManifest, loadState, parseOverlay, serializeLock, serializeState, withResources } from '../manifest/files.js';
 import * as path from 'node:path';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { readSkillDigests } from '../resources/skill.js';
 import { dropUninstalledOwnership } from '../resources/plugin.js';
 import { isDeepStrictEqual } from 'node:util';
-import type { EnvironmentState } from '../domain.js';
+import type { EnvironmentLock, EnvironmentState } from '../domain.js';
 import * as fs from 'node:fs';
 
 export interface RollbackOptions {
@@ -103,6 +103,75 @@ async function keepLiveState(paths: EnvironmentPaths, before: EnvironmentState |
     !isDeepStrictEqual(profiles, next.profiles);
   if (changed) {
     await writeAtomic(paths.stateFile, serializeState(withResources({ ...next, profiles }, { plugin, skill })), 'overwrite');
+  }
+}
+
+function readLock(paths: EnvironmentPaths): EnvironmentLock | null {
+  try {
+    return fs.existsSync(paths.lockFile) ? loadLock(fs.readFileSync(paths.lockFile, 'utf8')) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The local paths any layer declares, by profile and alias; null when a layer cannot be read.
+function declaredLocalPaths(paths: EnvironmentPaths): Map<string, string> | null {
+  const declared = new Map<string, string>();
+  try {
+    const layers: Array<{ profiles?: Record<string, { plugins?: Record<string, { source?: { type: string; path?: string } }> }> }> = [
+      loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'))
+    ];
+    for (const name of fs.existsSync(paths.overlaysDir) ? fs.readdirSync(paths.overlaysDir) : []) {
+      if (name.endsWith('.yaml')) {
+        const file = path.join(paths.overlaysDir, name);
+        layers.push(parseOverlay(fs.readFileSync(file, 'utf8'), file));
+      }
+    }
+    for (const layer of layers) {
+      for (const [profile, { plugins }] of Object.entries(layer.profiles ?? {})) {
+        for (const [alias, plugin] of Object.entries(plugins ?? {})) {
+          if (plugin.source?.path !== undefined) declared.set(`${profile}\0${alias}\0${plugin.source.type}`, path.normalize(plugin.source.path));
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+  return declared;
+}
+
+// The restored lock.json predates the install of a local plugin that is still installed; without the digest recorded
+// when it was installed, the next plan reinstalls it although nothing changed.
+async function keepLiveLocalDigests(paths: EnvironmentPaths, before: EnvironmentLock | null): Promise<void> {
+  const live = Object.entries(before?.profiles ?? {}).flatMap(([profile, { plugins }]) =>
+    Object.entries(plugins)
+      .filter(([, entry]) => entry.source.type === 'local-link' || entry.source.type === 'local-file')
+      .map(([alias, entry]) => ({ profile, alias, entry }))
+  );
+  if (live.length === 0) {
+    return;
+  }
+  const declared = declaredLocalPaths(paths);
+  if (!declared) {
+    return;
+  }
+  const inventory = await readEnvironmentInventory(paths);
+  const restored = readLock(paths);
+  if (fs.existsSync(paths.lockFile) && !restored) {
+    return;
+  }
+  const next: EnvironmentLock = structuredClone(restored ?? { apiVersion: 'dshenv-lock/v1', profiles: {} });
+  let changed = false;
+  for (const { profile, alias, entry } of live) {
+    const source = entry.source as { type: string; path: string };
+    if (declared.get(`${profile}\0${alias}\0${source.type}`) !== path.normalize(source.path)) continue;
+    if (!inventory.profiles[profile]?.plugins[entry.package]?.installed) continue;
+    if (isDeepStrictEqual(next.profiles[profile]?.plugins[alias], entry)) continue;
+    ((next.profiles[profile] ??= { plugins: {} }).plugins)[alias] = entry;
+    changed = true;
+  }
+  if (changed) {
+    await writeAtomic(paths.lockFile, serializeLock(next), 'overwrite');
   }
 }
 
@@ -220,12 +289,17 @@ async function rollbackDecided(
     overlayKeys: snapshotOverlayKeys(snapshot)
   });
   const before = readState(paths);
+  const lockBefore = readLock(paths);
+  // A pull or remote add may have created the selected overlay the restore removes; a selection of nothing breaks every command.
+  const selected = readSelectionFile(paths);
+  const selectedExisted = selected !== null && fs.existsSync(overlayFilePath(paths, selected));
   await restoreEnvironmentSnapshot(snapshot, paths);
   await keepLiveState(paths, before);
-  // A pull may have created and selected the overlay the restore just removed; a selection of nothing breaks every command.
-  const selected = readSelectionFile(paths);
-  if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`)) {
+  await keepLiveLocalDigests(paths, lockBefore);
+  let selectionNote = '';
+  if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && (selectedExisted || readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`))) {
     await writeSelectionFile(paths, null);
+    selectionNote = `; overlay '${selected}' it removed was selected; no overlay is selected now`;
   }
   await appendJournalEntry(paths, {
     operationId,
@@ -239,6 +313,6 @@ async function rollbackDecided(
     snapshotId: snapshot.snapshotId,
     operationId: options?.operationId,
     backupSnapshotId: backup.snapshotId,
-    message: `Restored the envctl files ${target}; the files it replaced are saved as snapshot ${backup.snapshotId}${skippedNote}`
+    message: `Restored the envctl files ${target}; the files it replaced are saved as snapshot ${backup.snapshotId}${skippedNote}${selectionNote}`
   };
 }
