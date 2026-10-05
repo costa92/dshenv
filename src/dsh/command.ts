@@ -20,6 +20,32 @@ export interface ResolveDshCommandInput {
 }
 
 export function resolveDshCommand(input?: ResolveDshCommandInput): CommandSpec | null {
+  const checkExists = input?.sourceDirExists ?? ((dir: string) => {
+    try {
+      return fs.existsSync(dir) && fs.statSync(dir).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  const fromSource = (sourceDir: string): CommandSpec => ({
+    file: 'pnpm',
+    // --silent keeps pnpm's script banner out of stdout, which callers parse (--version, --dump-config YAML).
+    args: ['--silent', '--dir', sourceDir, 'dsh'],
+    cwd: sourceDir
+  });
+
+  // The command runs with the source as its cwd and also gets --dir, so a relative path would be resolved twice.
+  const cliSource = input?.cliHarnessSource && !path.isAbsolute(input.cliHarnessSource)
+    ? path.resolve(input.cliHarnessSource)
+    : input?.cliHarnessSource;
+  // A source asked for by name, on this command line, wins over DSH_CLI and must not quietly become another DSH.
+  if (cliSource) {
+    if (!checkExists(cliSource)) {
+      throw new ValidationError(`Harness source not found: ${cliSource}`);
+    }
+    return fromSource(cliSource);
+  }
+
   const envDshCli = input?.envDshCli ?? process.env.DSH_CLI;
   if (envDshCli && envDshCli.trim().length > 0) {
     const trimmed = envDshCli.trim();
@@ -43,30 +69,10 @@ export function resolveDshCommand(input?: ResolveDshCommandInput): CommandSpec |
     };
   }
 
-  const checkExists = input?.sourceDirExists ?? ((dir: string) => {
-    try {
-      return fs.existsSync(dir) && fs.statSync(dir).isDirectory();
-    } catch {
-      return false;
-    }
-  });
-
-  // The command runs with the source as its cwd and also gets --dir, so a relative path would be resolved twice.
-  const cliSource = input?.cliHarnessSource && !path.isAbsolute(input.cliHarnessSource)
-    ? path.resolve(input.cliHarnessSource)
-    : input?.cliHarnessSource;
-  // A source asked for by name must not quietly become another DSH; the manifest's may live on another machine.
-  if (cliSource && !checkExists(cliSource)) {
-    throw new ValidationError(`Harness source not found: ${cliSource}`);
-  }
-  const sourceDir = cliSource ?? input?.manifestHarnessSource;
+  // The manifest's source may live on another machine, so one missing here falls through to PATH.
+  const sourceDir = input?.manifestHarnessSource;
   if (sourceDir && checkExists(sourceDir)) {
-    return {
-      file: 'pnpm',
-      // --silent keeps pnpm's script banner out of stdout, which callers parse (--version, --dump-config YAML).
-      args: ['--silent', '--dir', sourceDir, 'dsh'],
-      cwd: sourceDir
-    };
+    return fromSource(sourceDir);
   }
 
   const checkWhich = input?.which ?? ((cmd: string) => findOnPath(cmd));

@@ -29,11 +29,13 @@ export interface ResolvePathsInput {
   cwd?: string;
 }
 
-function resolveHomePath(value: string, label: string, cwd: string): string {
+// As DSH's own resolveDshHome does, so both name the same directory when a shell did not expand the ~ (.env, Docker ENV).
+function resolveHomePath(value: string, label: string, cwd: string, userHome: string): string {
   if (!value.trim()) {
     throw new ValidationError(`${label} must not be empty`);
   }
-  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(cwd, value);
+  const expanded = value === '~' ? userHome : value.startsWith('~/') || value.startsWith('~\\') ? path.join(userHome, value.slice(2)) : value;
+  return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(cwd, expanded);
 }
 
 export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentPaths {
@@ -42,9 +44,10 @@ export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentP
   let explicitHome: string | undefined;
 
   if (input?.cliDshHome !== undefined) {
-    explicitHome = resolveHomePath(input.cliDshHome, 'CLI dsh-home', cwd);
-  } else if (input?.envDshHome !== undefined) {
-    explicitHome = resolveHomePath(input.envDshHome, 'DSH_HOME environment variable', cwd);
+    explicitHome = resolveHomePath(input.cliDshHome, 'CLI dsh-home', cwd, userHome);
+  } else if (input?.envDshHome !== undefined && input.envDshHome.trim() !== '') {
+    // DSH treats a blank DSH_HOME as unset.
+    explicitHome = resolveHomePath(input.envDshHome, 'DSH_HOME environment variable', cwd, userHome);
   }
 
   const home = explicitHome ?? path.join(userHome, '.dsh');
