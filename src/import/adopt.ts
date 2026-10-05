@@ -286,11 +286,11 @@ async function adoptUnderLock(
         alreadyAdopted
       });
     }
-    // A profile only the overlay declares plugins for gains no empty entry in the base.
+    // A profile only the overlay declares plugins for gains no empty entry in the base; its lock and ownership stay.
     if (!existingManifest.profiles[profileName] && Object.keys(mergedManifest.profiles[profileName].plugins).length === 0) {
       delete mergedManifest.profiles[profileName];
-      delete mergedLock.profiles[profileName];
-      delete ownership[profileName];
+      if (!existingLock.profiles[profileName]) delete mergedLock.profiles[profileName];
+      if (!existingState.resources?.plugin?.[profileName]) delete ownership[profileName];
     }
   }
 

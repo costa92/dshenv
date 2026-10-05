@@ -32,7 +32,7 @@ import { didYouMean } from './suggest.js';
 import { checkNpmVersion } from '../source/npm-registry.js';
 import { resolveDshCommand } from '../dsh/command.js';
 import { dumpProfileConfig } from '../dsh/hmr.js';
-import { parseComposedProfile, pluginConfigKeys, pluginRowConfig } from '../tools/catalog.js';
+import { parseComposedProfile, pluginConfigKeys, pluginRow } from '../tools/catalog.js';
 import { readProfilePatchFile } from '../apply/patches.js';
 import { extractPluginBlocks } from '../patch/patch.js';
 import { containsLocalPath } from '../profile-patches/entries.js';
@@ -713,6 +713,12 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes
         // now. That is the plugin's defaults only while no dshenv patch for it is in effect, the overlay's included.
         let seed: Record<string, unknown> | undefined;
+        // A patch id DSH has no row for is never applied, and a bundle names its rows apart from the alias.
+        const row = !declared.patches?.length && 'rows' in composed ? pluginRow(composed.rows, declared.package, alias) : undefined;
+        const patchId = declared.patches?.[0]?.id ?? row?.id ?? alias;
+        if (patchId !== alias && row) {
+          ctx.writeErr(`DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch targets that id\n`);
+        }
         const effective = loadEffectiveManifest(paths, selection).manifest.profiles[profile]?.plugins[alias];
         if (!declared.patches?.length) {
           const unknown = (why: string, advice = ' To keep them: config unset it, apply, then config set it again') =>
@@ -722,7 +728,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           } else if ('reason' in composed) {
             unknown(`Could not read the config DSH composes for ${declared.package} in profile '${profile}' (${composed.reason})`);
           } else {
-            seed = pluginRowConfig(composed.rows, declared.package, alias);
+            seed = row?.config;
             if (!seed) {
               unknown(`DSH has no config for ${declared.package} in profile '${profile}' yet`);
             } else if (hasInterpolation(JSON.stringify(seed))) {
@@ -742,10 +748,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
 
         const patch = overlay
           ? await writeOverlay(paths, overlay, (doc) =>
-              restate(setOverlayPatchValue(doc, profile, alias, declared.patches?.[0]?.id ?? alias, dottedPath, parseConfigValue(value)))
+              restate(setOverlayPatchValue(doc, profile, alias, patchId, dottedPath, parseConfigValue(value)))
             )
           : await writeBase(paths, selection, (manifest) =>
-              restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value)))
+              restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value), patchId))
             );
 
         reportWrite(opts, overlay, 'set', { profile, alias, path: dottedPath, patch }, `Set ${alias} config ${dottedPath} in profile '${profile}'`);

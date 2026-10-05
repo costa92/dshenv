@@ -169,8 +169,8 @@ export function pluginConfigKeys(tree: ProfilePatch[], packageName: string): str
   return [...keys].sort();
 }
 
-// The config DSH composes for a plugin package: the row with the patch's id, else the first row that loads it.
-export function pluginRowConfig(tree: ProfilePatch[], packageName: string, id: string): Record<string, unknown> | undefined {
+// The row DSH loads a plugin package as: the one with the alias as id, else the first that loads it (a bundle names its own).
+export function pluginRow(tree: ProfilePatch[], packageName: string, id: string): { id: string; config: Record<string, unknown> } | undefined {
   let byId: ProfilePatch | undefined;
   let first: ProfilePatch | undefined;
   walkRows(tree, (row) => {
@@ -180,7 +180,7 @@ export function pluginRowConfig(tree: ProfilePatch[], packageName: string, id: s
   });
   const row = byId ?? first;
   if (row === undefined) return undefined;
-  return isRecord(row.config) ? structuredClone(row.config) : {};
+  return { id: typeof row.id === 'string' ? row.id : id, config: isRecord(row.config) ? structuredClone(row.config) : {} };
 }
 
 function findRow(rows: unknown, id: string): ProfilePatch | undefined {
