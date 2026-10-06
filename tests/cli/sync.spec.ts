@@ -180,7 +180,7 @@ describe('CLI sync', () => {
 
     const backwards = await run(['sync', '--ref', first]);
     expect(backwards.code).toBe(3);
-    expect(backwards.stderr).toContain(`Remote commit ${first} does not descend from the pinned commit ${second}`);
+    expect(backwards.stderr).toContain(`Remote commit ${first} is older than the pinned commit ${second}; sync only moves forward, so go back with dshenv rollback`);
 
     const side = await commitTeamSideBranch(team, 'side', { 'envctl/manifest.yaml': `${V2_MANIFEST}# side\n` }, 'side');
     await tagTeamCommit(team, 'side-tag', side);

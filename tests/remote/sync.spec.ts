@@ -305,6 +305,24 @@ describe('remote sync engine', () => {
     expect(fs.statSync(path.join(paths.skillsDir, 'wiki', 'run.sh')).mode & 0o111).toBe(0);
   });
 
+  it.skipIf(process.platform === 'win32')('syncs a commit that only makes a team skill script executable, through to DSH', async () => {
+    await subscribe();
+    const script = path.join(team.work, 'envctl', 'skills', 'wiki', 'run.sh');
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, '#!/bin/sh\n', { mode: 0o644 });
+    await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'v1' }, 'skills');
+    await acceptSync(paths, await prepare({ previous: true }));
+    fs.cpSync(path.join(paths.skillsDir, 'wiki'), path.join(paths.dshSkillsDir, 'wiki'), { recursive: true });
+
+    fs.chmodSync(script, 0o755);
+    await commitTeamFiles(team, {}, 'make it executable');
+    const preview = await prepare({ previous: true });
+    expect(preview.files.modified).toEqual(['skills/wiki/run.sh']);
+    expect(skillOps(preview.plan)).toMatchObject([{ kind: 'update', name: 'wiki' }]);
+    await acceptSync(paths, preview);
+    expect(fs.statSync(path.join(paths.skillsDir, 'wiki', 'run.sh')).mode & 0o111).not.toBe(0);
+  });
+
   it('plans the skill changes a sync brings before it is accepted', async () => {
     await subscribe();
     await commitTeamFiles(team, { 'envctl/skills/wiki/SKILL.md': 'v1' }, 'skills');

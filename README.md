@@ -480,7 +480,7 @@ dshenv pull --yes --prefer dsh     # DSH 与清单都改过时，以 DSH 为准�
 - 自上次 `apply` 以来 DSH 与清单都改过时拒绝执行，需用 `--prefer` 指定以哪一边为准。
 - `plan` 在 `Unmanaged plugins` 下列出的插件（装在 Profile 里、清单没有声明）也一并接管，描述方式与 `capture` 相同（别名、来源、版本；只靠 `insert` 加载、不在 bundles 里的记为 `enabled: false`），并像 `adopt` 一样写入 lock 与所有权记录，之后 `plan` 不会要求重装；`local-file` 插件除外：装进 Profile 的是当时的副本，无法证明与源目录一致，下一次 `apply` 会重装一次以记下源码 digest。`local-link`/`local-file` 插件按含本机路径条目的规则写进 overlay（`local-link` 同时记下源码 digest），其余写进基础清单；团队 remote 拥有基础清单时写进 overlay。`adopt` 之后的那次 `pull` 只接管候选清单中的本地来源插件。
 - 写入前先建快照，`dshenv rollback <快照 id> --yes` 可撤销（id 见 `--json` 输出的 `snapshotId`）。
-- `$DSH_HOME/skills` 下的 loose skill 也一并处理：目录复制到 `envctl/skills/<名字>`，DSH 里删掉的技能从清单里删除。`apply` 反向复制，被覆盖或删除的 DSH 副本移进 `envctl/trash`（`gc` 清理）；`plan` 在 `Planned skill changes` 与 `Skills not in the manifest` 下列出技能。`envctl/skills` 可以放进团队配置仓库，随 `remote`/`sync` 同步；团队拥有的技能在 DSH 里改动后 `pull` 会拒绝。Git 标记为可执行的文件同步后保持可执行；变化按内容判断，只改可执行位、内容不变的提交不会同步，需要连同内容一起改。
+- `$DSH_HOME/skills` 下的 loose skill 也一并处理：目录复制到 `envctl/skills/<名字>`，DSH 里删掉的技能从清单里删除。`apply` 反向复制，被覆盖或删除的 DSH 副本移进 `envctl/trash`（`gc` 清理）；`plan` 在 `Planned skill changes` 与 `Skills not in the manifest` 下列出技能。`envctl/skills` 可以放进团队配置仓库，随 `remote`/`sync` 同步；团队拥有的技能在 DSH 里改动后 `pull` 会拒绝。Git 标记为可执行的文件同步后保持可执行；只改可执行位的提交也会同步，skill 的摘要同样计入可执行位，所以这类改动会一直到 DSH 里的副本（Windows 没有可执行位，不比较）。
 - `--json` 输出 `{dryRun, changes: [{profile, from, added, changed, removed, base, overlay, overlayName?}], skills?: {added, changed, removed}, plugins?: [{profile, alias, package, sourceType, enabled, layer, overlayName?}], warnings?, overlayCreated?, operationId?, snapshotId?}`；`warnings` 列出无法接管的插件（如 npm 版本不是确定版本）。
 
 ### 23. `dshenv tools`

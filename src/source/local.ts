@@ -14,8 +14,9 @@ export interface LocalSourceInfo {
   packageJson?: Record<string, unknown>;
 }
 
-// A skill is copied whole, so every file counts; only a plugin source is narrowed to what npm would publish.
-export async function calculateSourceDigest(dirPath: string, options: { publishedOnly?: boolean } = {}): Promise<string> {
+// A skill is copied whole, so every file counts, executable bit included; only a plugin source is narrowed to what npm
+// would publish, and its digest never changes with modes, so a plugin recorded before stays in sync.
+export async function calculateSourceDigest(dirPath: string, options: { publishedOnly?: boolean; executableBit?: boolean } = {}): Promise<string> {
   const hash = crypto.createHash('sha256');
 
   async function walk(current: string): Promise<string[]> {
@@ -56,6 +57,10 @@ export async function calculateSourceDigest(dirPath: string, options: { publishe
     const stat = await fs.promises.lstat(file);
     const content = stat.isSymbolicLink() ? `\0symlink\0${await fs.promises.readlink(file)}` : await fs.promises.readFile(file);
     hash.update(content);
+    // Only an executable file adds anything, so a tree without one digests as before.
+    if (options.executableBit && process.platform !== 'win32' && !stat.isSymbolicLink() && (stat.mode & 0o111) !== 0) {
+      hash.update('\0executable');
+    }
   }
 
   return hash.digest('hex');
