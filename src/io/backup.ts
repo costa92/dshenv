@@ -167,14 +167,22 @@ export async function restoreEnvironmentSnapshot(
   await restoreSnapshotFiles(snapshot, [paths.manifestFile, paths.lockFile, paths.stateFile]);
   await restoreRemoteFiles(snapshot, paths);
   if (fs.existsSync(path.join(snapshot.snapshotDir, SKILLS_MARKER))) {
-    // A linked skills directory stays a link: its target gets the saved content.
-    const skillsDir = fs.lstatSync(paths.skillsDir, { throwIfNoEntry: false })?.isSymbolicLink() && fs.existsSync(paths.skillsDir)
-      ? await fs.promises.realpath(paths.skillsDir)
-      : paths.skillsDir;
-    await fs.promises.rm(skillsDir, { recursive: true, force: true });
     const saved = path.join(snapshot.snapshotDir, SKILLS_DIR);
+    if (fs.lstatSync(paths.skillsDir, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      // A linked skills directory is the user's, outside envctl: a snapshot without skills drops only the link, and one
+      // with skills puts its content back into the target, created again if it is gone, so the link stays.
+      if (!fs.existsSync(saved)) {
+        await fs.promises.unlink(paths.skillsDir);
+        return;
+      }
+      const target = path.resolve(path.dirname(paths.skillsDir), await fs.promises.readlink(paths.skillsDir));
+      await fs.promises.rm(target, { recursive: true, force: true });
+      await fs.promises.cp(saved, target, { recursive: true, verbatimSymlinks: true });
+      return;
+    }
+    await fs.promises.rm(paths.skillsDir, { recursive: true, force: true });
     if (fs.existsSync(saved)) {
-      await fs.promises.cp(saved, skillsDir, { recursive: true, verbatimSymlinks: true });
+      await fs.promises.cp(saved, paths.skillsDir, { recursive: true, verbatimSymlinks: true });
     }
   }
 }

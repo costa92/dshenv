@@ -4,6 +4,12 @@
 
 ## 未发布
 
+### 修复
+
+- `envctl/skills` 是软链接时，rollback 到没有 skills 的快照只删除链接本身；此前会把链接指向的外部目录（如 dotfiles 里的 skills，连同其中非 skill 的文件）整个删掉，且不进 trash。链接悬空时内容写回原目标并保留链接。
+- 旧写法 `tools config <tool> <路径> <值>` 带 `--help`、`--version`（或写成 `help tools config …`）时只显示帮助或版本；此前会真的写入清单并固定整个预设。
+- 团队配置里写成 `link:…`、`file:/…`、`workspace:…` 的 Git 地址按本机路径拒绝；此前被当成网络地址放行，pnpm 会把它当本地目录链接安装。
+
 ## 0.10.1 - 2026-10-06
 
 ### 升级须知

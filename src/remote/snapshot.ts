@@ -28,11 +28,15 @@ function candidateKey(rel: string): string | null {
   return /^overlays\/[^/]+\.yaml$/.test(rel) || (/^skills\/[^/]+\/./.test(rel) && !rel.startsWith('skills/node_modules/')) ? rel : null;
 }
 
-// Only a network URL (scheme://, or scp-style host:path) names the same repository on every machine.
+// Only a network URL (scheme://, or scp-style host:path) names the same repository on every machine. pnpm's own
+// protocols (link:../x, file:/x) look like host:path but name a directory here, which pnpm then links or copies.
 function isMachineLocalGitUrl(url: string): boolean {
   const scheme = /^(?:git\+)?([a-z][a-z0-9+.-]*):\/\//i.exec(url)?.[1].toLowerCase();
   if (scheme !== undefined) {
     return scheme === 'file';
+  }
+  if (/^(?:git\+)?(?:link|file|workspace|portal):/i.test(url)) {
+    return true;
   }
   return !/^(?:[^@/:]+@)?[^/:\\]{2,}:/.test(url);
 }
