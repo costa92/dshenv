@@ -6,13 +6,15 @@ import {
   findEnvironmentSnapshot,
   listEnvironmentSnapshots,
   readAbsentKeys,
+  readClearedSelection,
+  recordClearedSelection,
   restoreEnvironmentSnapshot,
   snapshotOverlayKeys,
   type EnvironmentSnapshot
 } from '../io/backup.js';
 import { appendJournalEntry, readJournalEntries } from '../io/journal.js';
 import { ValidationError } from '../errors.js';
-import { overlayFilePath, readSelectionFile, writeSelectionFile } from '../overlay/selection.js';
+import { isValidOverlayName, overlayFilePath, readSelectionFile, writeSelectionFile } from '../overlay/selection.js';
 import { loadLock, loadManifest, loadState, parseOverlay, serializeLock, serializeState, withResources } from '../manifest/files.js';
 import * as path from 'node:path';
 import { writeAtomic } from '../io/atomic-file.js';
@@ -297,9 +299,15 @@ async function rollbackDecided(
   await keepLiveState(paths, before);
   await keepLiveLocalDigests(paths, lockBefore);
   let selectionNote = '';
+  const reselect = readClearedSelection(snapshot);
   if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && (selectedExisted || readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`))) {
     await writeSelectionFile(paths, null);
+    await recordClearedSelection(backup, selected);
     selectionNote = `; overlay '${selected}' it removed was selected; no overlay is selected now`;
+  } else if (selected === null && reselect !== null && isValidOverlayName(reselect) && fs.existsSync(overlayFilePath(paths, reselect))) {
+    // Undoing a rollback that deselected the overlay it removed; a selection made since is the user's and stays.
+    await writeSelectionFile(paths, reselect);
+    selectionNote = `; overlay '${reselect}', which the rolled-back rollback deselected, is selected again`;
   }
   await appendJournalEntry(paths, {
     operationId,

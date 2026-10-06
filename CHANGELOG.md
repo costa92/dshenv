@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 插件别名只拒绝 dshenv 自己的块名 `@profile` 和以 `@mount:` 开头的名字，`lock.json` 不再套用这条限制。0.10.1 拒绝所有以 `@` 开头的别名，清单里已有 `@x` 这类别名时 `remove`、`install --as`、`plan` 全部以退出码 3 失败，升级须知里的办法也执行不了；手工改好清单后 `lock.json` 里的旧别名还会让 `plan` 报错。
+- 撤销一次清掉了 overlay 选择的 rollback（`dshenv rollback --yes` 恢复它留下的快照）时，重新选中那个 overlay；此前 overlay 文件回来了但选择丢了，之后的 `plan`/`apply` 只用 base，会卸载 overlay 声明的插件。期间已另选了 overlay 时保持不变。
 - 被结束的 DSH 没有被回收、成了僵尸进程时（如 dshenv 在容器里以 PID 1 运行且没加 `--init`），中断 `apply` 后照样释放它留下的 `package.json.lock`；`dshenv.lock` 的持有者是僵尸进程时同样接管。此前锁一直留着，之后的命令要等到超时。
 - `dshenv.lock` 里的 pid 正好是当前进程（容器重启后 pid 相同）时按陈旧锁接管；拿不到锁时报错写出持有者的 pid、主机名和加锁时间，并说明 pid 被复用或主机名变了时可删除锁文件。此前一直报 `Environment lock is already held`，没有处理办法。
 - 再次 `adopt` 由 dshenv 安装的 git 插件时，保留 base 声明的 `ref`/`commit` 和 URL 写法；此前 DSH 里记的 URL 带 `git+` 前缀，与清单对不上，`ref`/`commit` 被丢掉、URL 被改写。

@@ -12,6 +12,8 @@ const SKILLS_MARKER = 'skills-saved';
 const SKILLS_DIR = 'skills';
 // Every overlay file as it was, so one a later sync takes over (remote add --replace) can be put back, not deleted.
 const EXISTING_OVERLAYS_DIR = 'existing-overlays';
+// The overlay a rollback deselected as it removed it, kept in the snapshot it took first, so undoing that rollback selects it again.
+const CLEARED_SELECTION_FILE = 'cleared-selection.json';
 
 export interface EnvironmentSnapshot {
   snapshotId: string;
@@ -100,6 +102,19 @@ async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, o
 export function readAbsentKeys(snapshot: EnvironmentSnapshot): string[] {
   const file = path.join(snapshot.snapshotDir, ABSENT_FILE);
   return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]) : [];
+}
+
+export async function recordClearedSelection(snapshot: EnvironmentSnapshot, overlay: string): Promise<void> {
+  await fs.promises.writeFile(path.join(snapshot.snapshotDir, CLEARED_SELECTION_FILE), JSON.stringify({ overlay }));
+}
+
+export function readClearedSelection(snapshot: EnvironmentSnapshot): string | null {
+  try {
+    const { overlay } = JSON.parse(fs.readFileSync(path.join(snapshot.snapshotDir, CLEARED_SELECTION_FILE), 'utf8')) as { overlay?: unknown };
+    return typeof overlay === 'string' ? overlay : null;
+  } catch {
+    return null;
+  }
 }
 
 // Overlay keys a restore of this snapshot writes or deletes, so a backup taken before it can hold what they replace.

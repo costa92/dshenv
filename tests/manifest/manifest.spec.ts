@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   loadManifest,
+  loadLock,
   parseYamlStrict,
   serializeManifest,
   CaptureDocumentSchema
@@ -173,6 +174,13 @@ profiles:
     ).toThrow(/Plugin alias is reserved/);
     expect(() =>
       loadManifest('apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      "@mount:foo":\n        package: p\n        source: { type: in-box }\n')
-    ).toThrow(/Plugin alias must not start with '@'/);
+    ).toThrow(/Plugin alias must not start with '@mount:'/);
+  });
+
+  // 0.10.1 refused every '@' alias, so a manifest that has one could not even run remove; only dshenv's markers collide.
+  it('accepts an @ alias that is not one of dshenv\'s patch markers, in the manifest and the lock', () => {
+    expect(Object.keys(loadManifest('apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      "@x":\n        package: p\n        source: { type: in-box }\n').profiles.web.plugins)).toEqual(['@x']);
+    const lock = JSON.stringify({ apiVersion: 'dshenv-lock/v1', profiles: { web: { plugins: { '@mount:foo': { package: 'p', source: { type: 'npm', resolvedVersion: '1.0.0' } } } } } });
+    expect(Object.keys(loadLock(lock).profiles.web.plugins)).toEqual(['@mount:foo']);
   });
 });

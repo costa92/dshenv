@@ -10,7 +10,8 @@ import { calculateSourceDigest } from '../source/local.js';
 import type { EnvironmentPlan, LocalSourceDigests, PluginOperation, UnmanagedPlugin, UnverifiedPlugin } from '../planner/plan.js';
 import type { ProfileRollback } from '../apply/apply.js';
 import { computePatchDigest } from '../patch/patch.js';
-import { isBundlePackage } from '../patch/mount.js';
+import { isBundlePackage, mountBlockAlias } from '../patch/mount.js';
+import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 import { setProfileBundleEnabled } from '../apply/bundles.js';
 import { clearManagedPatches, writeManagedPatches, writePluginMount } from '../apply/patches.js';
 import { awaitWithTreeTimeout } from '../io/process-tree.js';
@@ -382,7 +383,7 @@ export function planPlugins(
     const declared = manifestProfiles[profName]?.plugins ?? {};
     const removed = new Set(operations.filter((op) => op.profile === profName && op.kind === 'remove').map((op) => op.alias));
     const aliases = new Set([
-      ...(profInv.managedPatches ?? []).map((patch) => patch.plugin).filter((alias) => !alias.startsWith('@')),
+      ...(profInv.managedPatches ?? []).map((patch) => patch.plugin).filter((alias) => alias !== PROFILE_PATCHES_ALIAS && !alias.startsWith(mountBlockAlias(''))),
       ...Object.keys(profInv.mounts ?? {})
     ]);
     for (const alias of aliases) {
