@@ -203,6 +203,23 @@ profiles:
     });
   });
 
+  it('shows help for the old positional tools config form instead of writing it', async () => {
+    const before = fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
+    for (const args of [
+      ['tools', 'config', 'tool-web', 'fetchMaxOutputChars', '5', '-p', 'web', '--help'],
+      ['help', 'tools', 'config', 'tool-web', 'fetchMaxOutputChars', '7', '-p', 'web'],
+      ['tools', 'config', 'tool-web', '--help']
+    ]) {
+      const out = await run(args);
+      expect(out.code, args.join(' ')).toBe(0);
+      expect(out.stdout, args.join(' ')).toContain('Usage: dshenv tools config');
+    }
+    const version = await run(['tools', 'config', 'tool-web', 'fetchMaxOutputChars', '7', '-p', 'web', '--version']);
+    expect(version.code).toBe(0);
+    expect(version.stdout).toMatch(/^\d+\.\d+\.\d+/);
+    expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
+  });
+
   it('keeps both edits when two commands change the same preset at once', async () => {
     const results = await Promise.all([
       run(['tools', 'disable', 'tool-web', '-p', 'web']),

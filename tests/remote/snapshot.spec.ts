@@ -159,6 +159,22 @@ describe('loadRemoteSnapshot', () => {
       /Plugin 'web\/shared' has a Git URL on this machine/
     ],
     [
+      'manifest with a git plugin at a pnpm link: path',
+      { 'envctl/manifest.yaml': `${TEAM_MANIFEST}      evil:\n        package: evil\n        source: { type: git, url: "link:../../envctl/skills/evil/pkg", commit: abc1234 }\n` },
+      /^Remote file envctl\/manifest\.yaml: Plugin 'web\/evil' has a Git URL on this machine/
+    ],
+    [
+      'lock with a git entry at a single-slash file: path',
+      {
+        'envctl/manifest.yaml': TEAM_MANIFEST,
+        'envctl/lock.json': JSON.stringify({
+          apiVersion: 'dshenv-lock/v1',
+          profiles: { web: { plugins: { mine: { package: 'mine', source: { type: 'git', url: 'file:/etc/x', commit: 'a'.repeat(40) } } } } }
+        })
+      },
+      /Lock entry 'web\/mine' has a Git URL on this machine/
+    ],
+    [
       'lock with a git entry at a relative path',
       {
         'envctl/manifest.yaml': TEAM_MANIFEST,

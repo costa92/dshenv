@@ -116,6 +116,35 @@ describe('snapshots with a remote subscription', () => {
     expect(read(path.join(target, 'demo', 'SKILL.md'))).toBe('v1');
   });
 
+  it.skipIf(process.platform === 'win32')('removes only the link, never its target, when the snapshot predates a linked envctl/skills', async () => {
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    const snapshot = await createEnvironmentSnapshot(paths, 'op-no-skills');
+    const target = path.join(home, 'dotfiles', 'skills');
+    fs.mkdirSync(path.join(target, 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'demo', 'SKILL.md'), 'mine');
+    fs.writeFileSync(path.join(target, 'NOTES.txt'), 'notes');
+    fs.symlinkSync(target, paths.skillsDir);
+
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    expect(fs.lstatSync(paths.skillsDir, { throwIfNoEntry: false })).toBeUndefined();
+    expect(read(path.join(target, 'demo', 'SKILL.md'))).toBe('mine');
+    expect(read(path.join(target, 'NOTES.txt'))).toBe('notes');
+  });
+
+  it.skipIf(process.platform === 'win32')('restores into the target of a dangling skills link, keeping the link', async () => {
+    const target = path.join(home, 'dotfiles', 'skills');
+    fs.mkdirSync(path.join(target, 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'demo', 'SKILL.md'), 'v1');
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.symlinkSync(target, paths.skillsDir);
+    const snapshot = await createEnvironmentSnapshot(paths, 'op-dangling');
+    fs.rmSync(target, { recursive: true });
+
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    expect(fs.lstatSync(paths.skillsDir).isSymbolicLink()).toBe(true);
+    expect(read(path.join(target, 'demo', 'SKILL.md'))).toBe('v1');
+  });
+
   it('restoring a snapshot from before the subscription removes remote.json and owned overlays', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     fs.writeFileSync(paths.manifestFile, EMPTY_MANIFEST);

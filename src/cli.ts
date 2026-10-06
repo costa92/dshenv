@@ -116,6 +116,14 @@ function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[
       cmd = sub;
       continue;
     }
+    // A hidden default command (the positional `tools config <tool> …`) takes the operands, so a help or version
+    // request must not reach it as a run: help shows the group's, version prints the version.
+    if ((cmd as unknown as { _defaultCommandName?: string })._defaultCommandName) {
+      if (helpCommand !== undefined || argv.some((other) => HELP.has(other))) {
+        return [...argv.slice(0, index).filter((_, at) => at !== helpCommand), '--help'];
+      }
+      return argv.some((other) => VERSION.has(other)) ? ['--version'] : argv;
+    }
     // A command with subcommands takes no arguments of its own, so anything else names a subcommand it lacks.
     unknown = cmd.commands.length > 0;
     break;
