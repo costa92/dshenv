@@ -1,3 +1,4 @@
+import { readSelectionFile } from '../../src/overlay/selection.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -335,6 +336,21 @@ describe('CLI remote', () => {
     expect(out.stdout).toContain("overlay 'team' it removed was selected; no overlay is selected now");
     const status = await run(['status']);
     expect(status.stderr).not.toContain("Overlay 'team' not found");
+  });
+
+  it('selects the team overlay again when the rollback that deselected it is undone', async () => {
+    fs.mkdirSync(paths.managerDir, { recursive: true });
+    fs.writeFileSync(paths.manifestFile, LOCAL_MANIFEST);
+    await createEnvironmentSnapshot(paths, 'apply-0123456789ab');
+    expect((await run(['remote', 'add', team.url, '--replace', '--yes'])).code).toBe(0);
+    expect((await run(['overlay', 'use', 'team'])).code).toBe(0);
+    expect((await run(['rollback', 'apply-0123456789ab', '--yes'])).code).toBe(0);
+
+    const undo = await run(['rollback', '--yes']);
+    expect(undo.code).toBe(0);
+    expect(fs.existsSync(overlayFile('team'))).toBe(true);
+    expect(undo.stdout).toContain("overlay 'team', which the rolled-back rollback deselected, is selected again");
+    expect(readSelectionFile(paths)).toBe('team');
   });
 
   it('clones the remote again when a rollback brought back the subscription that remote remove dropped', async () => {

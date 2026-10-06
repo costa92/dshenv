@@ -540,7 +540,7 @@ dshenv disable agent-teams -p web                               # enable 反之
 dshenv remove agent-teams -p web
 ```
 
-`install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。插件别名不能以 `@` 开头（dshenv 自己的补丁块用 `@profile`、`@mount:<别名>`）。
+`install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
 
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
