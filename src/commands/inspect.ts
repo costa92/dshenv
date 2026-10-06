@@ -129,15 +129,13 @@ export function registerInspectCommands(ctx: CommandContext): void {
 
       const selection = resolveCliOverlay(opts, paths);
       let manifest: EnvironmentManifest | undefined;
-      if (selection && !fs.existsSync(paths.manifestFile)) {
-        // A missing base is reported via manifestExists, as without an overlay; the overlay itself is still checked.
+      // A broken overlay selection is exactly what doctor must surface; a missing base is reported via manifestExists.
+      if (selection) {
         readOverlay(paths, selection.name);
-      } else if (selection) {
-        // A broken overlay selection is exactly what doctor must surface.
-        manifest = loadEffectiveManifest(paths, selection).manifest;
-      } else if (fs.existsSync(paths.manifestFile)) {
+      }
+      if (fs.existsSync(paths.manifestFile)) {
         try {
-          manifest = loadEffectiveManifest(paths, null).manifest;
+          manifest = loadEffectiveManifest(paths, selection).manifest;
         } catch (err) {
           // doctor still probes DSH, but without the manifest's harness settings, which may pick another DSH.
           const reason = err instanceof Error ? err.message : String(err);

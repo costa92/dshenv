@@ -113,7 +113,7 @@ describe('CLI surface', () => {
     });
 
     it('treats help and version for an unknown subcommand as the unknown command, and shows help for a nested one', async () => {
-      for (const args of [['web', 'foo', '--help'], ['plugins', 'nope', '-h'], ['help', 'web', 'foo'], ['foo', '--version'], ['plugins', 'config', 'nope', '--help']]) {
+      for (const args of [['web', 'foo', '--help'], ['plugins', 'nope', '-h'], ['help', 'web', 'foo'], ['web', 'help', 'foo'], ['foo', '--version'], ['plugins', 'config', 'nope', '--help']]) {
         const out = await run(args, false);
         expect(out.code, args.join(' ')).toBe(3);
         expect(out.stdout, args.join(' ')).toBe('');
@@ -126,6 +126,10 @@ describe('CLI surface', () => {
       const nested = await run(['help', 'web', 'start'], false);
       expect(nested.code).toBe(0);
       expect(nested.stdout).toContain('Usage: dshenv web start');
+      // A group's own help command reaches a command below it, as the top-level one does.
+      const inGroup = await run(['plugins', 'help', 'config', 'set'], false);
+      expect(inGroup.code).toBe(0);
+      expect(inGroup.stdout).toContain('Usage: dshenv plugins config set');
       for (const args of [['web', 'start', '--help'], ['help', 'web'], ['plugins', 'config', 'set', '--help'], ['--version'], ['web', 'start', '-p', 'web', '--help']]) {
         expect((await run(args, false)).code, args.join(' ')).toBe(0);
       }

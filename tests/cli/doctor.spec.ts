@@ -306,6 +306,23 @@ exit 0
     }
   });
 
+  it('exits 4 too when DSH_CLI names a command PATH does not have, as a bare name or in a JSON array', async () => {
+    const oldDshCli = process.env.DSH_CLI;
+    try {
+      for (const value of ['nodsh-missing-cmd', '["nodsh-missing-cmd", "--flag"]']) {
+        process.env.DSH_CLI = value;
+        let stderr = '';
+        const code = await runCli(['doctor', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+        expect(code, value).toBe(4);
+        expect(stderr).toMatch(/DSH_CLI names was not found/);
+        expect(stderr).not.toContain('--flag');
+      }
+    } finally {
+      if (oldDshCli) process.env.DSH_CLI = oldDshCli;
+      else delete process.env.DSH_CLI;
+    }
+  });
+
   it('warns that it ignored an invalid manifest, whose harness settings it then cannot use', async () => {
     const oldDshCli = process.env.DSH_CLI;
     process.env.DSH_CLI = fakeDsh;
@@ -315,6 +332,14 @@ exit 0
     try {
       const code = await runCli(['doctor', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
       expect(code).toBe(0);
+      expect(stderr).toMatch(/manifest .* is invalid .*harness/);
+
+      // The same with an overlay selected, as pull and adopt leave one.
+      fs.mkdirSync(path.join(tempHome, 'envctl', 'overlays'), { recursive: true });
+      fs.writeFileSync(path.join(tempHome, 'envctl', 'overlays', 'local.yaml'), 'apiVersion: dshenv-overlay/v1\n');
+      stderr = '';
+      const withOverlay = await runCli(['doctor', '--overlay', 'local', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+      expect(withOverlay).toBe(0);
       expect(stderr).toMatch(/manifest .* is invalid .*harness/);
     } finally {
       if (oldDshCli) process.env.DSH_CLI = oldDshCli;

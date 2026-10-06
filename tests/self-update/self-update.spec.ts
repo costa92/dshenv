@@ -11,6 +11,7 @@ import {
   type RunResult,
   type Runner
 } from '../../src/self-update/self-update.js';
+import { ValidationError } from '../../src/errors.js';
 
 // A project's .npmrc in the directory dshenv was started from could point the global install at another registry.
 describe('defaultRunner', () => {
@@ -68,6 +69,15 @@ describe('self-update', () => {
       'npm view @costa92/dshenv@9.9.9 version --prefer-online': { exitCode: 1, stdout: '', stderr: 'npm error code E404\nmore' }
     });
     await expect(resolveTargetVersion(run, '9.9.9')).rejects.toThrow(/9\.9\.9 on the npm registry: E404$/);
+  });
+
+  it('reports a --to version npm does not have as a usage error, as install does', async () => {
+    const { run } = fakeRunner({
+      'npm view @costa92/dshenv@9.9.9 version --prefer-online': { exitCode: 1, stdout: '', stderr: 'npm error code E404\nnpm error 404 No match found for version 9.9.9' }
+    });
+    const err = await resolveTargetVersion(run, '9.9.9').catch((e: Error) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as Error).message).toBe('npm has no version 9.9.9 of @costa92/dshenv');
   });
 
   it.each([
