@@ -91,7 +91,7 @@ function commandUsage(cmd: Command): string {
 
 // commander answers help or --version for a command it does not know, at any level, with the parent's help or the
 // version and exit 0; without them it reports the unknown command (with a suggestion) as the usage error it is.
-// `help <group> <command>` shows that command's help, which commander's help command does not reach.
+// `help <group> <command>` and `<group> help <command>` show that command's help, which commander's help command does not reach.
 function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[] {
   const HELP = new Set(['--help', '-h']);
   const VERSION = new Set(['--version', '-v']);
@@ -106,7 +106,8 @@ function withoutHelpForUnknownCommand(program: Command, argv: string[]): string[
       if (valued && !arg.includes('=')) index++;
       continue;
     }
-    if (cmd === program && arg === 'help' && helpCommand === undefined) {
+    // Every group has commander's implicit help command, so `web help foo` reads as `help web foo` does.
+    if (arg === 'help' && helpCommand === undefined && cmd.commands.length > 0 && !(cmd.commands as Command[]).some((child) => child.name() === 'help')) {
       helpCommand = index;
       continue;
     }

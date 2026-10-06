@@ -6,6 +6,11 @@
 
 ### 修复
 
+- 子命令组里的 `help`（如 `dshenv plugins help config set`、`dshenv web help foo`）与顶层 `help` 一样：显示所指命令的帮助，未知命令以退出码 3 报错；此前显示的是上一级的帮助并以 0 结束。
+- `DSH_CLI` 指向 PATH 里没有的命令时以退出码 4（找不到 DSH）结束，与指向不存在的路径一致；此前退出码 5、只提示「probe execution failed」。
+- 选中 overlay 时 base 清单无效，`doctor` 也只警告并照常探测 DSH；此前直接以退出码 3 结束。
+- dsh web 已在运行时，`web start --port <另一个端口>` 以退出码 3 说明它在哪个端口、需先 `web stop`；此前静默返回原来的地址。
+- `self-update --to <npm 上没有的版本>` 以退出码 3 报「npm has no version …」，与 `install` 一致；此前退出码 1。
 - 被生效 overlay `remove: true` 去掉的插件，`enable`/`disable --layer base` 也在 stderr 提示这台机器上不会变（此前只有 `update`、`install` 提示）。
 - 插件别名不能以 `@` 开头；此前 `--as @mount:foo` 被接受，其受管块与 `foo` 的挂载块同名，apply 会删掉 `foo` 的挂载。
 - `install in-box:<包>` 在能从 DSH 安装位置找到该包时，拒绝不是 bundle 的包（退出码 3）；此前写进清单、apply 后 DSH 每次启动都跳过它，`plan` 却显示已同步。

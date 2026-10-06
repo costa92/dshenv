@@ -100,6 +100,13 @@ describe('CLI web', () => {
     expect(again.code).toBe(0);
     expect(again.stdout).toMatch(/^dsh web for profile web is already running \(pid \d+\)\n/);
     expect(again.stdout).toContain(`  URL: ${fake.url}\n`);
+
+    // Asked for another port, it says so rather than hand back the one it is on.
+    const port = Number(new URL(fake.url).port);
+    expect((await run(['web', 'start', '-p', 'web', '--port', String(port)])).code).toBe(0);
+    const other = await run(['web', 'start', '-p', 'web', '--port', String(port === 65000 ? 65001 : 65000)]);
+    expect(other.code).toBe(3);
+    expect(other.stderr).toContain(`dsh web for profile web is already running on port ${port}; stop it first (dshenv web stop -p web) to start it on port`);
   });
 
   it('lets runtime use the dsh web it started when DSHENV_DSH_URL is not set', async () => {

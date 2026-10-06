@@ -139,6 +139,12 @@ export function registerWebCommands(ctx: CommandContext): void {
         const current = readWebRecord(paths, profile);
         const state = current ? await dshWebState(current.pid, current.leaderStart) : 'stopped';
         if (current && state === 'running') {
+          const runningPort = new URL(current.url).port;
+          if (port !== 0 && runningPort !== '' && Number(runningPort) !== port) {
+            throw new ValidationError(
+              `dsh web for profile ${profile} is already running on port ${runningPort}; stop it first (dshenv web stop -p ${profile}) to start it on port ${port}`
+            );
+          }
           if (opts.json) {
             writeOut(JSON.stringify({ status: 'running', ...current, endpoint: endpointOf(current) }, null, 2) + '\n');
           } else {

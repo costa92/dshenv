@@ -109,6 +109,10 @@ export async function resolveTargetVersion(run: Runner, to?: string): Promise<st
     timeoutMs: LOOKUP_TIMEOUT_MS
   });
   const version = result.stdout.trim().split('\n').at(-1)?.trim().replace(/^'|'$/g, '') ?? '';
+  // Only a version the package lacks reads "No match found"; a registry or network failure stays a lookup failure.
+  if (to !== undefined && /\b404 No match found for version\b/.test(result.stderr)) {
+    throw new ValidationError(`npm has no version ${to} of ${PACKAGE_NAME}`);
+  }
   if (result.exitCode !== 0 || !ExactVersionRegex.test(version)) {
     throw new DshError(
       `Could not look up ${PACKAGE_NAME}@${to ?? 'latest'} on the npm registry: ${describeFailure(result, LOOKUP_TIMEOUT_MS)}`
