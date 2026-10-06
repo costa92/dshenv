@@ -9,6 +9,9 @@
 - 被生效 overlay `remove: true` 去掉的插件，`enable`/`disable --layer base` 也在 stderr 提示这台机器上不会变（此前只有 `update`、`install` 提示）。
 - 插件别名不能以 `@` 开头；此前 `--as @mount:foo` 被接受，其受管块与 `foo` 的挂载块同名，apply 会删掉 `foo` 的挂载。
 - `install in-box:<包>` 在能从 DSH 安装位置找到该包时，拒绝不是 bundle 的包（退出码 3）；此前写进清单、apply 后 DSH 每次启动都跳过它，`plan` 却显示已同步。
+- `purge` 被拒绝（软链接指向 DSH_HOME 之外）时不再留下空的 trash 目录和只有开始的 journal 记录。
+- 结束 DSH 子进程树时，没有 `ps`（如 slim 容器镜像）的 Linux 改从 `/proc` 找后代进程；此前只结束直接子进程，`pnpm --dir … dsh` 的孙进程留着管道，超时失效、环境锁一直被占。
+- `rollback` 与 `gc --dry-run` 的帮助说明按实际范围更正。
 
 ## 0.10.0 - 2026-10-06
 

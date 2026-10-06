@@ -100,7 +100,7 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
 
   program
     .command('rollback [operationId]')
-    .description('Restore the envctl files (manifest, lock, overlays) from an apply snapshot; apply then brings DSH in line')
+    .description('Restore the envctl files (manifest, lock, state, overlays, skills, remote.json) from a snapshot an apply, pull, remote add/sync or rollback took; apply then brings DSH in line')
     .option('--dry-run', 'show which snapshot would be restored; exit code 2')
     .option('-y, --yes', 'restore; without it rollback only previews, like --dry-run')
     .action(async (operationId: string | undefined, cmdOpts) => {
@@ -152,7 +152,7 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
     .command('gc')
     .description('Delete expired entries under envctl/trash, and expired snapshots beyond the newest 10 under envctl/backups')
     .option('--older-than <days>', 'delete trash and snapshots older than this many days', '7')
-    .option('--dry-run', 'list trash that would be deleted; exit code 2 when there is any')
+    .option('--dry-run', 'list the trash and snapshots that would be deleted; exit code 2 when there are any')
     .option('-y, --yes', 'delete it; without it gc only previews, like --dry-run')
     .action(async (cmdOpts) => {
       const opts = program.opts();
