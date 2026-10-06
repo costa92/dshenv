@@ -3,16 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execa } from 'execa';
-import { killProcessTree } from '../../src/io/process-tree.js';
-
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+import { killProcessTree, processAlive as alive } from '../../src/io/process-tree.js';
 
 describe.skipIf(process.platform === 'win32')('killProcessTree', () => {
   let dir: string;
