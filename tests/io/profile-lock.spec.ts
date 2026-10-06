@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { releaseProfileLockOfStopped, withProfilePackageLock } from '../../src/io/profile-lock.js';
 
 describe('withProfilePackageLock', () => {
@@ -101,5 +101,19 @@ describe('withProfilePackageLock', () => {
     fs.writeFileSync(lockPath, `${process.pid}\n`);
     await releaseProfileLockOfStopped(packageJson, [process.pid]);
     expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  // sh execs a sleep that never reaps the background child, as an init-less container's PID 1 would not.
+  it.skipIf(process.platform !== 'linux')('removes a lock whose stopped holder is a zombie no one reaps', async () => {
+    const parent = spawn('sh', ['-c', 'sleep 0.1 & echo $!; exec sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      const zombie = Number.parseInt(await new Promise<string>((resolve) => parent.stdout.once('data', (chunk) => resolve(String(chunk)))), 10);
+      await vi.waitFor(() => expect(fs.readFileSync(`/proc/${zombie}/stat`, 'utf8')).toMatch(/\) Z /), { timeout: 3000 });
+      fs.writeFileSync(lockPath, `${zombie}\n`);
+      await releaseProfileLockOfStopped(packageJson, [zombie]);
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      parent.kill('SIGKILL');
+    }
   });
 });

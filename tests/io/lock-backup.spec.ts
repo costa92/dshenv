@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -74,11 +75,44 @@ describe('Lock, Backup and Journal IO', () => {
     expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(1);
   });
 
+  it('takes over a lock naming its own pid that this process does not hold, as a restarted container leaves', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, hostname: os.hostname(), createdAt: '2026-01-01T00:00:00.000Z' }));
+    const handle = await acquireEnvironmentLock(paths, 200);
+    expect(fs.readFileSync(lockFile, 'utf8')).not.toContain('2026-01-01');
+    await handle.release();
+  });
+
+  it.skipIf(process.platform !== 'linux')('takes over a lock whose holder is a zombie no one reaps', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    const parent = spawn('sh', ['-c', 'sleep 0.1 & echo $!; exec sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      const zombie = Number.parseInt(await new Promise<string>((resolve) => parent.stdout.once('data', (chunk) => resolve(String(chunk)))), 10);
+      await vi.waitFor(() => expect(fs.readFileSync(`/proc/${zombie}/stat`, 'utf8')).toMatch(/\) Z /), { timeout: 3000 });
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: zombie, hostname: os.hostname() }));
+      const handle = await acquireEnvironmentLock(paths, 200);
+      await handle.release();
+    } finally {
+      parent.kill('SIGKILL');
+    }
+  });
+
+  it('names the holder of a lock it cannot take over, and how to clear it', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 999999, hostname: 'old-name.local', createdAt: '2026-01-01T00:00:00.000Z' }));
+    await expect(acquireEnvironmentLock(paths, 100)).rejects.toThrow(
+      `Environment lock is already held at ${lockFile} by pid 999999 on host old-name.local since 2026-01-01T00:00:00.000Z; if no dshenv process holds it any more (its pid was reused, or the host name changed), delete that file`
+    );
+  });
+
   it('should not judge a lock replaced between reading its age and its content by the old one\'s age', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const lockFile = path.join(paths.managerDir, 'dshenv.lock');
-    // An old lock whose holder is alive, so it is not stale itself.
-    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, hostname: os.hostname() }));
+    // An old lock whose holder is alive, so it is not stale itself; this process's own pid would read as a former run's.
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.ppid, hostname: os.hostname() }));
     const old = new Date(Date.now() - 60_000);
     fs.utimesSync(lockFile, old, old);
     // Its holder releases and another process creates a new lock it has not written yet.

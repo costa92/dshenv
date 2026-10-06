@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DshError } from '../errors.js';
+import { processAlive } from './process-tree.js';
 
 export interface ProfileLockOptions {
   timeoutMs?: number;
@@ -76,9 +77,7 @@ export async function releaseProfileLockOfStopped(packageJsonPath: string, stopp
   if (!stopped.includes(holder)) {
     return;
   }
-  try {
-    process.kill(holder, 0);
-  } catch {
+  if (!processAlive(holder)) {
     await fs.promises.rm(lockPath, { force: true });
   }
 }
