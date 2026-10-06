@@ -36,6 +36,7 @@ import { parseComposedProfile, pluginConfigKeys, pluginRow } from '../tools/cata
 import { readProfilePatchFile } from '../apply/patches.js';
 import { extractPluginBlocks } from '../patch/patch.js';
 import { dshInstallAnchor, inBoxBundleStatus } from '../dsh/in-box.js';
+import { supportedDshCommand } from './web.js';
 import { containsLocalPath } from '../profile-patches/entries.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { renderPluginTable } from '../output/render.js';
@@ -622,17 +623,18 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
   // The rows DSH composes for a profile, or why DSH cannot tell.
   async function composedRows(
     paths: EnvironmentPaths,
-    opts: { harnessSource?: string; overlay?: string | false },
+    opts: { harnessSource?: string; overlay?: string | false; allowUntestedDsh?: boolean },
     profile: string
   ): Promise<{ rows: ProfilePatch[] } | { reason: string }> {
     // dsh --dump-config creates a missing profile, which a manifest write must not do.
     if (!fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))) {
       return { reason: 'the profile does not exist yet' };
     }
-    const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
-    const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest.environment?.harness?.sourceDir });
-    if (!command) {
-      return { reason: 'DSH CLI was not found' };
+    let command;
+    try {
+      command = await supportedDshCommand(paths, opts);
+    } catch (err) {
+      return { reason: err instanceof Error ? err.message : String(err) };
     }
     const dump = await dumpProfileConfig(profile, { command, dshHome: paths.home });
     if (!dump.ok) {
@@ -743,15 +745,19 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes
         // now. That is the plugin's defaults only while no dshenv patch for it is in effect, the overlay's included.
         let seed: Record<string, unknown> | undefined;
-        // A patch id DSH has no row for is never applied, and a bundle names its rows apart from the alias.
-        const row = !declared.patches?.length && 'rows' in composed ? pluginRow(composed.rows, declared.package, alias) : undefined;
         // Apply skips a patch with enabled: false, so a key set there would never reach DSH.
         const active = declared.patches?.find((patch) => patch.enabled !== false);
         if (declared.patches?.length && !active) {
           throw disabledPatches(alias, profile);
         }
-        const patchId = active?.id ?? row?.id ?? alias;
-        if (patchId !== alias && row) {
+        // A patch id DSH has no row for is never applied, and a bundle names its rows apart from the alias: a new patch
+        // takes the row's id, and one keyed otherwise (written before DSH had the row, or by 0.9) is moved onto it.
+        const row = 'rows' in composed ? pluginRow(composed.rows, declared.package, active?.id ?? alias) : undefined;
+        const misnamed = active && row && row.id !== active.id ? active.id : undefined;
+        const patchId = row?.id ?? active?.id ?? alias;
+        if (misnamed) {
+          ctx.writeErr(`Patch '${misnamed}' of ${alias} matches no entry DSH loads; DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch now targets that id\n`);
+        } else if (!active && patchId !== alias) {
           ctx.writeErr(`DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch targets that id\n`);
         }
         const effective = loadEffectiveManifest(paths, selection).manifest.profiles[profile]?.plugins[alias];
@@ -765,7 +771,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           } else {
             seed = row?.config;
             if (!seed) {
-              unknown(`DSH has no config for ${declared.package} in profile '${profile}' yet`);
+              unknown(
+              `DSH has no config for ${declared.package} in profile '${profile}' yet`,
+              " To keep them: config unset it, apply, then config set it again, which also moves the patch onto the id DSH loads the plugin as, if a bundle names it apart from the alias"
+            );
             } else if (hasInterpolation(JSON.stringify(seed))) {
               seed = undefined;
               unknown(`The config DSH composes for ${declared.package} holds \${...}, which the manifest does not allow`, '');
@@ -782,12 +791,21 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         };
 
         const patch = overlay
-          ? await writeOverlay(paths, overlay, (doc) =>
-              restate(setOverlayPatchValue(doc, profile, alias, patchId, dottedPath, parseConfigValue(value)))
-            )
-          : await writeBase(paths, selection, (manifest) =>
-              restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value), patchId))
-            );
+          ? await writeOverlay(paths, overlay, (doc) => {
+              if (misnamed) {
+                const held = doc.profiles?.[profile]?.plugins?.[alias]?.patches?.find((patch) => patch.id === misnamed);
+                if (!held) {
+                  throw new ValidationError(`Patch '${misnamed}' of ${alias} is the base manifest's; move it onto '${patchId}' there first, with --layer base`);
+                }
+                held.id = patchId;
+              }
+              return restate(setOverlayPatchValue(doc, profile, alias, patchId, dottedPath, parseConfigValue(value)));
+            })
+          : await writeBase(paths, selection, (manifest) => {
+              const held = misnamed ? manifest.profiles[profile]?.plugins[alias]?.patches?.find((patch) => patch.id === misnamed) : undefined;
+              if (held) held.id = patchId;
+              return restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value), patchId));
+            });
 
         reportWrite(opts, overlay, 'set', { profile, alias, path: dottedPath, patch }, `Set ${alias} config ${dottedPath} in profile '${profile}'`);
         warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) => {

@@ -6,6 +6,10 @@
 
 ### 修复
 
+- `plugins config set` 发现插件已有的补丁 id 对不上 DSH 加载它的那一行时（apply 前写的、或 0.9.x 留下的），把补丁移到正确的 id 上并说明；在 overlay 里写而补丁属于 base 时以退出码 3 提示先用 `--layer base`。此前补丁永远不生效，`plan` 却显示已同步。
+- `tools config set` 写 base 时，base 已有这一条但没有自己的 config（如只做过 `disable`），同样不抄 overlay 补丁里的值或本机路径（退出码 3）。
+- `doctor` 选中的 overlay 无法与 base 合并时以退出码 3 报错（0.10.1 起被当作 base 无效、只警告）；`lock.json` 无效时在 stderr 警告。
+- `tools` 系列与 `plugins config set` 读取 DSH 组合配置前检查 DSH 版本：`tools` 遇到不支持的版本或找不到 DSH 时以退出码 4 结束（此前照用旧 DSH 的结果写清单，找不到时退出码 3），`config set` 不抄组合配置并说明原因。
 - `envctl/skills` 是软链接时，rollback 到没有 skills 的快照只删除链接本身；此前会把链接指向的外部目录（如 dotfiles 里的 skills，连同其中非 skill 的文件）整个删掉，且不进 trash。链接悬空时内容写回原目标并保留链接。
 - 旧写法 `tools config <tool> <路径> <值>` 带 `--help`、`--version`（或写成 `help tools config …`）时只显示帮助或版本；此前会真的写入清单并固定整个预设。
 - 团队配置里写成 `link:…`、`file:/…`、`workspace:…` 的 Git 地址按本机路径拒绝；此前被当成网络地址放行，pnpm 会把它当本地目录链接安装。

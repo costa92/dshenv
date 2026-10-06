@@ -25,6 +25,7 @@ import {
   type ToolTarget
 } from '../tools/catalog.js';
 import { resolveWrite, writeBase, writeOverlay } from './manifest-write.js';
+import { supportedDshCommand } from './web.js';
 import { profileNotCreatedError, resolveCliOverlay, resolveCliPaths, targetProfile, writeLayer, type CommandContext } from './context.js';
 
 const CATEGORY_TITLES: Record<ToolCategory, string> = {
@@ -57,10 +58,7 @@ async function composedProfile(paths: EnvironmentPaths, opts: CliOpts, profile: 
   if (!fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))) {
     throw profileNotCreatedError(paths, opts, profile);
   }
-  const manifestSource = fs.existsSync(paths.manifestFile)
-    ? loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest.environment?.harness?.sourceDir
-    : undefined;
-  const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifestSource });
+  const command = await supportedDshCommand(paths, opts);
   const dump = await dumpProfileConfig(profile, { command, dshHome: paths.home });
   if (!dump.ok) {
     throw new ValidationError(`Could not read profile '${profile}' from dsh --dump-config: ${dump.reason}`);
@@ -184,7 +182,7 @@ export function registerToolsCommands(ctx: CommandContext): void {
     }
     const livePatched = overlay
       ? []
-      : (readProfilePatchState(await readProfilePatchFile(paths, cmdOpts.profile), cmdOpts.profile).block?.entries ?? []).map(overrideKey);
+      : readProfilePatchState(await readProfilePatchFile(paths, cmdOpts.profile), cmdOpts.profile).block?.entries ?? [];
     // Built under the write lock from the layer written, so a concurrent edit of the same preset is kept and
     // a base write never takes in what the overlay declares. An overlay entry replaces the base one, so it starts from both.
     const patch = overlay
@@ -196,11 +194,14 @@ export function registerToolsCommands(ctx: CommandContext): void {
         })
       : await writeBase(paths, selection, (manifest) => {
           const profile = (manifest.profiles[cmdOpts.profile] ??= { plugins: {} });
-          // A new base entry starts from what DSH composes, which must hold nothing but DSH's own config.
-          const seeded = !profile.patches?.some((entry) => overrideKey(entry) === patchId);
-          if (seeded && livePatched.includes(patchId)) {
+          // A base entry starts from what DSH composes, which must hold nothing but DSH's own config: a new entry, or one
+          // with no config of its own (a disable) getting its first key, takes it from there.
+          const existing = profile.patches?.find((entry) => overrideKey(entry) === patchId);
+          const seeded = !existing || (existing.config === undefined && (toolChange.kind === 'set' || toolChange.kind === 'unset'));
+          const live = livePatched.find((entry) => overrideKey(entry) === patchId);
+          if (seeded && live && (!existing || live.config !== undefined)) {
             throw new ValidationError(
-              `What DSH composes in profile '${cmdOpts.profile}' holds a dshenv patch for '${patchId}' that the base manifest does not declare (an overlay applied, or an entry apply has not removed yet), so a base write would copy its values; use --layer overlay, or apply without it first`
+              `What DSH composes in profile '${cmdOpts.profile}' holds a dshenv patch for '${patchId}' whose config the base manifest does not declare (an overlay applied, or an entry apply has not removed yet), so a base write would copy its values; use --layer overlay, or apply without it first`
             );
           }
           const next = toolPatch(tree, profile.patches ?? [], target, toolChange);

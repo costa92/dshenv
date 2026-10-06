@@ -312,7 +312,7 @@ describe('CLI manifest write commands', () => {
       const fakeDsh = path.join(tempHome, 'fake-dsh.mjs');
       fs.writeFileSync(
         fakeDsh,
-        `if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    taskPlanning: auto\n    team: {}\n`)}); process.exit(0); }\nprocess.exit(1);\n`
+        `if (process.argv.includes('--version')) { console.log('0.1.7-rc.2'); process.exit(0); } if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    taskPlanning: auto\n    team: {}\n`)}); process.exit(0); }\nprocess.exit(1);\n`
       );
       process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
       // DSH composes only the keys that have defaults, so a key it does not show can still be real.
@@ -329,7 +329,7 @@ describe('CLI manifest write commands', () => {
     describe('copies the config DSH composes into a new patch, since DSH replaces the whole config with it', () => {
       const fakeDump = (rows: string) => {
         const fakeDsh = path.join(tempHome, 'fake-dsh.mjs');
-        fs.writeFileSync(fakeDsh, `if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(rows)}); process.exit(0); }\nprocess.exit(1);\n`);
+        fs.writeFileSync(fakeDsh, `if (process.argv.includes('--version')) { console.log('0.1.7-rc.2'); process.exit(0); } if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(rows)}); process.exit(0); }\nprocess.exit(1);\n`);
         process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
       };
       const ROW = `- id: agent-teams\n  name: '${PKG}'\n  config:\n    stateDir: .agent-teams\n    memberProvider: spawn\n    when: !!js 'ctx.ready'\n`;
@@ -362,6 +362,28 @@ describe('CLI manifest write commands', () => {
         expect((await run(['config', 'unset', 'agent-teams', 'stateDir', '-p', 'web', '--layer', 'base'])).code).toBe(0);
         expect((await run(['config', 'set', 'agent-teams', 'stateDir', '.ov', '-p', 'web', '--layer', 'overlay'])).code).toBe(0);
         expect(overlay('laptop').profiles?.web?.plugins?.['agent-teams'].patches).toEqual([{ id: 'teams-row', config: { stateDir: '.ov' } }]);
+      });
+
+      it('moves a patch keyed by an id DSH has no entry for onto the one it loads the plugin as', async () => {
+        const file = path.join(tempHome, 'envctl', 'manifest.yaml');
+        const doc = parseYaml(fs.readFileSync(file, 'utf8'));
+        doc.profiles.web.plugins['agent-teams'].patches = [{ id: 'agent-teams', config: { stateDir: '.sd' } }];
+        fs.writeFileSync(file, stringifyYaml(doc));
+        fakeDump(`- id: teams-row\n  name: '${PKG}'\n  config:\n    stateDir: .agent-teams\n`);
+        const out = await run(['config', 'set', 'agent-teams', 'memberProvider', 'fork', '-p', 'web', '--force']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toBe(
+          `Patch 'agent-teams' of agent-teams matches no entry DSH loads; DSH loads ${PKG} in profile 'web' as 'teams-row', so the patch now targets that id\n`
+        );
+        expect(manifest().profiles.web.plugins['agent-teams'].patches).toEqual([{ id: 'teams-row', config: { stateDir: '.sd', memberProvider: 'fork' } }]);
+
+        // An overlay cannot move the base's patch.
+        useOverlay('laptop');
+        doc.profiles.web.plugins['agent-teams'].patches = [{ id: 'agent-teams', config: { stateDir: '.sd' } }];
+        fs.writeFileSync(file, stringifyYaml(doc));
+        const refused = await run(['config', 'set', 'agent-teams', 'memberProvider', 'fork', '-p', 'web', '--layer', 'overlay', '--force']);
+        expect(refused.code).toBe(3);
+        expect(refused.stderr).toMatch(/Patch 'agent-teams' of agent-teams is the base manifest's; move it onto 'teams-row' there first, with --layer base/);
       });
 
       it('in the overlay', async () => {
@@ -400,7 +422,7 @@ describe('CLI manifest write commands', () => {
 
       it('says why it could not copy the config when DSH cannot tell', async () => {
         const failing = path.join(tempHome, 'failing-dsh.mjs');
-        fs.writeFileSync(failing, 'process.exit(1);\n');
+        fs.writeFileSync(failing, "if (process.argv.includes('--version')) { console.log('0.1.7-rc.2'); process.exit(0); }\nprocess.exit(1);\n");
         process.env.DSH_CLI = JSON.stringify([process.execPath, failing]);
         const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
         expect(out.code).toBe(0);
@@ -423,7 +445,7 @@ describe('CLI manifest write commands', () => {
         const out = await run(['config', 'set', 'agent-teams', 'stateDir', '.sd', '-p', 'web']);
         expect(out.code).toBe(0);
         expect(out.stderr).toBe(
-          `DSH has no config for ${PKG} in profile 'web' yet, so the patch holds only stateDir; DSH replaces the plugin's whole config with it, dropping its defaults. To keep them: config unset it, apply, then config set it again\n`
+          `DSH has no config for ${PKG} in profile 'web' yet, so the patch holds only stateDir; DSH replaces the plugin's whole config with it, dropping its defaults. To keep them: config unset it, apply, then config set it again, which also moves the patch onto the id DSH loads the plugin as, if a bundle names it apart from the alias\n`
         );
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
       });

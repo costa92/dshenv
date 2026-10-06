@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { CapabilityError, DshError, ValidationError } from '../errors.js';
-import { probeDsh, resolveDshCommand } from '../dsh/command.js';
+import { probeDsh, resolveDshCommand, type CommandSpec } from '../dsh/command.js';
 import { capabilitiesFor } from '../dsh/capabilities.js';
 import { unsupportedDshVersionMessage } from '../dsh/version.js';
 import { DSH_WEB_START_TIMEOUT_MS, dshWebState, launchDshWeb, stopProcessGroup, type DshWebState } from '../dsh/web-server.js';
@@ -60,15 +60,30 @@ export async function dshWebCommand(paths: EnvironmentPaths, opts: CliOpts, prof
   assertServesWeb(paths, profile);
   const command = resolveCliDshCommand(paths, opts);
   if (command) {
-    const allowUntested = Boolean(opts.allowUntestedDsh) || Boolean(
-      fs.existsSync(paths.manifestFile) &&
-        loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest.environment?.harness?.allowUntestedVersion
-    );
-    const { version } = await probeDsh(command);
-    if (capabilitiesFor(version, { allowUntested }).discovery.status !== 'available') {
-      throw new CapabilityError(unsupportedDshVersionMessage(version));
-    }
+    await assertSupportedDshVersion(paths, opts, command);
   }
+  return command;
+}
+
+async function assertSupportedDshVersion(paths: EnvironmentPaths, opts: CliOpts, command: CommandSpec): Promise<void> {
+  const allowUntested = Boolean(opts.allowUntestedDsh) || Boolean(
+    fs.existsSync(paths.manifestFile) &&
+      loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest.environment?.harness?.allowUntestedVersion
+  );
+  const { version } = await probeDsh(command);
+  if (capabilitiesFor(version, { allowUntested }).discovery.status !== 'available') {
+    throw new CapabilityError(unsupportedDshVersionMessage(version));
+  }
+}
+
+// The DSH to read a profile's composed config from: one dshenv supports, as apply and web start require, since an older
+// DSH composes another tree and a write built from it would be wrong.
+export async function supportedDshCommand(paths: EnvironmentPaths, opts: CliOpts): Promise<CommandSpec> {
+  const command = resolveCliDshCommand(paths, opts);
+  if (!command) {
+    throw new CapabilityError('DSH CLI was not found: set DSH_CLI, pass --harness-source, or put dsh on PATH');
+  }
+  await assertSupportedDshVersion(paths, opts, command);
   return command;
 }
 
