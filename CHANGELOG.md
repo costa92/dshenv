@@ -4,6 +4,12 @@
 
 ## 未发布
 
+### 修复
+
+- 被生效 overlay `remove: true` 去掉的插件，`enable`/`disable --layer base` 也在 stderr 提示这台机器上不会变（此前只有 `update`、`install` 提示）。
+- 插件别名不能以 `@` 开头；此前 `--as @mount:foo` 被接受，其受管块与 `foo` 的挂载块同名，apply 会删掉 `foo` 的挂载。
+- `install in-box:<包>` 在能从 DSH 安装位置找到该包时，拒绝不是 bundle 的包（退出码 3）；此前写进清单、apply 后 DSH 每次启动都跳过它，`plan` 却显示已同步。
+
 ## 0.10.0 - 2026-10-06
 
 ### 升级须知
