@@ -264,6 +264,11 @@ function comparableGitUrl(url: string): string {
   return url.trim().replace(/^git\+/, '').replace(/^file:\/\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
 }
 
+// Whether two spellings of a git URL (git+ prefix, trailing slash, .git suffix) name the same repository.
+export function sameGitUrl(a: string, b: string): boolean {
+  return comparableGitUrl(a) === comparableGitUrl(b);
+}
+
 // A lock pins what the declared URL serves, so the checkout must come from that repository and its commit be pushed there.
 export async function assertCheckoutServes(repoDir: string, declaredUrl: string): Promise<void> {
   const origin = await execa('git', ['remote', 'get-url', 'origin'], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });

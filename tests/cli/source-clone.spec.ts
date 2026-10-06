@@ -309,6 +309,17 @@ describe('CLI source clone --profile', () => {
       expect(cloneHead.stdout.trim()).toBe(pinned);
     });
 
+    it('keeps the pinned commit and the manifest URL when the clone spells the same repository differently', async () => {
+      const url = `file://${upstream}`;
+      const pinned = (await execa('git', ['rev-parse', 'HEAD'], { cwd: upstream })).stdout.trim();
+      expect((await run(['install', `git+${url}#${pinned}`, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      await commit('newer.txt');
+
+      expect(await run(['source', 'clone', `${url}/`, '--profile', 'web', '--as', 'demo'])).toEqual({ code: 0, stderr: '' });
+      expect(loadManifest(fs.readFileSync(manifestFile(), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url, commit: pinned });
+      expect(loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url, commit: pinned });
+    });
+
     it('clones the ref the manifest declares and keeps it declared', async () => {
       const url = `file://${upstream}`;
       await execa('git', ['checkout', '-q', '-b', 'feature'], { cwd: upstream });
