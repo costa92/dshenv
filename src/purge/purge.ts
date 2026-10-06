@@ -147,6 +147,14 @@ async function purgeDecided(
     };
   }
 
+  // Both are checked before anything is written, so a refusal leaves everything as it was, trash and journal included.
+  if (hasPatchFile) {
+    await assertSafeManagedPath(patchFile, paths.profilesDir);
+  }
+  if (hasClone) {
+    await assertSafeManagedPath(cloneDir, paths.managerDir);
+  }
+
   const operationId = `purge-${Date.now().toString(16)}`;
   const trashRoot = path.join(paths.trashDir, operationId);
   await fs.promises.mkdir(trashRoot, { recursive: true });
@@ -156,14 +164,6 @@ async function purgeDecided(
     timestamp: new Date().toISOString(),
     details: { profile: profileName, package: owned.packageName }
   });
-
-  // Both are checked before either changes, so a refusal leaves everything as it was.
-  if (hasPatchFile) {
-    await assertSafeManagedPath(patchFile, paths.profilesDir);
-  }
-  if (hasClone) {
-    await assertSafeManagedPath(cloneDir, paths.managerDir);
-  }
 
   let restorePatches: (() => Promise<void>) | null = null;
   if (hasPatchFile) {

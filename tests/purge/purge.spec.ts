@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { readJournalEntries } from '../../src/io/journal.js';
 import { purgePlugin } from '../../src/purge/purge.js';
 import { applyEnvironment } from '../../src/apply/apply.js';
 import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
@@ -237,6 +238,9 @@ profiles:
       expect(fs.readFileSync(path.join(outsideClone, 'keep.txt'), 'utf8')).toBe('keep');
       // Checked before the patch block is stripped, so a refused clone leaves the patch alone.
       expect(fs.readFileSync(patchFile, 'utf8')).toBe(patched);
+      // A refusal starts no purge: no trash directory, no journal entry without its end.
+      expect(fs.existsSync(paths.trashDir) ? fs.readdirSync(paths.trashDir).filter((name) => name.startsWith('purge-')) : []).toEqual([]);
+      expect((await readJournalEntries(paths)).filter((entry) => entry.type === 'purge-started')).toEqual([]);
     } finally {
       fs.rmSync(outside, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }

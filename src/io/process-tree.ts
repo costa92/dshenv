@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { execa, execaSync } from 'execa';
 
 const FORCE_KILL_AFTER_MS = 5000;
@@ -56,11 +57,31 @@ export async function awaitWithTreeTimeout<T>(
   }
 }
 
-function descendantsOf(root: number): number[] {
+// [pid, ppid] of every process: from ps, else (a slim container image has no ps) from /proc on Linux.
+function processTable(): Array<[number, number]> {
   const res = execaSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid='], { reject: false });
+  if (res.exitCode === 0) {
+    return String(res.stdout ?? '')
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/).map(Number) as [number, number]);
+  }
+  const table: Array<[number, number]> = [];
+  for (const entry of fs.existsSync('/proc') ? fs.readdirSync('/proc') : []) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = fs.readFileSync(`/proc/${entry}/stat`, 'utf8');
+      // The command name may hold spaces and parentheses; the state and ppid follow its last ')'.
+      table.push([Number(entry), Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1])]);
+    } catch {
+      // exited meanwhile
+    }
+  }
+  return table;
+}
+
+function descendantsOf(root: number): number[] {
   const children = new Map<number, number[]>();
-  for (const line of String(res.stdout ?? '').split('\n')) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+  for (const [pid, ppid] of processTable()) {
     if (Number.isInteger(pid) && Number.isInteger(ppid)) {
       children.set(ppid, [...(children.get(ppid) ?? []), pid]);
     }
