@@ -540,6 +540,8 @@ dshenv disable agent-teams -p web                               # enable 反之
 dshenv remove agent-teams -p web
 ```
 
+`install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。插件别名不能以 `@` 开头（dshenv 自己的补丁块用 `@profile`、`@mount:<别名>`）。
+
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
 - 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。skill 总是算整个目录，不看 `files`。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。

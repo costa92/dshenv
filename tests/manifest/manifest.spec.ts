@@ -171,5 +171,8 @@ profiles:
     expect(() =>
       loadManifest('apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      "@profile":\n        package: p\n        source: { type: in-box }\n')
     ).toThrow(/Plugin alias is reserved/);
+    expect(() =>
+      loadManifest('apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      "@mount:foo":\n        package: p\n        source: { type: in-box }\n')
+    ).toThrow(/Plugin alias must not start with '@'/);
   });
 });

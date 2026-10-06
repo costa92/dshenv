@@ -126,7 +126,9 @@ export const ProfileNameKeySchema = z
 export const PluginAliasSchema = z
   .string()
   .regex(/^\S+$/, { message: 'Plugin alias must not contain whitespace' })
-  .refine((name) => notReserved(name) && name !== PROFILE_PATCHES_ALIAS, { message: 'Plugin alias is reserved' });
+  .refine((name) => notReserved(name) && name !== PROFILE_PATCHES_ALIAS, { message: 'Plugin alias is reserved' })
+  // dshenv names its own patch blocks @profile and @mount:<alias>; an alias like them would share their markers.
+  .refine((name) => !name.startsWith('@'), { message: "Plugin alias must not start with '@'" });
 
 export const PatchEntrySchema = z
   .object({

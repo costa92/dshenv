@@ -354,4 +354,12 @@ warnings: []
     const pinned = await run(['install', 'shared-plugin@2.0.0', '--as', 'shared', '--profile', 'web', '--layer', 'base', '--no-npm-check']);
     expect(pinned.stderr).toBe("Overlay 'laptop' sets the source of shared in profile 'web', so it stays at 1.9.0 on this machine; use --layer overlay to change it here\n");
   });
+
+  it('warns when the overlay removes a plugin a base enable or disable changes', async () => {
+    for (const verb of ['disable', 'enable']) {
+      const out = await run([verb, 'heavy', '--profile', 'web', '--layer', 'base']);
+      expect(out.code).toBe(0);
+      expect(out.stderr).toBe("Overlay 'laptop' sets remove: true for heavy in profile 'web', so it stays uninstalled on this machine; use --layer overlay to change it here\n");
+    }
+  });
 });

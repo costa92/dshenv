@@ -35,6 +35,7 @@ import { dumpProfileConfig } from '../dsh/hmr.js';
 import { parseComposedProfile, pluginConfigKeys, pluginRow } from '../tools/catalog.js';
 import { readProfilePatchFile } from '../apply/patches.js';
 import { extractPluginBlocks } from '../patch/patch.js';
+import { dshInstallAnchor, inBoxBundleStatus } from '../dsh/in-box.js';
 import { containsLocalPath } from '../profile-patches/entries.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { renderPluginTable } from '../output/render.js';
@@ -332,14 +333,39 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     return loadLock(fs.readFileSync(paths.lockFile, 'utf8')).profiles[profile]?.plugins[alias]?.source.type === 'npm';
   }
 
+  // DSH skips a profile bundle whose package.json has no dsh.bundle, at every start, while plan reports it in sync.
+  function assertInBoxBundle(
+    paths: EnvironmentPaths,
+    opts: { overlay?: string | false; harnessSource?: string },
+    parsed: { packageName: string; source: PluginSource }
+  ): void {
+    if (parsed.source.type !== 'in-box') {
+      return;
+    }
+    let command;
+    try {
+      const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
+      command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest.environment?.harness?.sourceDir });
+    } catch {
+      return;
+    }
+    const anchor = command ? dshInstallAnchor(command) : null;
+    if (anchor && inBoxBundleStatus(anchor, parsed.packageName) === false) {
+      throw new ValidationError(
+        `${parsed.packageName} ships with DSH but is not a bundle (its package.json has no dsh.bundle), so DSH would skip it in the profile bundles; in-box takes only the bundles DSH ships`
+      );
+    }
+  }
+
   async function installPlugin(
-    opts: { dshHome?: string; overlay?: string | false; json?: boolean },
+    opts: { dshHome?: string; overlay?: string | false; json?: boolean; harnessSource?: string },
     request: InstallPluginRequest
   ): Promise<InstallPluginResult> {
     const paths = resolveCliPaths(opts);
     const { profile } = request;
     const { selection, overlay } = resolveWrite(opts, paths, request.layer);
     assertKnownProfile(paths, opts, profile, request.newProfile);
+    assertInBoxBundle(paths, opts, parsePluginSpec(request.spec, request.alias, request.packageName));
     const npmCheck = await checkNpmSpec(opts, parsePluginSpec(request.spec, request.alias, request.packageName), request.npmCheck);
 
     let previousSource: PluginSource | undefined;
@@ -856,12 +882,11 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             unchanged
           );
           // The overlay's value wins on this machine, so the base write alone changes nothing here.
-          const overridden = !overlay && selection ? readOverlay(paths, selection.name).profiles?.[profile]?.plugins?.[alias]?.enabled : undefined;
-          if (overridden !== undefined && overridden !== toggle.enabled && !opts.json) {
-            ctx.writeErr(
-              `Overlay '${selection!.name}' sets enabled: ${overridden} for ${alias} in profile '${profile}', so it stays ${overridden ? 'enabled' : 'disabled'} on this machine; use --layer overlay to change it here\n`
-            );
-          }
+          warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) =>
+            entry.enabled !== undefined && entry.enabled !== toggle.enabled
+              ? `enabled: ${entry.enabled} for ${alias} in profile '${profile}', so it stays ${entry.enabled ? 'enabled' : 'disabled'}`
+              : undefined
+          );
         });
     }
   }
