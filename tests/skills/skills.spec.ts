@@ -85,6 +85,17 @@ describe('skill files', () => {
     expect(inventory.declared.tool).not.toBe(inventory.live.tool);
   });
 
+  it.skipIf(process.platform === 'win32')('tells a skill whose script lost its executable bit from one that kept it', async () => {
+    for (const dir of [paths.skillsDir, paths.dshSkillsDir]) {
+      write(path.join(dir, 'tool', 'SKILL.md'), '# tool');
+      write(path.join(dir, 'tool', 'run.sh'), 'echo hi');
+    }
+    fs.chmodSync(path.join(paths.skillsDir, 'tool', 'run.sh'), 0o755);
+    fs.chmodSync(path.join(paths.dshSkillsDir, 'tool', 'run.sh'), 0o644);
+    const inventory = await readSkillInventory(paths);
+    expect(inventory.declared.tool).not.toBe(inventory.live.tool);
+  });
+
   it('does not take a node_modules directory for a skill', async () => {
     write(path.join(paths.dshSkillsDir, 'node_modules', 'dep', 'package.json'), '{}');
     write(path.join(paths.skillsDir, 'node_modules', 'dep', 'package.json'), '{}');

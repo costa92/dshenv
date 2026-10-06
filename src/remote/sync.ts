@@ -132,14 +132,37 @@ function holdsOnlyOwnedFiles(dir: string, key: string, owned: Record<string, str
     });
 }
 
-function computeChanges(paths: EnvironmentPaths, owned: Record<string, string>, next: Record<string, string>): RemoteFileChanges {
+// A write keeps the mode of the file it replaces, so Git's executable bit is applied both ways.
+async function applyExecutableBit(file: string, executable: boolean): Promise<void> {
+  const mode = (await fs.promises.stat(file)).mode & 0o777;
+  const next = executable ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
+  if (next !== mode) {
+    await fs.promises.chmod(file, next);
+  }
+}
+
+// Git records only whether a file is executable; Windows has no such bit to compare.
+function executableDiffers(file: string, executable: boolean): boolean {
+  return process.platform !== 'win32' && fs.existsSync(file) && ((fs.statSync(file).mode & 0o111) !== 0) !== executable;
+}
+
+function computeChanges(
+  paths: EnvironmentPaths,
+  owned: Record<string, string>,
+  next: Record<string, string>,
+  executables: string[]
+): RemoteFileChanges {
   const added: string[] = [];
   const modified: string[] = [];
   const removed: string[] = [];
   for (const key of Object.keys(next).sort(compareRemoteKeys)) {
     if (!Object.hasOwn(owned, key)) {
       added.push(key);
-    } else if (owned[key] !== next[key] || localFileDigest(remoteFilePath(paths, key)) !== next[key]) {
+    } else if (
+      owned[key] !== next[key] ||
+      localFileDigest(remoteFilePath(paths, key)) !== next[key] ||
+      executableDiffers(remoteFilePath(paths, key), executables.includes(key))
+    ) {
       // The second test catches owned files changed locally, which only get here with --discard-local-changes.
       modified.push(key);
     }
@@ -209,6 +232,7 @@ async function declaredSkillsAfter(paths: EnvironmentPaths, snapshot: RemoteSnap
       } else {
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
         await fs.promises.writeFile(file, snapshot.files[key]);
+        await applyExecutableBit(file, snapshot.executables.includes(key));
       }
     }
     const after = await readSkillDigests(scratch);
@@ -245,6 +269,11 @@ export async function prepareSync(input: PrepareSyncInput): Promise<SyncPreview>
     await assertNoUnfinishedSync(paths);
   }
   if (previous && previous.commit !== target && !(await isAncestor(repoDir, previous.commit, target))) {
+    if (await isAncestor(repoDir, target, previous.commit)) {
+      throw new ValidationError(
+        `Remote commit ${target} is older than the pinned commit ${previous.commit}; sync only moves forward, so go back with dshenv rollback <snapshot id> --yes`
+      );
+    }
     throw new ValidationError(
       `Remote commit ${target} does not descend from the pinned commit ${previous.commit}; the remote history was rewritten or the ref is not on the subscribed history`
     );
@@ -255,7 +284,7 @@ export async function prepareSync(input: PrepareSyncInput): Promise<SyncPreview>
   assertNoConflicts(input, snapshot, localLock);
 
   const ownedEntries = previous?.lockEntries ?? {};
-  const files = computeChanges(paths, previous?.files ?? {}, snapshot.digests);
+  const files = computeChanges(paths, previous?.files ?? {}, snapshot.digests, snapshot.executables);
   // Later commands fall back to the overlay saved as selected, so a sync run with --no-overlay must not delete it either.
   const saved = readSelectionFile(paths);
   if (saved !== null && saved !== input.selection?.name && files.removed.includes(`overlays/${saved}.yaml`)) {
@@ -321,12 +350,7 @@ export async function acceptSync(paths: EnvironmentPaths, preview: SyncPreview):
         created.push(file);
       }
       await writeAtomic(file, preview.snapshot.files[key], 'overwrite');
-      // writeAtomic keeps the mode of a file it replaces, so Git's executable bit is applied both ways.
-      const mode = (await fs.promises.stat(file)).mode & 0o777;
-      const next = preview.snapshot.executables.includes(key) ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
-      if (next !== mode) {
-        await fs.promises.chmod(file, next);
-      }
+      await applyExecutableBit(file, preview.snapshot.executables.includes(key));
     }
     // Local entries are untouched by the merge, so the lock is only rewritten when a team entry changes.
     if (preview.lock && hasChanges(preview.lockEntries)) {

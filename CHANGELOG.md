@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 团队提交只改了可执行位时，`remote sync` 也会同步，skill 摘要同样计入可执行位，改动会一直到 DSH 里的副本；此前显示「Files: no changes」，副本一直不可执行。（升级后 `envctl/skills` 与 DSH 副本只差可执行位的 skill 会在 `plan` 中列为更新。）
+- `remote sync --ref <同一分支上更旧的 commit>` 说明它比固定的 commit 旧、要退回请用 `rollback`；此前报成「历史被改写」。
 - 子命令组里的 `help`（如 `dshenv plugins help config set`、`dshenv web help foo`）与顶层 `help` 一样：显示所指命令的帮助，未知命令以退出码 3 报错；此前显示的是上一级的帮助并以 0 结束。
 - `DSH_CLI` 指向 PATH 里没有的命令时以退出码 4（找不到 DSH）结束，与指向不存在的路径一致；此前退出码 5、只提示「probe execution failed」。
 - 选中 overlay 时 base 清单无效，`doctor` 也只警告并照常探测 DSH；此前直接以退出码 3 结束。
