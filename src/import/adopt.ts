@@ -27,6 +27,7 @@ import { writeAtomic } from '../io/atomic-file.js';
 import { ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { freeAlias, isSameCommit, pluginOwnershipRecord } from '../resources/plugin.js';
+import { sameGitUrl } from '../source/git.js';
 
 export interface AdoptDetail {
   profile: string;
@@ -252,7 +253,7 @@ async function adoptUnderLock(
       const withPatches = plugin.patches === undefined && existingPatches ? { ...plugin, patches: existingPatches } : plugin;
       // Capture reads only the URL of a git install, so the ref or commit the base pins stays, moved to what is installed.
       const capturedCommit = candLockProf[candidateAlias]?.source;
-      const pinned = existingEntry?.source.type === 'git' && plugin.source.type === 'git' && existingEntry.source.url === plugin.source.url
+      const pinned = existingEntry?.source.type === 'git' && plugin.source.type === 'git' && sameGitUrl(existingEntry.source.url, plugin.source.url)
         ? existingEntry.source
         : undefined;
       const liveCommit = capturedCommit?.type === 'git' ? capturedCommit.commit : undefined;
@@ -269,7 +270,9 @@ async function adoptUnderLock(
       }
       mergedManifest.profiles[profileName].plugins[alias] = entry;
 
-      const capturedLock = candLockProf[candidateAlias];
+      const captured = candLockProf[candidateAlias];
+      // The lock pins a git commit only under the URL spelling the manifest declares.
+      const capturedLock = pinned && captured?.source.type === 'git' ? { ...captured, source: { ...captured.source, url: pinned.url } } : captured;
       const lockEntry = capturedLock && keepDigest(mergedLock.profiles[profileName].plugins[alias], capturedLock);
       const alreadyAdopted =
         existingEntry !== undefined &&

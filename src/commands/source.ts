@@ -10,6 +10,7 @@ import {
   managedGitSourceDir,
   packageNameFromGitUrl,
   normalizeGitUrl,
+  sameGitUrl,
   checkoutCommit,
   assertCheckoutServes,
   assertCommitOnOrigin
@@ -46,7 +47,7 @@ function declaredGitSource(
     ? loadEffectiveManifest(paths, selection).manifest
     : loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
   const source = manifest.profiles[profile]?.plugins[alias]?.source;
-  return source?.type === 'git' && source.url === url ? source : undefined;
+  return source?.type === 'git' && sameGitUrl(source.url, url) ? source : undefined;
 }
 
 function overlaySuffix(name: string): string {
@@ -188,7 +189,8 @@ export function registerSourceCommands(ctx: CommandContext): void {
           }
           res = { commit };
         }
-        const source: PluginSource = { type: 'git', url, ...(pinned !== undefined ? { commit: pinned } : ref !== undefined ? { ref } : {}) };
+        // The manifest keeps its own spelling of the URL, which the lock must match.
+        const source: PluginSource = { type: 'git', url: declared?.url ?? url, ...(pinned !== undefined ? { commit: pinned } : ref !== undefined ? { ref } : {}) };
 
         if (cmdOpts.profile) {
           const profile: string = cmdOpts.profile;
@@ -196,7 +198,7 @@ export function registerSourceCommands(ctx: CommandContext): void {
           let writeManifest: () => Promise<void>;
           const base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
           // install names a git plugin after its repository, not knowing its package.json; the clone does know it.
-          const sameRepository = (declaredSource: PluginSource | undefined) => declaredSource?.type === 'git' && declaredSource.url === url;
+          const sameRepository = (declaredSource: PluginSource | undefined) => declaredSource?.type === 'git' && sameGitUrl(declaredSource.url, url);
           // Replacing the entry would drop the other package's patches and enabled state without a word.
           const aliasTaken = (current: string) => new ValidationError(
             `Alias '${alias}' is '${current}' in profile '${profile}'; clone '${packageName}' under another alias with --as <alias>, or remove '${alias}' first`
@@ -267,7 +269,7 @@ export function registerSourceCommands(ctx: CommandContext): void {
           }
           lock.profiles[profile].plugins[alias] = {
             package: packageName,
-            source: { type: 'git', url, commit: res.commit }
+            source: { type: 'git', url: source.url, commit: res.commit }
           };
           await writeAtomic(paths.lockFile, serializeLock(lock), 'overwrite');
         }

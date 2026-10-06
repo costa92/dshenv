@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 再次 `adopt` 由 dshenv 安装的 git 插件时，保留 base 声明的 `ref`/`commit` 和 URL 写法；此前 DSH 里记的 URL 带 `git+` 前缀，与清单对不上，`ref`/`commit` 被丢掉、URL 被改写。
+- `source clone --profile` 用另一种写法（结尾的 `/`、`.git` 有无、`git+` 前缀）指向清单里的同一个仓库时，仍克隆并锁定清单固定的 commit，清单与 lock 沿用清单的 URL 写法；此前会悄悄删掉固定的 commit，lock 锁到最新提交。
 - Windows 上 `DSH_CLI` 指向 PATH 里没有的命令时也以退出码 4 结束（此前为 5）：命令名先按 PATH 与 PATHEXT 查找。
 - `plugins config set` 发现插件已有的补丁 id 对不上 DSH 加载它的那一行时（apply 前写的、或 0.9.x 留下的），把补丁移到正确的 id 上并说明；在 overlay 里写而补丁属于 base 时以退出码 3 提示先用 `--layer base`。此前补丁永远不生效，`plan` 却显示已同步。
 - `tools config set` 写 base 时，base 已有这一条但没有自己的 config（如只做过 `disable`），同样不抄 overlay 补丁里的值或本机路径（退出码 3）。
