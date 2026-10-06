@@ -6,6 +6,7 @@
 
 ### 修复
 
+- Windows 上 `DSH_CLI` 指向 PATH 里没有的命令时也以退出码 4 结束（此前为 5）：命令名先按 PATH 与 PATHEXT 查找。
 - `plugins config set` 发现插件已有的补丁 id 对不上 DSH 加载它的那一行时（apply 前写的、或 0.9.x 留下的），把补丁移到正确的 id 上并说明；在 overlay 里写而补丁属于 base 时以退出码 3 提示先用 `--layer base`。此前补丁永远不生效，`plan` 却显示已同步。
 - `tools config set` 写 base 时，base 已有这一条但没有自己的 config（如只做过 `disable`），同样不抄 overlay 补丁里的值或本机路径（退出码 3）。
 - `doctor` 选中的 overlay 无法与 base 合并时以退出码 3 报错（0.10.1 起被当作 base 无效、只警告）；`lock.json` 无效时在 stderr 警告。

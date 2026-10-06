@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { findOnPath } from '../../src/dsh/command.js';
+import { CapabilityError } from '../../src/errors.js';
 import {
   resolveDshCommand,
   probeDsh,
@@ -56,6 +57,12 @@ setInterval(() => {}, 1000);
 });
 
 describe('resolveDshCommand', () => {
+  it('reports a command PATH does not have as no DSH (exit 4) on every platform', async () => {
+    const err = await probeDsh({ file: 'nodsh-missing-cmd', args: [] }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(CapabilityError);
+    expect((err as Error).message).toBe('The DSH CLI that DSH_CLI names was not found');
+  });
+
   it('should parse DSH_CLI as JSON array if formatted as array', () => {
     const cmd = resolveDshCommand({
       envDshCli: '["node", "/path/to/dsh.js", "--verbose"]'
