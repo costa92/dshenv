@@ -61,6 +61,7 @@ describe('CLI tools', () => {
     fs.writeFileSync(fakeDsh, `
 const args = process.argv.slice(2);
 const dumps = ${JSON.stringify(DUMPS)};
+if (args.includes('--version')) { console.log('0.1.7-rc.2'); process.exit(0); }
 if (args.includes('--dump-config')) { process.stdout.write(dumps[args[args.indexOf('--profile') + 1]]); process.exit(0); }
 process.exit(1);
 `);
@@ -175,7 +176,7 @@ profiles:
     const LOCAL_ROW = `- id: tool-web\n  name: '@deepseek-ai/dsh-tool-web'\n  config:\n    storeDir: /home/me/private\n`;
     const dumping = (dump: string) => {
       const fakeDsh = path.join(tempHome, 'fake-dsh-2.mjs');
-      fs.writeFileSync(fakeDsh, `if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(dump)}); process.exit(0); }\nprocess.exit(1);\n`);
+      fs.writeFileSync(fakeDsh, `if (process.argv.includes('--version')) { console.log('0.1.7-rc.2'); process.exit(0); } if (process.argv.includes('--dump-config')) { process.stdout.write(${JSON.stringify(dump)}); process.exit(0); }\nprocess.exit(1);\n`);
       process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
     };
     const manifestText = () => fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
@@ -189,7 +190,24 @@ profiles:
       const before = manifestText();
       const out = await run(['--no-overlay', 'tools', 'config', 'set', 'tool-web', 'foo', '1', '-p', 'headless']);
       expect(out.code).toBe(3);
-      expect(out.stderr).toMatch(/holds a dshenv patch for 'tool-web' that the base manifest does not declare.*--layer overlay/);
+      expect(out.stderr).toMatch(/holds a dshenv patch for 'tool-web' whose config the base manifest does not declare.*--layer overlay/);
+      expect(manifestText()).toBe(before);
+    });
+
+    it('refuses the same when the base entry only disables the tool and has no config of its own', async () => {
+      dumping(LOCAL_ROW);
+      const file = path.join(tempHome, 'envctl', 'manifest.yaml');
+      fs.writeFileSync(file, "apiVersion: dshenv/v1\nprofiles:\n  headless:\n    plugins: {}\n    patches:\n      - id: tool-web\n        name: '@deepseek-ai/dsh-tool-web'\n        disabled: true\n");
+      const before = manifestText();
+      // Unapplied overlay or not, what DSH composes for the tool holds a local path the base never set.
+      expect((await run(['--no-overlay', 'tools', 'config', 'set', 'tool-web', 'foo', '1', '-p', 'headless'])).code).toBe(3);
+      fs.writeFileSync(
+        path.join(tempHome, 'profiles', 'headless', 'cordis.patch.yml'),
+        `# dshenv:begin profile=headless plugin=@profile digest=x\n- id: tool-web\n  name: '@deepseek-ai/dsh-tool-web'\n  disabled: true\n  config:\n    storeDir: /home/me/private\n# dshenv:end profile=headless plugin=@profile\n`
+      );
+      const out = await run(['--no-overlay', 'tools', 'config', 'set', 'tool-web', 'foo', '1', '-p', 'headless']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(/whose config the base manifest does not declare/);
       expect(manifestText()).toBe(before);
     });
 
@@ -218,6 +236,21 @@ profiles:
     expect(version.code).toBe(0);
     expect(version.stdout).toMatch(/^\d+\.\d+\.\d+/);
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
+  });
+
+  it('reads tools only from a DSH dshenv supports, exiting 4 for another version or none', async () => {
+    const old = path.join(tempHome, 'old-dsh.mjs');
+    fs.writeFileSync(old, `if (process.argv.includes('--version')) { console.log('0.1.5-rc.2'); process.exit(0); }\nprocess.stdout.write(${JSON.stringify(DUMPS.web)});\n`);
+    process.env.DSH_CLI = JSON.stringify([process.execPath, old]);
+    const before = fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
+    const list = await run(['tools', 'list', '-p', 'web']);
+    expect(list.code).toBe(4);
+    expect(list.stderr).toMatch(/0\.1\.5/);
+    expect((await run(['tools', 'enable', 'tool-bash', '-p', 'web'])).code).toBe(4);
+    expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
+
+    process.env.DSH_CLI = 'nodsh-missing-cmd';
+    expect((await run(['tools', 'list', '-p', 'web'])).code).toBe(4);
   });
 
   it('keeps both edits when two commands change the same preset at once', async () => {

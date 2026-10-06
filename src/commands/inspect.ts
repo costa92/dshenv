@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
-import { loadLock, loadState } from '../manifest/files.js';
+import { loadLock, loadManifest, loadState } from '../manifest/files.js';
 import { buildPlan, buildStatus, onlyProfile, planExitCode, planJson } from '../planner/plan.js';
 import { renderPlan, renderStatus, renderDoctor, type DoctorReport } from '../output/render.js';
 import { resolveDshCommand, probeDsh, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, displayDshVersion, type RuntimeCapabilityEvidence } from '../dsh/index.js';
@@ -8,6 +8,7 @@ import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError, CapabilityError, missingManifestError } from '../errors.js';
 import type { EnvironmentLock, EnvironmentManifest, EnvironmentState } from '../domain.js';
 import { loadEffectiveManifest, overlaySwitchWarning, readOverlay } from '../overlay/effective.js';
+import { mergeManifest } from '../overlay/merge.js';
 import { resolveCliPaths, resolveCliOverlay, overlayBanner, filterProfile, type CommandContext } from './context.js';
 import { readRemoteConfig } from '../remote/schema.js';
 import { findLocalDrift, findRemoteLockDrift } from '../remote/ownership.js';
@@ -129,17 +130,29 @@ export function registerInspectCommands(ctx: CommandContext): void {
 
       const selection = resolveCliOverlay(opts, paths);
       let manifest: EnvironmentManifest | undefined;
-      // A broken overlay selection is exactly what doctor must surface; a missing base is reported via manifestExists.
-      if (selection) {
-        readOverlay(paths, selection.name);
-      }
+      // A broken overlay selection is exactly what doctor must surface, an overlay that cannot merge included; only an
+      // invalid base is tolerated, as without an overlay. A missing base is reported via manifestExists.
+      const overlay = selection ? readOverlay(paths, selection.name) : null;
       if (fs.existsSync(paths.manifestFile)) {
+        let base: EnvironmentManifest | undefined;
         try {
-          manifest = loadEffectiveManifest(paths, selection).manifest;
+          base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
         } catch (err) {
           // doctor still probes DSH, but without the manifest's harness settings, which may pick another DSH.
           const reason = err instanceof Error ? err.message : String(err);
           writeErr(`Warning: the manifest ${paths.manifestFile} is invalid (${reason}); doctor ignores its harness settings\n`);
+        }
+        if (base) {
+          manifest = overlay && selection ? mergeManifest(base, overlay, selection.name).manifest : base;
+        }
+      }
+      // doctor reads no lock, but plan and apply refuse an invalid one, so the files are not readable as it reports.
+      if (fs.existsSync(paths.lockFile)) {
+        try {
+          loadLock(fs.readFileSync(paths.lockFile, 'utf8'));
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          writeErr(`Warning: the lock ${paths.lockFile} is invalid (${reason}); plan and apply refuse it\n`);
         }
       }
       const manifestHarnessSource = manifest?.environment?.harness?.sourceDir;

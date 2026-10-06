@@ -347,6 +347,31 @@ exit 0
     }
   });
 
+  it('fails on a selected overlay that cannot merge into the base, and warns about an invalid lock', async () => {
+    const oldDshCli = process.env.DSH_CLI;
+    process.env.DSH_CLI = fakeDsh;
+    fs.mkdirSync(path.join(tempHome, 'envctl', 'overlays'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempHome, 'envctl', 'manifest.yaml'),
+      'apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      x:\n        package: "@scope/x"\n        source: { type: npm, version: "1.0.0" }\n'
+    );
+    fs.writeFileSync(path.join(tempHome, 'envctl', 'overlays', 'bad.yaml'), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      x:\n        package: "@scope/y"\n');
+    let stderr = '';
+    try {
+      const code = await runCli(['doctor', '--overlay', 'bad', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+      expect(code).toBe(3);
+      expect(stderr).toMatch(/cannot change package/);
+
+      fs.writeFileSync(path.join(tempHome, 'envctl', 'lock.json'), '{bad');
+      stderr = '';
+      expect(await runCli(['doctor', '--no-overlay', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } })).toBe(0);
+      expect(stderr).toMatch(/lock .* is invalid .*plan and apply refuse it/);
+    } finally {
+      if (oldDshCli) process.env.DSH_CLI = oldDshCli;
+      else delete process.env.DSH_CLI;
+    }
+  });
+
   it('returns a fixed parse diagnostic without raw malformed version output', async () => {
     const malformedDsh = path.join(fakeBinDir, 'malformed-dsh.sh');
     fs.writeFileSync(malformedDsh, '#!/bin/sh\necho "Authorization: Bearer doctor-secret malformed-version"\n');
