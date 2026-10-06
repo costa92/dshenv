@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { DshError } from '../errors.js';
 import { retryWhileBusy } from './windows-retry.js';
+import { isZombie } from './process-tree.js';
 
 export interface LockHandle {
   lockPath: string;
@@ -14,6 +15,9 @@ const LOCK_RETRY_MIN_MS = 5;
 const LOCK_RETRY_MAX_MS = 40;
 const WANTED_FRESH_MS = 3 * LOCK_RETRY_MAX_MS;
 const LOCK_WRITE_GRACE_MS = 5000;
+
+// Lock files this process holds now, so a lock naming its own pid is told apart from a former run's.
+const heldLocks = new Set<string>();
 
 async function createLockFile(lockFilePath: string, lockContent: string): Promise<boolean> {
   try {
@@ -49,13 +53,17 @@ async function staleLockInode(lockFilePath: string): Promise<number | null> {
       return Date.now() - stat.mtimeMs > LOCK_WRITE_GRACE_MS ? stat.ino : null;
     }
     if (info?.pid && info.hostname === os.hostname()) {
+      // Our own pid on a lock this process does not hold is a former run's (a restarted container reuses its pids).
+      if (info.pid === process.pid) {
+        return heldLocks.has(lockFilePath) ? null : stat.ino;
+      }
       try {
-        // Check if process is still alive
         process.kill(info.pid, 0);
       } catch (err: unknown) {
         // EPERM means the process exists but belongs to another user; only ESRCH proves it is gone.
         return (err as NodeJS.ErrnoException).code === 'ESRCH' ? stat.ino : null;
       }
+      return isZombie(info.pid) ? stat.ino : null;
     }
     return null;
   } catch {
@@ -112,6 +120,22 @@ async function markWaiting(wantedPath: string): Promise<void> {
   await fs.promises.utimes(wantedPath, now, now).catch(() => fs.promises.writeFile(wantedPath, '', { mode: 0o600 }).catch(() => {}));
 }
 
+// Only a holder on this host that has exited is taken over, so the user is told who holds it and how to clear it.
+async function holderHint(lockFilePath: string): Promise<string> {
+  let info: { pid?: unknown; hostname?: unknown; createdAt?: unknown };
+  try {
+    info = JSON.parse(await fs.promises.readFile(lockFilePath, 'utf8'));
+  } catch {
+    return '';
+  }
+  if (typeof info?.pid !== 'number') {
+    return '';
+  }
+  const host = typeof info.hostname === 'string' ? ` on host ${info.hostname}` : '';
+  const since = typeof info.createdAt === 'string' ? ` since ${info.createdAt}` : '';
+  return ` by pid ${info.pid}${host}${since}; if no dshenv process holds it any more (its pid was reused, or the host name changed), delete that file`;
+}
+
 async function staleGuardHint(guardPath: string): Promise<string> {
   try {
     const stat = await fs.promises.stat(guardPath);
@@ -153,17 +177,19 @@ export async function acquireFileLock(lockFilePath: string, label: string, timeo
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      throw new DshError(`${label} is already held at ${lockFilePath}${await staleGuardHint(guardPath)}`, 1);
+      throw new DshError(`${label} is already held at ${lockFilePath}${await holderHint(lockFilePath)}${await staleGuardHint(guardPath)}`, 1);
     }
     await markWaiting(wantedPath);
     const ceiling = Math.min(LOCK_RETRY_MAX_MS, LOCK_RETRY_MIN_MS * 2 ** attempt);
     await new Promise((resolve) => setTimeout(resolve, Math.min(LOCK_RETRY_MIN_MS + Math.random() * ceiling, remaining)));
   }
   await fs.promises.rm(wantedPath, { force: true }).catch(() => {});
+  heldLocks.add(lockFilePath);
 
   return {
     lockPath: lockFilePath,
     release: async () => {
+      heldLocks.delete(lockFilePath);
       try {
         await retryWhileBusy(() => fs.promises.unlink(lockFilePath));
       } catch {

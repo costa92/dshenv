@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 被结束的 DSH 没有被回收、成了僵尸进程时（如 dshenv 在容器里以 PID 1 运行且没加 `--init`），中断 `apply` 后照样释放它留下的 `package.json.lock`；`dshenv.lock` 的持有者是僵尸进程时同样接管。此前锁一直留着，之后的命令要等到超时。
+- `dshenv.lock` 里的 pid 正好是当前进程（容器重启后 pid 相同）时按陈旧锁接管；拿不到锁时报错写出持有者的 pid、主机名和加锁时间，并说明 pid 被复用或主机名变了时可删除锁文件。此前一直报 `Environment lock is already held`，没有处理办法。
 - 再次 `adopt` 由 dshenv 安装的 git 插件时，保留 base 声明的 `ref`/`commit` 和 URL 写法；此前 DSH 里记的 URL 带 `git+` 前缀，与清单对不上，`ref`/`commit` 被丢掉、URL 被改写。
 - `source clone --profile` 用另一种写法（结尾的 `/`、`.git` 有无）指向清单里的同一个仓库时，仍克隆并锁定清单固定的 commit，清单与 lock 沿用清单的 URL 写法；此前会悄悄删掉固定的 commit，lock 锁到最新提交。
 - Windows 上 `DSH_CLI` 指向 PATH 里没有的命令时也以退出码 4 结束（此前为 5）：命令名先按 PATH 与 PATHEXT 查找。

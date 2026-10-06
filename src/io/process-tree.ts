@@ -20,7 +20,7 @@ export async function killProcessTree(pid: number): Promise<number[]> {
     signalAll(pids, signal);
     const deadline = Date.now() + FORCE_KILL_AFTER_MS;
     // Dropping each pid as soon as it is gone keeps SIGKILL from reaching a process that later reuses it.
-    while ((pids = pids.filter(alive)).length > 0 && Date.now() < deadline) {
+    while ((pids = pids.filter(processAlive)).length > 0 && Date.now() < deadline) {
       await sleep(POLL_MS);
     }
     if (pids.length === 0) break;
@@ -97,13 +97,24 @@ function descendantsOf(root: number): number[] {
   return found;
 }
 
-function alive(pid: number): boolean {
+// A killed process its parent never reaps (dshenv as PID 1 in a container) stays a zombie, which signal 0 still reaches.
+export function isZombie(pid: number): boolean {
+  if (process.platform !== 'linux') return false;
   try {
-    process.kill(pid, 0);
-    return true;
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.charAt(stat.lastIndexOf(')') + 2) === 'Z';
   } catch {
     return false;
   }
+}
+
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  return !isZombie(pid);
 }
 
 function signalAll(pids: number[], signal: NodeJS.Signals): void {
