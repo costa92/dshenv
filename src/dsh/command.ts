@@ -119,6 +119,10 @@ export interface ProbeResult {
 
 class CommandNotFound extends Error {}
 
+function commandNotFound(cmd: CommandSpec): CapabilityError {
+  return new CapabilityError(cmd.cwd ? 'pnpm, which runs DSH from --harness-source or harness.sourceDir, was not found' : 'The DSH CLI that DSH_CLI names was not found');
+}
+
 export async function probeDsh(
   cmd: CommandSpec,
   runner?: (file: string, args: string[], opts: Record<string, unknown>) => Promise<{ stdout: string; stderr: string }>,
@@ -142,6 +146,10 @@ export async function probeDsh(
   if (!runner && path.isAbsolute(cmd.file) && !fs.existsSync(cmd.file)) {
     throw new CapabilityError('The DSH CLI that DSH_CLI or --harness-source names does not exist');
   }
+  // A bare command name is looked up first: on Windows a missing one does not always surface as ENOENT.
+  if (!runner && !/[\\/]/.test(cmd.file) && findOnPath(cmd.file) === null) {
+    throw commandNotFound(cmd);
+  }
 
   let res: { stdout: string; stderr: string };
   try {
@@ -151,7 +159,7 @@ export async function probeDsh(
   } catch (err) {
     // Not found is the same as no DSH at all (exit 4), not a DSH that failed to run.
     if (err instanceof CommandNotFound) {
-      throw new CapabilityError(cmd.cwd ? 'pnpm, which runs DSH from --harness-source or harness.sourceDir, was not found' : 'The DSH CLI that DSH_CLI names was not found');
+      throw commandNotFound(cmd);
     }
     throw new DegradedError('DSH runtime probe execution failed');
   }
