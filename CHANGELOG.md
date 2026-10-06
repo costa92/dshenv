@@ -4,6 +4,16 @@
 
 ## 未发布
 
+## 0.10.0 - 2026-10-06
+
+### 升级须知
+
+- 同时设置了 `DSH_CLI` 又传 `--harness-source` 时，现在用 `--harness-source` 指定的源码目录（此前 `DSH_CLI` 优先）。
+- `DSH_HOME` 开头的 `~` 会展开为用户主目录，为空时回退到 `~/.dsh`；此前因此被管理在别处（如当前目录下的 `~/`）的环境需要迁移过去。
+- skill 的摘要改为算整个目录：`envctl/skills` 与 DSH 副本在 `package.json` `files` 名单外的文件上不一致时，升级后第一次 `plan` 会列出更新，`apply` 用清单的副本（DSH 副本移进 trash）。
+- `tools` 写 base 遇到已生效的 overlay 补丁或本机路径、`config set` 遇到全部禁用的补丁时，以退出码 3 拒绝；改用 `--layer overlay`，或先启用补丁。
+- 已用相对路径订阅的 `remote.json` 不会自动改写；`remote remove --yes` 后重新 `remote add` 一次即记为 `file://` 地址。
+
 ### 变更
 
 - 显式的 `--harness-source` 优先于环境变量 `DSH_CLI`（此前被 `DSH_CLI` 静默覆盖，`doctor` 还提示「请提供 `--harness-source`」）；清单的 `environment.harness.sourceDir` 仍排在 `DSH_CLI` 之后。
