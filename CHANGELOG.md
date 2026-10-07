@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 停用的插件不再在 `cordis.patch.yml` 里留着补丁块：DSH 不加载停用的插件，它的补丁每次启动都报 `entry not found`，`plan` 却显示已同步。补丁仍保留在清单里，重新启用后 `apply` 写回。（升级后第一次 `plan` 会为带补丁的停用插件列出一次 `configure`。）
+- 文档说明改清单的命令会按固定格式重写 `manifest.yaml` 与 overlay 文件，去掉其中的注释（包括 `overlay create` 生成的示例注释）。
 - 团队 skill 目录里本机新增的文件算作漂移：`remote show` 列为 `added locally`，`remote sync` 拒绝，`--discard-local-changes` 时一并删掉；此前不报漂移，团队删掉这个 skill 后只剩本机文件，`apply` 会把一个没有 `SKILL.md` 的 skill 装进 DSH。
 - 团队仓库的 skill 里有 `node_modules/` 或 `.tmp-*` 文件时，`remote add`/`sync` 以退出码 3 说明它们不会复制进 DSH；此前接受下来，却永远到不了 DSH（`.tmp-*` 的改动也不会触发更新）。skill 的复制与摘要现在跳过同一组文件。
 - 团队仓库里只差大小写的 skill 名、目录或文件（如 `skills/Foo` 与 `skills/foo`）以退出码 3 拒绝；在 macOS/Windows 不区分大小写的文件系统上它们是同一个，此前之后每次 sync 都会以本机改动为由拒绝。

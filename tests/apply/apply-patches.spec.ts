@@ -86,6 +86,23 @@ ${patches}`
     expect((await applyEnvironment(paths, { dryRun: true })).plan.hasChanges).toBe(false);
   });
 
+  // DSH does not load a disabled plugin, so a patch of it fails at every start with "entry not found".
+  it('clears the patches of a disabled plugin and writes them back once it is enabled again', async () => {
+    const patches = `        patches:
+          - { id: p1, config: { a: 1 } }
+`;
+    writeManifest(patches);
+    await applyEnvironment(paths);
+    writeManifest(`        enabled: false\n${patches}`);
+    await applyEnvironment(paths);
+    expect(livePatchIds()).toEqual([]);
+    expect((await applyEnvironment(paths, { dryRun: true })).plan.hasChanges).toBe(false);
+    writeManifest(patches);
+    await applyEnvironment(paths);
+    expect(livePatchIds()).toEqual(['p1']);
+    expect((await applyEnvironment(paths, { dryRun: true })).plan.hasChanges).toBe(false);
+  });
+
   it('clears managed blocks once the manifest drops all patches of a plugin', async () => {
     writeManifest(`        patches:
           - { id: p1, config: { a: 1 } }

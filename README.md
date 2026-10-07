@@ -50,6 +50,8 @@ DSH 运行时命令解析优先级：
 
 跨机器同步 `manifest.yaml` 与 `overlays/`；`state.json`、`overlay-selection.json` 只属于本机。`lock.json` 由本机维护，但订阅团队 remote 后，团队 lock 中的条目归远程、随 `sync` 更新（见第 20 节）。
 
+改清单的命令（`install`、`update`、`plugins config set` 等）按固定格式重写整个 `manifest.yaml` 或 overlay 文件：其中的注释会被去掉，键也会重新排序。需要留存的说明请写在别处（如仓库的 README）。
+
 ---
 
 ## 安装与快速上手
@@ -231,7 +233,7 @@ dshenv apply -p web --yes
 
 不带 `--yes` 的 `apply` 与 `--dry-run` 相同：展示计划、有变更时退出码 2，并在 stderr 提示加 `--yes` 重跑。`pull`、`rollback`、`gc`、`purge`、`adopt`、`remote add`、`remote remove`、`remote sync` 同样如此：不带 `--yes` 只预览，有待执行的内容时退出码 2，没有时退出码 0。例外：要做的事无从做起时按错误处理，退出码 3，例如没有任何快照时的 `rollback`、没有订阅时的 `remote remove`。
 
-当前执行计划中的 `install/update/enable/disable/remove/configure`。`configure` 只写入 Profile `cordis.patch.yml` 的受管块。没有所有权记录的实际插件只标为 `unmanaged`，不会卸载。
+当前执行计划中的 `install/update/enable/disable/remove/configure`。`configure` 只写入 Profile `cordis.patch.yml` 的受管块；停用的插件 DSH 不会加载，它的补丁块会被清掉（清单里保留，重新启用时写回）。没有所有权记录的实际插件只标为 `unmanaged`，不会卸载。
 
 `apply`（含 `--dry-run`）会对有操作的 Profile 各运行一次 `dsh --profile <p> --dump-config`（超时 15 秒），读其中的 `hmr` 行判断 DSH 热加载是否开启，据此报告哪些改动无需重启：
 
