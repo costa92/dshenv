@@ -19,6 +19,12 @@ describe('defaultRunner', () => {
     const result = await defaultRunner(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], {});
     expect(result.stdout).toBe(os.homedir());
   });
+
+  it('says the command is missing instead of an undefined exit code', async () => {
+    const result = await defaultRunner('dshenv-no-such-npm', ['view'], {});
+    const run: Runner = async () => result;
+    await expect(resolveTargetVersion(run)).rejects.toThrow(/on the npm registry: dshenv-no-such-npm was not found on PATH$/);
+  });
 });
 
 const ok = (stdout: string): RunResult => ({ exitCode: 0, stdout, stderr: '' });

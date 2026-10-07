@@ -235,6 +235,8 @@ profiles:
       const patchFile = path.join(tempHome, 'profiles', 'web', 'cordis.patch.yml');
       const patched = fs.readFileSync(patchFile, 'utf8');
       await expect(purgePlugin(paths, 'web', 'agent-teams')).rejects.toThrow(/symlink outside allowed root/);
+      // The preview refuses what the purge would, rather than saying it would purge.
+      await expect(purgePlugin(paths, 'web', 'agent-teams', { dryRun: true })).rejects.toThrow(/symlink outside allowed root/);
       expect(fs.readFileSync(path.join(outsideClone, 'keep.txt'), 'utf8')).toBe('keep');
       // Checked before the patch block is stripped, so a refused clone leaves the patch alone.
       expect(fs.readFileSync(patchFile, 'utf8')).toBe(patched);

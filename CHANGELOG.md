@@ -2,6 +2,15 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 修复
+
+- 没有 npm 时 `self-update` 说明 npm 不在 PATH 里；此前报「exit code undefined」。
+- `purge` 预览与真正执行一样拒绝指向 DSH_HOME 之外的补丁文件或受管克隆；此前预览说「Would purge」，加 `--yes` 才拒绝。
+- `init` 遇到没有清单但已有 `lock.json` 或 `state.json` 时，写任何文件之前就拒绝并说明；此前先写出清单再失败，之后再 `init` 报「already initialized」，`state.json` 一直没写出。
+- 容器示例 README 的版本 tag 改为 `v<版本>` 占位（此前停在 `v0.3.0`）；DSH 版本升级文档说明实际生效的门禁是 `isCompatibleDshVersion`，`knownDshFamily` 只被测试引用。
+
 ## 0.10.2 - 2026-10-07
 
 ### 升级须知

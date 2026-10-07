@@ -34,7 +34,7 @@ docker run --rm --network dsh-net -p 127.0.0.1:3080:3080 -e DEEPSEEK_API_KEY my-
 DSHENV_SRC=/path/to/dshenv DEEPSEEK_API_KEY=... docker compose up --build
 ```
 
-镜像从源码构建 dshenv（因此可以使用未发布的改动），`--build-context dshenv=...`（或 compose 的 `DSHENV_SRC`）必须指向一份 dshenv 源码检出，构建阶段会从中打包安装。只用已发布版本时，建议检出对应的 tag（如 `git -C /path/to/dshenv checkout v0.3.0`），不要直接用 `master`；也可以把 `Dockerfile` 的 `dshenv-build` 阶段换成 `npm install -g @costa92/dshenv@<版本>`。
+镜像从源码构建 dshenv（因此可以使用未发布的改动），`--build-context dshenv=...`（或 compose 的 `DSHENV_SRC`）必须指向一份 dshenv 源码检出，构建阶段会从中打包安装。只用已发布版本时，建议检出对应的 tag（如 `git -C /path/to/dshenv checkout v<版本>`），不要直接用 `master`；也可以把 `Dockerfile` 的 `dshenv-build` 阶段换成 `npm install -g @costa92/dshenv@<版本>`。
 
 启动后在 `docker logs <容器名>`（或 `docker compose logs dsh`）里找 `dsh web: http://127.0.0.1:3080/?token=...` 链接完成首次认证：
 

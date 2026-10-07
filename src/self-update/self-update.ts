@@ -12,6 +12,8 @@ export type InstallMethod = 'npm' | 'pnpm';
 
 export interface RunResult {
   exitCode?: number;
+  // Why the command could not be started, such as a missing npm.
+  spawnError?: string;
   timedOut?: boolean;
   stdout: string;
   stderr: string;
@@ -38,6 +40,7 @@ export const defaultRunner: Runner = async (file, args, options) => {
   return {
     exitCode: result.exitCode,
     timedOut: result.timedOut,
+    ...(result.exitCode === undefined && result.code === 'ENOENT' ? { spawnError: `${file} was not found on PATH` } : {}),
     stdout: typeof result.stdout === 'string' ? result.stdout : '',
     stderr: typeof result.stderr === 'string' ? result.stderr : ''
   };
@@ -93,6 +96,9 @@ export function compareVersions(a: string, b: string): number {
 function describeFailure(result: RunResult, timeoutMs?: number): string {
   if (result.timedOut) {
     return `timed out after ${String((timeoutMs ?? 0) / 1000)} s`;
+  }
+  if (result.spawnError) {
+    return result.spawnError;
   }
   const output = `${result.stderr}\n${result.stdout}`;
   const code = output.match(/\bERR_PNPM_[A-Z0-9_]+/)?.[0] ?? output.match(/^npm (?:error|ERR!) code (\S+)/m)?.[1];

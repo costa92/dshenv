@@ -26,7 +26,7 @@ DSH 0.2 起，安装和启动时会检查插件声明的 peer 范围：插件没
 
 | 位置 | 内容 |
 | --- | --- |
-| `src/dsh/version.ts` | `knownDshFamily` 与 `isCompatibleDshVersion` 中的已验证版本族 |
+| `src/dsh/version.ts` | `isCompatibleDshVersion` 中的已验证版本族（这是实际生效的门禁；`knownDshFamily` 只被测试引用，同步修改以免测试失败） |
 | `tests/dsh/version.spec.ts`、`tests/cli/doctor.spec.ts` | 新版本放行；相近的非法版本（如 `0.1.80`）仍被拒绝 |
 | `src/scaffold/templates.ts` | `PEER_RANGE`：跨 minor 版本时需要调整上限 |
 | `docs/examples/container/Dockerfile` 及其 README | `DSH_VERSION` 默认值 |

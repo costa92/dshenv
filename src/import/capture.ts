@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { EnvironmentInventory } from '../inventory/profile-reader.js';
 import type {
@@ -250,6 +251,13 @@ export async function initEnvironment(paths: EnvironmentPaths): Promise<void> {
     profiles: {}
   };
 
+  // Checked before writing any, so a refusal does not leave a manifest behind that makes the next init say it is done.
+  const existing = [paths.lockFile, paths.stateFile].filter((file) => fs.existsSync(file));
+  if (existing.length > 0) {
+    throw new ValidationError(
+      `${existing.join(' and ')} already ${existing.length > 1 ? 'exist' : 'exists'} without a manifest; move ${existing.length > 1 ? 'them' : 'it'} aside, or write ${paths.manifestFile} by hand`
+    );
+  }
   await writeAtomic(paths.manifestFile, serializeManifest(initialManifest), 'create');
   await writeAtomic(paths.lockFile, serializeLock(initialLock), 'create');
   await writeAtomic(paths.stateFile, serializeState(initialState), 'create');
