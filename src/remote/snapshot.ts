@@ -2,6 +2,7 @@ import type { EnvironmentLock, EnvironmentManifest } from '../domain.js';
 import { ValidationError } from '../errors.js';
 import { loadLock, loadManifest, parseOverlay } from '../manifest/files.js';
 import { mergeManifest } from '../overlay/merge.js';
+import { isUndigestedEntry } from '../source/local.js';
 import { listTree, readBlob } from './git.js';
 import { lockEntryDigests, lockEntryId } from './lock-entries.js';
 import { isRemoteFileKey, overlayNameFromKey, sha256Hex, type RemoteLockEntries } from './schema.js';
@@ -148,6 +149,13 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
     if (entry.type !== 'blob' || !REGULAR_FILE_MODES.has(entry.mode)) {
       throw new ValidationError(`Remote file ${entry.path} must be a regular file`);
     }
+    // Neither copied into DSH nor digested, so the team's change to it would never arrive; .DS_Store is only noise.
+    const segments = key.split('/');
+    if (key.startsWith('skills/') && segments.slice(2).some((segment) => isUndigestedEntry(segment) && segment !== '.DS_Store')) {
+      throw new ValidationError(
+        `Remote skill file ${entry.path} is never copied into DSH, which skips node_modules and .tmp-* in a skill; remove it from the team repository`
+      );
+    }
     const data = await readBlob(repoDir, commit, entry.path);
     if (key === 'lock.json') {
       lockData = data;
@@ -189,6 +197,19 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
       throw new ValidationError(`Remote overlays ${where(other)} and ${where(key)} differ only by case`);
     }
     byLowerCase.set(key.toLowerCase(), key);
+  }
+  // A skill path (a skill name, a directory or a file) that differs from another only by case would be the same one there too.
+  const skillPaths = new Map<string, string>();
+  for (const key of Object.keys(files).filter((name) => name.startsWith('skills/')).sort()) {
+    const segments = key.split('/');
+    for (let depth = 2; depth <= segments.length; depth++) {
+      const prefix = segments.slice(0, depth).join('/');
+      const other = skillPaths.get(prefix.toLowerCase());
+      if (other !== undefined && other !== prefix) {
+        throw new ValidationError(`Remote skill paths ${where(other)} and ${where(prefix)} differ only by case`);
+      }
+      skillPaths.set(prefix.toLowerCase(), prefix);
+    }
   }
   for (const key of Object.keys(files)) {
     const name = overlayNameFromKey(key);

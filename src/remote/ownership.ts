@@ -5,11 +5,14 @@ import type { EnvironmentPaths } from '../environment/paths.js';
 import { ValidationError } from '../errors.js';
 import { loadLock } from '../manifest/files.js';
 import { findLockEntryDrift, lockEntryId, type LockEntryDrift } from './lock-entries.js';
+import { remoteSkillNames } from '../resources/skill.js';
+import { isUndigestedEntry } from '../source/local.js';
 import { compareRemoteKeys, overlayNameFromKey, readRemoteConfig, remoteFilePath, sha256Hex, type RemoteConfig } from './schema.js';
 
 export interface RemoteFileDrift {
   file: string;
-  status: 'modified' | 'missing';
+  // added: a local file inside a team skill's directory, which the team owns whole
+  status: 'modified' | 'missing' | 'added';
 }
 
 export function localFileDigest(file: string): string | null {
@@ -33,7 +36,32 @@ export function findLocalDrift(paths: EnvironmentPaths, config: RemoteConfig): R
       drift.push({ file: key, status: 'modified' });
     }
   }
+  for (const name of [...remoteSkillNames(config.files)].sort()) {
+    for (const rel of localSkillFiles(path.join(paths.skillsDir, name))) {
+      const key = `skills/${name}/${rel}`;
+      if (!Object.hasOwn(config.files, key)) {
+        drift.push({ file: key, status: 'added' });
+      }
+    }
+  }
   return drift;
+}
+
+// The files of a skill directory a copy into DSH would carry, as '/'-separated paths relative to it.
+function localSkillFiles(dir: string, rel = ''): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => !isUndigestedEntry(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      return entry.isDirectory() ? localSkillFiles(dir, child) : [child];
+    });
 }
 
 // An unreadable lock may still hold this machine's own entries, so nothing may overwrite or reinterpret it.

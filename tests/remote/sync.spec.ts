@@ -232,7 +232,9 @@ describe('remote sync engine', () => {
 
     fs.rmSync(path.join(team.work, 'envctl', 'skills', 'wiki', 'scripts'), { recursive: true });
     await commitTeamFiles(team, { 'envctl/skills/wiki/scripts': 'back' }, 'to file');
-    await expect(prepare({ previous: true })).rejects.toThrow(/is not owned by the remote/);
+    // The local file in the team's skill is drift first; discarding changes still leaves the directory in the way.
+    await expect(prepare({ previous: true })).rejects.toThrow(/changed locally: skills\/wiki\/scripts\/mine\.sh \(added\)/);
+    await expect(prepare({ previous: true, discardLocalChanges: true })).rejects.toThrow(/is not owned by the remote/);
   });
 
   it('refuses a team skill whose directory already holds a local skill, even when none of its files collide', async () => {

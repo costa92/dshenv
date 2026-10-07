@@ -6,6 +6,9 @@
 
 ### 修复
 
+- 团队 skill 目录里本机新增的文件算作漂移：`remote show` 列为 `added locally`，`remote sync` 拒绝，`--discard-local-changes` 时一并删掉；此前不报漂移，团队删掉这个 skill 后只剩本机文件，`apply` 会把一个没有 `SKILL.md` 的 skill 装进 DSH。
+- 团队仓库的 skill 里有 `node_modules/` 或 `.tmp-*` 文件时，`remote add`/`sync` 以退出码 3 说明它们不会复制进 DSH；此前接受下来，却永远到不了 DSH（`.tmp-*` 的改动也不会触发更新）。skill 的复制与摘要现在跳过同一组文件。
+- 团队仓库里只差大小写的 skill 名、目录或文件（如 `skills/Foo` 与 `skills/foo`）以退出码 3 拒绝；在 macOS/Windows 不区分大小写的文件系统上它们是同一个，此前之后每次 sync 都会以本机改动为由拒绝。
 - 对 overlay 已 `remove` 掉的插件 `install --layer overlay` 同一来源时，只撤掉这次删除，不再顺带把来源固定在 overlay 里；`update --layer overlay` 到当前生效的版本时报告没有变化、不写入。此前这两种情况都会把 overlay 固定在 base 的来源上，之后 base 升级到不了这台机器。
 - 本地 overlay 可以用 `update --layer overlay` 改团队 lock 固定的 npm 插件（与 `install --layer overlay` 一致），团队的 lock 条目保持不变；此前以「pinned by the team lock」拒绝。
 - `remove --layer base` 后，若选中的 overlay 还有这个别名的条目，在 stderr 提示它会套到之后以同一别名声明的插件上，并给出 `remove <别名> --layer overlay`；这条命令现在也能删掉 base 已没有的别名在 overlay 里的残留条目。
