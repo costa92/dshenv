@@ -2,7 +2,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
-## 未发布
+## 0.10.2 - 2026-10-07
+
+### 升级须知
+
+- `tools` 系列与 `plugins config set` 也检查 DSH 版本：`tools` 遇到未测试的 DSH 版本以退出码 4 结束（可加 `--allow-untested-dsh`），找不到 DSH 时退出码 4（此前 3）。
+- 选中的 overlay 无法与 base 合并时，`doctor` 以退出码 3 结束（0.10.1 只警告）。
+- 插件补丁 id 对不上 DSH 加载它的那一行时，下一次 `plugins config set` 会把补丁改到正确的 id，清单随之变化。
+- 0.10.1 的「别名不能以 `@` 开头」放宽为只拒绝 `@profile` 和 `@mount:…`；按 0.10.1 须知改过名的别名无需改回。
 
 ### 修复
 
