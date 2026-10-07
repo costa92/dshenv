@@ -484,7 +484,7 @@ profiles:
     expect(second.plan.hasChanges).toBe(false);
   });
 
-  it('should install, disable and configure a new plugin in a single apply', async () => {
+  it('should install and disable a new plugin in a single apply, leaving its patch out while it is disabled', async () => {
     fs.writeFileSync(
       path.join(tempHome, 'envctl', 'manifest.yaml'),
       `apiVersion: dshenv/v1
@@ -532,14 +532,15 @@ fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({ name: p
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const result = await applyEnvironment(paths);
     expect(result.applied).toBe(true);
-    expect(result.plan.operations.map((op) => op.kind)).toEqual(['install', 'disable', 'configure']);
+    expect(result.plan.operations.map((op) => op.kind)).toEqual(['install', 'disable']);
 
     const profile = JSON.parse(
       fs.readFileSync(path.join(tempHome, 'profiles', 'web', 'package.json'), 'utf8')
     ) as { dsh: { profile: { bundles: string[] } } };
     expect(profile.dsh.profile.bundles).not.toContain('@nanmicoder/dsh-agent-teams');
-    const patch = fs.readFileSync(path.join(tempHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8');
-    expect(patch).toContain('taskPlanning: captain');
+    // DSH does not load a disabled plugin, so its patch would fail with "entry not found".
+    const patchFile = path.join(tempHome, 'profiles', 'web', 'cordis.patch.yml');
+    expect(fs.existsSync(patchFile) ? fs.readFileSync(patchFile, 'utf8') : '').not.toContain('taskPlanning');
 
     const second = await applyEnvironment(paths);
     expect(second.plan.hasChanges).toBe(false);

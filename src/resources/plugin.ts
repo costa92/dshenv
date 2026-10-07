@@ -306,8 +306,9 @@ export function planPlugins(
         }
       }
 
-      // Live blocks must match the enabled patches exactly, so dropped or disabled patches are cleared too.
-      const expectedPatches = (pluginManifest.patches ?? []).filter((patch) => patch.enabled !== false);
+      // Live blocks must match the enabled patches exactly, so dropped or disabled patches are cleared too. A disabled
+      // plugin is not loaded, so DSH would fail every patch of it with "entry not found"; they stay declared for re-enabling.
+      const expectedPatches = targetEnabled ? (pluginManifest.patches ?? []).filter((patch) => patch.enabled !== false) : [];
       const livePatches = (profInv?.managedPatches ?? []).filter((actual) => actual.plugin === alias);
       const patchesInSync =
         livePatches.length === expectedPatches.length &&
@@ -324,7 +325,9 @@ export function planPlugins(
           package: pkgName,
           reason: expectedPatches.length > 0
             ? 'Managed configuration patch is missing or digest does not match'
-            : 'Managed configuration patch is no longer declared',
+            : targetEnabled
+              ? 'Managed configuration patch is no longer declared'
+              : 'Managed configuration patch of a disabled plugin, which DSH does not load',
           currentEnabled,
           targetEnabled
         });
@@ -541,7 +544,7 @@ export async function applyPluginOperation(operation: PluginOperation, ctx: Plug
       rollback.undo.push(await writePluginMount(paths, operation.profile, operation.alias, null));
       return null;
     }
-    rollback.undo.push(await writeManagedPatches(paths, operation.profile, operation.alias, plugin.patches ?? []));
+    rollback.undo.push(await writeManagedPatches(paths, operation.profile, operation.alias, plugin.enabled === false ? [] : plugin.patches ?? []));
     return null;
   }
 

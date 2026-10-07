@@ -372,13 +372,12 @@ describe('buildPlan', () => {
     };
 
     const plan = buildPlan(manifest, null, inventory);
+    // Neither is configured: a disabled plugin's patches stay declared but out of DSH, which does not load it.
     expect(plan.operations.filter((op) => op.resource === 'plugin').map((op) => [op.package, op.kind])).toEqual([
       ['pkg-fresh', 'install'],
       ['pkg-fresh', 'disable'],
-      ['pkg-fresh', 'configure'],
       ['pkg-stale', 'update'],
-      ['pkg-stale', 'disable'],
-      ['pkg-stale', 'configure']
+      ['pkg-stale', 'disable']
     ]);
   });
 
