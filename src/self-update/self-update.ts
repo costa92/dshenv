@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { execa } from 'execa';
 import { DshError, ValidationError } from '../errors.js';
 import { ExactVersionRegex } from '../manifest/schema.js';
+import { findOnPath } from '../dsh/command.js';
 
 export const PACKAGE_NAME = '@costa92/dshenv';
 const LOOKUP_TIMEOUT_MS = 30_000;
@@ -28,6 +29,10 @@ export interface RunOptions {
 export type Runner = (file: string, args: string[], options: RunOptions) => Promise<RunResult>;
 
 export const defaultRunner: Runner = async (file, args, options) => {
+  // On Windows a missing command reaches no ENOENT, as it is started through cmd, which only exits 1.
+  if (!/[\\/]/.test(file) && findOnPath(file) === null) {
+    return { stdout: '', stderr: '', spawnError: `${file} was not found on PATH` };
+  }
   const result = await execa(file, args, {
     reject: false,
     shell: false,
@@ -40,7 +45,6 @@ export const defaultRunner: Runner = async (file, args, options) => {
   return {
     exitCode: result.exitCode,
     timedOut: result.timedOut,
-    ...(result.exitCode === undefined && result.code === 'ENOENT' ? { spawnError: `${file} was not found on PATH` } : {}),
     stdout: typeof result.stdout === 'string' ? result.stdout : '',
     stderr: typeof result.stderr === 'string' ? result.stderr : ''
   };
