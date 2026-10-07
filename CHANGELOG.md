@@ -6,6 +6,9 @@
 
 ### 修复
 
+- 对 overlay 已 `remove` 掉的插件 `install --layer overlay` 同一来源时，只撤掉这次删除，不再顺带把来源固定在 overlay 里；`update --layer overlay` 到当前生效的版本时报告没有变化、不写入。此前这两种情况都会把 overlay 固定在 base 的来源上，之后 base 升级到不了这台机器。
+- 本地 overlay 可以用 `update --layer overlay` 改团队 lock 固定的 npm 插件（与 `install --layer overlay` 一致），团队的 lock 条目保持不变；此前以「pinned by the team lock」拒绝。
+- `remove --layer base` 后，若选中的 overlay 还有这个别名的条目，在 stderr 提示它会套到之后以同一别名声明的插件上，并给出 `remove <别名> --layer overlay`；这条命令现在也能删掉 base 已没有的别名在 overlay 里的残留条目。
 - 没有 npm 时 `self-update` 说明 npm 不在 PATH 里；此前报「exit code undefined」。
 - `purge` 预览与真正执行一样拒绝指向 DSH_HOME 之外的补丁文件或受管克隆；此前预览说「Would purge」，加 `--yes` 才拒绝。
 - `init` 遇到没有清单但已有 `lock.json` 或 `state.json` 时，写任何文件之前就拒绝并说明；此前先写出清单再失败，之后再 `init` 报「already initialized」，`state.json` 一直没写出。

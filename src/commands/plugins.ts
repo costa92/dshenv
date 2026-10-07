@@ -15,7 +15,7 @@ import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { removeOverlayPlugin, setOverlayPatchValue, setOverlayPluginFields } from '../overlay/write.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { OverlaySelection } from '../overlay/selection.js';
-import { assertLockEntryNotRemoteOwned } from '../remote/ownership.js';
+import { assertLockEntryNotRemoteOwned, isLockEntryRemoteOwned } from '../remote/ownership.js';
 import { readRemoteConfig } from '../remote/schema.js';
 import {
   resolveCliPaths,
@@ -392,6 +392,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             if (JSON.stringify(previousSource) === JSON.stringify(next.source)) {
               return next;
             }
+          } else if (baseEntry && JSON.stringify(baseEntry.source) === JSON.stringify(next.source)) {
+            // Installing again what the overlay removed from the base only lifts that removal, pinning nothing.
+            delete doc.profiles![profile]!.plugins![next.alias];
+            return next;
           }
           setOverlayPluginFields(doc, profile, next.alias, exists
             ? { source: next.source }
@@ -520,8 +524,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
         // The lock pin runs after the manifest write, so a team-pinned entry must be refused before anything is written.
-        // Skip the lock read entirely when unsubscribed, so a corrupt lock.json still fails where it always did.
-        if (readRemoteConfig(paths) && lockPinsNpm(paths, profile, alias)) {
+        // Skip the lock read entirely when unsubscribed, so a corrupt lock.json still fails where it always did. An overlay
+        // write leaves a team's lock entry as it is (its npm version decides nothing), as install --layer overlay does.
+        const teamLocked = Boolean(overlay) && isLockEntryRemoteOwned(paths, profile, alias);
+        if (!overlay && readRemoteConfig(paths) && lockPinsNpm(paths, profile, alias)) {
           assertLockEntryNotRemoteOwned(paths, profile, alias);
         }
         const npmOnly = (type: string) => {
@@ -538,13 +544,16 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         }
         const npmCheck = await checkNpmSpec(opts, { packageName: declared.package, source: { ...declared.source, version } }, cmdOpts.npmCheck);
 
+        let unchanged = false;
         if (overlay) {
           await writeOverlay(paths, overlay, (doc) => {
             const plugin = effectivePlugin(paths, overlay, profile, alias);
             if (plugin.source.type !== 'npm') {
               throw npmOnly(plugin.source.type);
             }
-            setOverlayPluginFields(doc, profile, alias, { source: { ...plugin.source, version } });
+            // Restating the version the overlay already gets would pin it, so a later base update stops reaching it.
+            unchanged = plugin.source.version === version;
+            if (!unchanged) setOverlayPluginFields(doc, profile, alias, { source: { ...plugin.source, version } });
           });
         } else {
           await writeBase(paths, selection, (manifest) => {
@@ -555,8 +564,17 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             plugin.source = { ...plugin.source, version };
           });
         }
-        await pinLockVersion(paths, profile, alias, version);
-        reportWrite(opts, overlay, 'updated', { profile, alias, version, npmCheck }, `Set ${alias} in profile '${profile}' to ${version}`);
+        if (!teamLocked && !unchanged) {
+          await pinLockVersion(paths, profile, alias, version);
+        }
+        reportWrite(
+          opts,
+          overlay,
+          'updated',
+          { profile, alias, version, npmCheck },
+          unchanged ? `${alias} in profile '${profile}' is already at ${version}` : `Set ${alias} in profile '${profile}' to ${version}`,
+          unchanged
+        );
         warnOverlayKeeps(opts, paths, selection, overlay, profile, alias, (entry) =>
           entry.source ? `the source of ${alias} in profile '${profile}', so it stays at ${describeSource(entry.source)}` : undefined);
       });
@@ -923,7 +941,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const paths = resolveCliPaths(opts);
         const profile: string = cmdOpts.profile;
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
-        const alias = resolveAlias(paths, selection, profile, name, { overlay });
+        // An overlay entry for an alias the base no longer declares is in no effective manifest, but it is the overlay's to drop.
+        const leftover = overlay !== null && Boolean(readOverlay(paths, overlay.name).profiles?.[profile]?.plugins?.[name]) &&
+          !loadEffectiveManifest(paths, overlay).manifest.profiles[profile]?.plugins[name];
+        const alias = leftover ? name : resolveAlias(paths, selection, profile, name, { overlay });
 
         if (overlay) {
           const outcome = await writeOverlay(paths, overlay, (doc, base) => removeOverlayPlugin(doc, base, profile, alias));
@@ -935,6 +956,13 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           delete manifest.profiles[profile].plugins[alias];
         });
         reportWrite(opts, null, 'removed', { profile, alias }, `Removed plugin '${alias}' from profile '${profile}'`);
+        // An overlay entry names no package, so what it sets would apply to whatever plugin the base declares under this alias next.
+        if (selection && !opts.json && readOverlay(paths, selection.name).profiles?.[profile]?.plugins?.[alias]) {
+          ctx.writeErr(
+            `Overlay '${selection.name}' still has an entry for ${alias} in profile '${profile}', which would apply to any plugin declared as ${alias} later; ` +
+              `drop it with dshenv remove ${alias} -p ${profile} --layer overlay\n`
+          );
+        }
       });
   }
 
