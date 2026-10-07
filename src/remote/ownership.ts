@@ -87,12 +87,17 @@ export function assertNotRemoteOwned(paths: EnvironmentPaths, file: string): voi
   throw new ValidationError(`Overlay '${overlayNameFromKey(key)}' is owned by remote ${config.url}; use a local overlay with a different name`);
 }
 
+export function isLockEntryRemoteOwned(paths: EnvironmentPaths, profile: string, alias: string): boolean {
+  const config = readRemoteConfig(paths);
+  return Boolean(config && Object.hasOwn(config.lockEntries, profile) && Object.hasOwn(config.lockEntries[profile], alias));
+}
+
 // The lock is shared per entry: team entries change only through sync, local entries stay writable.
 export function assertLockEntryNotRemoteOwned(paths: EnvironmentPaths, profile: string, alias: string): void {
-  const config = readRemoteConfig(paths);
-  if (!config || !Object.hasOwn(config.lockEntries, profile) || !Object.hasOwn(config.lockEntries[profile], alias)) {
+  if (!isLockEntryRemoteOwned(paths, profile, alias)) {
     return;
   }
+  const config = readRemoteConfig(paths)!;
   throw new ValidationError(
     `Lock entry '${lockEntryId(profile, alias)}' is pinned by the team lock of remote ${config.url}; change it in the team repository and run dshenv remote sync`
   );

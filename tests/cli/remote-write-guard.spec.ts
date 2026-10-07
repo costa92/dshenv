@@ -64,13 +64,20 @@ describe('CLI writes to remote-owned files and lock entries', () => {
     expectUnchanged();
   });
 
-  it('refuses update when the team lock pins the version, before writing either layer', async () => {
-    for (const extra of [[], ['--overlay', 'mine', '--layer', 'overlay']]) {
-      const { code, stderr } = await run(['update', 'shared', '--to', '1.1.0', '-p', 'web', ...extra]);
-      expect(code).toBe(3);
-      expect(stderr).toContain(`Lock entry 'web/shared' is pinned by the team lock of remote ${FIXTURE_REMOTE_URL}; change it in the team repository and run dshenv remote sync`);
-      expectUnchanged();
-    }
+  it('refuses a base update when the team lock pins the version, before writing anything', async () => {
+    const { code, stderr } = await run(['update', 'shared', '--to', '1.1.0', '-p', 'web']);
+    expect(code).toBe(3);
+    expect(stderr).toContain(`Lock entry 'web/shared' is pinned by the team lock of remote ${FIXTURE_REMOTE_URL}; change it in the team repository and run dshenv remote sync`);
+    expectUnchanged();
+  });
+
+  // As install --layer overlay may: the version is the overlay's, and the team's lock entry is left as it is.
+  it('lets a local overlay update a plugin the team lock pins, leaving the team lock entry alone', async () => {
+    const { code } = await run(['update', 'shared', '--to', '1.1.0', '-p', 'web', '--overlay', 'mine', '--layer', 'overlay']);
+    expect(code).toBe(0);
+    expect(parseOverlay(read(overlayFile('mine')), 'mine').profiles?.web.plugins?.shared?.source).toMatchObject({ type: 'npm', version: '1.1.0' });
+    expect(read(paths.lockFile)).toBe(OWNED_LOCK);
+    expect(read(paths.manifestFile)).toBe(OWNED_MANIFEST);
   });
 
   it('writes a local overlay with --layer overlay', async () => {

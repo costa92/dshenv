@@ -355,6 +355,30 @@ warnings: []
     expect(pinned.stderr).toBe("Overlay 'laptop' sets the source of shared in profile 'web', so it stays at 1.9.0 on this machine; use --layer overlay to change it here\n");
   });
 
+  it('installing what the overlay removed from the base only lifts the removal, pinning no source', async () => {
+    const out = await run(['install', 'heavy-plugin@1.0.0', '--as', 'heavy', '--profile', 'web', '--layer', 'overlay', '--no-npm-check']);
+    expect(out.code).toBe(0);
+    expect(overlay().profiles?.web.plugins?.heavy).toBeUndefined();
+  });
+
+  it('update --layer overlay to the version the overlay already gets writes nothing', async () => {
+    const out = await runOut(['update', 'shared', '--profile', 'web', '--to', '1.0.0', '--layer', 'overlay', '--no-npm-check']);
+    expect(out.code).toBe(0);
+    expect(out.stdout).toBe("shared in profile 'web' is already at 1.0.0 in the overlay 'laptop'; nothing changed.\n");
+    expect(overlay().profiles?.web.plugins?.shared).toBeUndefined();
+  });
+
+  it('warns on a base remove that the overlay still has an entry for the alias, and drops it with --layer overlay', async () => {
+    fs.writeFileSync(overlayFile(), 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      shared:\n        source: { type: npm, version: "1.9.0" }\n');
+    const removed = await run(['remove', 'shared', '--profile', 'web', '--layer', 'base']);
+    expect(removed.code).toBe(0);
+    expect(removed.stderr).toBe(
+      "Overlay 'laptop' still has an entry for shared in profile 'web', which would apply to any plugin declared as shared later; drop it with dshenv remove shared -p web --layer overlay\n"
+    );
+    expect((await run(['remove', 'shared', '-p', 'web', '--layer', 'overlay'])).code).toBe(0);
+    expect(overlay().profiles?.web.plugins?.shared).toBeUndefined();
+  });
+
   it('warns when the overlay removes a plugin a base enable or disable changes', async () => {
     for (const verb of ['disable', 'enable']) {
       const out = await run([verb, 'heavy', '--profile', 'web', '--layer', 'base']);
