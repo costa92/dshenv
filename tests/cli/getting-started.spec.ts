@@ -56,6 +56,19 @@ describe('CLI getting started', () => {
     expect(again.stderr).toBe(`dshenv is already initialized at ${path.join(tempHome, 'envctl')}; see dshenv status or dshenv plan\n`);
   });
 
+  it('refuses init over a lock without a manifest before writing anything, so it can run again', async () => {
+    const lockFile = path.join(tempHome, 'envctl', 'lock.json');
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    fs.writeFileSync(lockFile, '{}');
+    const out = await run(['init']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain(`${lockFile} already exists without a manifest`);
+    expect(fs.existsSync(path.join(tempHome, 'envctl', 'manifest.yaml'))).toBe(false);
+    fs.rmSync(lockFile);
+    expect((await run(['init'])).code).toBe(0);
+    expect(fs.existsSync(path.join(tempHome, 'envctl', 'state.json'))).toBe(true);
+  });
+
   it('says there was nothing to adopt instead of an empty profile list', async () => {
     const candidate = path.join(tempHome, 'candidate.yaml');
     expect((await run(['capture', '-o', candidate])).code).toBe(0);

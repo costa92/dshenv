@@ -134,6 +134,15 @@ async function purgeDecided(
     return { dryRun: Boolean(options?.dryRun), profile: profileName, plugin: owned.alias, package: owned.packageName, moved, message: `Nothing to purge for ${owned.alias}` };
   }
 
+  // Both are checked before anything is written, and before a preview, so a refusal leaves everything as it was, trash and
+  // journal included, and the preview refuses what the purge would.
+  if (hasPatchFile) {
+    await assertSafeManagedPath(patchFile, paths.profilesDir);
+  }
+  if (hasClone) {
+    await assertSafeManagedPath(cloneDir, paths.managerDir);
+  }
+
   if (options?.dryRun) {
     if (hasPatchFile) moved.push(patchFile);
     if (hasClone) moved.push(cloneDir);
@@ -145,14 +154,6 @@ async function purgeDecided(
       moved,
       message: `Would purge managed resources for ${owned.alias}`
     };
-  }
-
-  // Both are checked before anything is written, so a refusal leaves everything as it was, trash and journal included.
-  if (hasPatchFile) {
-    await assertSafeManagedPath(patchFile, paths.profilesDir);
-  }
-  if (hasClone) {
-    await assertSafeManagedPath(cloneDir, paths.managerDir);
   }
 
   const operationId = `purge-${Date.now().toString(16)}`;
