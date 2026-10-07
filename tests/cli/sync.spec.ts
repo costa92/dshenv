@@ -410,6 +410,21 @@ profiles:
     expect(fs.existsSync(path.join(paths.skillsDir, 'README.md'))).toBe(false);
   });
 
+  it('counts a local file in a team skill as drift, and discards it with the skill', async () => {
+    await commitTeamFiles(team, { 'envctl/skills/review/SKILL.md': '# review\n' }, 'skill');
+    expect((await run(['sync', '--yes'])).code).toBe(0);
+    fs.writeFileSync(path.join(paths.skillsDir, 'review', 'extra.md'), 'mine\n');
+    const show = await run(['remote', 'show']);
+    expect(show.stdout).toContain('  skills/review/extra.md (added locally)\n');
+
+    await commitTeamFiles(team, { 'envctl/skills/review/SKILL.md': null }, 'drop skill');
+    const refused = await run(['sync', '--yes']);
+    expect(refused.code).toBe(3);
+    expect(refused.stderr).toContain('skills/review/extra.md (added)');
+    expect((await run(['sync', '--yes', '--discard-local-changes'])).code).toBe(0);
+    expect(fs.existsSync(path.join(paths.skillsDir, 'review'))).toBe(false);
+  });
+
   it('exits 1 with the git stderr when the remote is unreachable', async () => {
     fs.renameSync(team.bare, `${team.bare}.moved`);
     const { code, stderr } = await run(['sync']);

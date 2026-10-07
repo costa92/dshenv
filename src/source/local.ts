@@ -14,6 +14,11 @@ export interface LocalSourceInfo {
   packageJson?: Record<string, unknown>;
 }
 
+// Entries no digest counts, and so no skill copy carries: dependencies, Git data, Finder files and atomic-write leftovers.
+export function isUndigestedEntry(name: string): boolean {
+  return name === 'node_modules' || name === '.git' || name === '.DS_Store' || name.startsWith('.tmp-');
+}
+
 // A skill is copied whole, so every file counts, executable bit included; only a plugin source is narrowed to what npm
 // would publish, and its digest never changes with modes, so a plugin recorded before stays in sync.
 export async function calculateSourceDigest(dirPath: string, options: { publishedOnly?: boolean; executableBit?: boolean } = {}): Promise<string> {
@@ -27,12 +32,7 @@ export async function calculateSourceDigest(dirPath: string, options: { publishe
     entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
-      if (
-        entry.name === 'node_modules' ||
-        entry.name === '.git' ||
-        entry.name === '.DS_Store' ||
-        entry.name.startsWith('.tmp-')
-      ) {
+      if (isUndigestedEntry(entry.name)) {
         continue;
       }
       const fullPath = path.join(current, entry.name);

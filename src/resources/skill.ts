@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { readRemoteConfig, skillPathFromKey } from '../remote/schema.js';
-import { calculateSourceDigest } from '../source/local.js';
+import { calculateSourceDigest, isUndigestedEntry } from '../source/local.js';
 import { retryWhileBusy } from '../io/windows-retry.js';
 import type { SkillPlanOperation } from '../planner/plan.js';
 import type { EnvironmentState, SkillOwnershipRecord } from '../domain.js';
@@ -29,8 +29,6 @@ export interface SkillInventory {
 
 const SkillNameRegex = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
-// The same entries calculateSourceDigest skips, so a copy digests like its source.
-const SKIPPED = new Set(['node_modules', '.git', '.DS_Store']);
 
 export async function readSkillDigests(dir: string): Promise<Record<string, string>> {
   if (!fs.existsSync(dir)) {
@@ -41,7 +39,7 @@ export async function readSkillDigests(dir: string): Promise<Record<string, stri
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const isDir = entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(path.join(dir, entry.name), { throwIfNoEntry: false })?.isDirectory());
     // npm install in a skills directory leaves node_modules there; it is no skill.
-    if (isDir && SkillNameRegex.test(entry.name) && !SKIPPED.has(entry.name)) {
+    if (isDir && SkillNameRegex.test(entry.name) && !isUndigestedEntry(entry.name)) {
       digests[entry.name] = await calculateSourceDigest(path.join(dir, entry.name), { publishedOnly: false, executableBit: true });
     }
   }
@@ -104,7 +102,8 @@ export async function copySkillDir(from: string, to: string): Promise<void> {
   await fs.promises.cp(await fs.promises.realpath(from), to, {
     recursive: true,
     verbatimSymlinks: true,
-    filter: (source) => !SKIPPED.has(path.basename(source))
+    // The entries calculateSourceDigest skips, so a copy digests like its source.
+    filter: (source) => !isUndigestedEntry(path.basename(source))
   });
 }
 

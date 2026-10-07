@@ -285,6 +285,11 @@ export async function prepareSync(input: PrepareSyncInput): Promise<SyncPreview>
 
   const ownedEntries = previous?.lockEntries ?? {};
   const files = computeChanges(paths, previous?.files ?? {}, snapshot.digests, snapshot.executables);
+  // Local files in a team skill only get here with --discard-local-changes, which they are discarded by.
+  if (previous) {
+    const local = findLocalDrift(paths, previous).filter((entry) => entry.status === 'added' && !Object.hasOwn(snapshot.files, entry.file));
+    files.removed = [...files.removed, ...local.map((entry) => entry.file)].sort(compareRemoteKeys);
+  }
   // Later commands fall back to the overlay saved as selected, so a sync run with --no-overlay must not delete it either.
   const saved = readSelectionFile(paths);
   if (saved !== null && saved !== input.selection?.name && files.removed.includes(`overlays/${saved}.yaml`)) {

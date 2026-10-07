@@ -211,6 +211,26 @@ describe('loadRemoteSnapshot', () => {
       'pair of overlays differing only by case',
       { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/overlays/Team.yaml': TEAM_OVERLAY, 'envctl/overlays/team.yaml': TEAM_OVERLAY },
       /^Remote overlays envctl\/overlays\/Team\.yaml and envctl\/overlays\/team\.yaml differ only by case$/
+    ],
+    [
+      'pair of skills differing only by case',
+      { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/Review/SKILL.md': '# a\n', 'envctl/skills/review/SKILL.md': '# b\n' },
+      /^Remote skill paths envctl\/skills\/Review and envctl\/skills\/review differ only by case$/
+    ],
+    [
+      'pair of skill files differing only by case',
+      { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/review/README.md': '# a\n', 'envctl/skills/review/readme.md': '# b\n' },
+      /^Remote skill paths envctl\/skills\/review\/README\.md and envctl\/skills\/review\/readme\.md differ only by case$/
+    ],
+    [
+      'skill file under node_modules',
+      { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/review/SKILL.md': '# a\n', 'envctl/skills/review/lib/node_modules/dep/index.js': '1\n' },
+      /^Remote skill file envctl\/skills\/review\/lib\/node_modules\/dep\/index\.js is never copied into DSH/
+    ],
+    [
+      'skill file named .tmp-*',
+      { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/review/SKILL.md': '# a\n', 'envctl/skills/review/.tmp-data': '1\n' },
+      /^Remote skill file envctl\/skills\/review\/\.tmp-data is never copied into DSH/
     ]
   ])('refuses an invalid %s', async (_label, files, message) => {
     await expect(snapshotOf(files)).rejects.toThrow(message);

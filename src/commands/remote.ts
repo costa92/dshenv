@@ -218,6 +218,9 @@ export function registerRemoteCommands(ctx: CommandContext): void {
         const state = fileStatus.get(file);
         lines.push(`  ${file}${state ? ` (${state})` : ''}`);
       }
+      for (const entry of drift.filter((item) => item.status === 'added')) {
+        lines.push(`  ${entry.file} (added locally)`);
+      }
       lines.push(lockEntries.length > 0 ? 'Lock entries:' : 'Lock entries: none');
       for (const entry of lockEntries) {
         const state = entryStatus.get(entry);
