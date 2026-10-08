@@ -589,6 +589,8 @@ dshenv disable agent-teams -p web                               # enable 反之
 dshenv remove agent-teams -p web
 ```
 
+`@nanmicoder/dsh-agent-teams@0.1.21` 只声明支持到 DSH 0.1.7-rc.2；DSH 0.2.0 版本族请用 0.1.22，0.2.1 上目前没有它的兼容版本，DSH 会拒绝安装（见 [DSH 新版本兼容验证](docs/DSH版本升级.md)）。
+
 `install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。
 
 DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.profile.bundles` 里选中才加载（DSH Web 插件页"官方"一组里的开关就是这个）：
