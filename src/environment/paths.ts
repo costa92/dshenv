@@ -6,6 +6,8 @@ export interface EnvironmentPaths {
   home: string;
   profilesDir: string;
   managerDir: string;
+  // How managerDir was chosen, which doctor reports; absent on paths built by hand.
+  managerDirSource?: 'flag' | 'env' | 'default';
   manifestFile: string;
   lockFile: string;
   stateFile: string;
@@ -58,17 +60,20 @@ export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentP
 
   const home = explicitHome ?? path.join(userHome, '.dsh');
   const profilesDir = path.join(home, 'profiles');
+  const managerDirSource =
+    input?.cliEnvctlDir !== undefined ? 'flag' : input?.envEnvctlDir !== undefined && input.envEnvctlDir.trim() !== '' ? 'env' : 'default';
   const managerDir =
-    input?.cliEnvctlDir !== undefined
-      ? resolveHomePath(input.cliEnvctlDir, 'CLI envctl-dir', cwd, userHome)
-      : input?.envEnvctlDir !== undefined && input.envEnvctlDir.trim() !== ''
-        ? resolveHomePath(input.envEnvctlDir, 'DSHENV_HOME environment variable', cwd, userHome)
+    managerDirSource === 'flag'
+      ? resolveHomePath(input!.cliEnvctlDir!, 'CLI envctl-dir', cwd, userHome)
+      : managerDirSource === 'env'
+        ? resolveHomePath(input!.envEnvctlDir!, 'DSHENV_HOME environment variable', cwd, userHome)
         : path.join(home, 'envctl');
 
   return {
     home,
     profilesDir,
     managerDir,
+    managerDirSource,
     manifestFile: path.join(managerDir, 'manifest.yaml'),
     lockFile: path.join(managerDir, 'lock.json'),
     stateFile: path.join(managerDir, 'state.json'),

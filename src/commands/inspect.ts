@@ -275,6 +275,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
         paths: {
           home: paths.home,
           managerDir: paths.managerDir,
+          managerDirSource: paths.managerDirSource,
           manifestExists: fs.existsSync(paths.manifestFile),
           lockExists: fs.existsSync(paths.lockFile),
           stateExists: fs.existsSync(paths.stateFile)

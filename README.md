@@ -172,6 +172,8 @@ dshenv doctor --harness-source "$HOME/code/dsh/deepseek-harness"
 dshenv doctor --json
 ```
 
+`Paths` 里的 `Manager Dir` 注明数据目录从哪里来：`(from --envctl-dir)`、`(from DSHENV_HOME)` 或 `(default)`，`--json` 对应 `paths.managerDirSource` 的 `flag`、`env`、`default`。
+
 `doctor --json` 在 `runtime.capabilities` 中逐项报告能力状态，并保留 `runtime.discoverySupported`、`runtime.mutationsSupported` 等兼容字段：
 
 | 状态 | 含义 |

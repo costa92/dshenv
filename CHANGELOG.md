@@ -11,6 +11,7 @@
 
 ### 新增
 
+- `doctor` 注明数据目录来自 `--envctl-dir`、`DSHENV_HOME` 还是默认位置，`--json` 新增 `paths.managerDirSource`。
 - 管理全局补丁 `$DSH_HOME/cordis.patch.yml`：清单与 overlay 新增顶层 `patches:`，`apply` 写进该文件的受管块，`pull`（不带 `--profile` 时）收回手写的条目，`plan` 列出未纳管的全局条目，并提示被全局条目覆盖、实际不生效的 Profile 条目。`--profile` 不涉及全局文件，但仍提示全局条目对该 Profile 的覆盖；覆盖按字段比较，全局条目写了 `disabled` 的 id 单独注明（DSH 插件页启停不了它）；`plan --json` 新增 `homePatchOperations`、`unmanagedHomePatches`、`shadowedPatches`（项里的 `disabled` 列出这类 id）。
 - dshenv 数据目录可以放在 DSH 主目录之外：`--envctl-dir <path>` 或环境变量 `DSHENV_HOME` 指定，默认仍是 `<DSH 主目录>/envctl`。DSH 不读这个目录，无需改动 DSH。
 - `dshenv migrate --to <dir> --yes` 把现有数据目录搬到新位置：

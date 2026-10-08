@@ -191,6 +191,8 @@
 ## 数据目录外置（已合并，PR #149）
 - [x] `--envctl-dir` / `DSHENV_HOME` 指定 dshenv 数据目录，默认仍为 `<DSH 主目录>/envctl`，不改 DSH
 - [x] 数据目录本身及其任何顶层条目不允许软链接，退出码 3 并提示迁移
+- [x] `doctor` 注明数据目录来自 `--envctl-dir`、`DSHENV_HOME` 还是默认位置
+- [x] 单个 skill 目录允许软链接（快照按内容保存，PR #148）
 - [x] `dshenv migrate --to <dir>`：复制、核对后改名；改写清单、overlay、lock 与快照中的旧路径；锁内先写墓碑文件 `dshenv.moved` 再清空旧目录；软链接按内容复制，链接与目标保留
 - 文档：[设计文档](design/2026-10-08-设计文档.md)
 

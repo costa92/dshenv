@@ -68,6 +68,28 @@ exit 0
     }
   });
 
+  it('says where the envctl location came from: --envctl-dir, DSHENV_HOME or the default', async () => {
+    const oldDshCli = process.env.DSH_CLI;
+    process.env.DSH_CLI = fakeDsh;
+    const elsewhere = path.join(tempHome, 'data');
+    const doctor = async (args: string[]) => {
+      let stdout = '';
+      await runCli(['doctor', '--dsh-home', tempHome, ...args], { stdout: (chunk) => { stdout += chunk; }, stderr: () => {} });
+      return stdout;
+    };
+    try {
+      expect(await doctor([])).toContain(`  Manager Dir: ${path.join(tempHome, 'envctl')} (default)\n`);
+      expect(await doctor(['--envctl-dir', elsewhere])).toContain(`  Manager Dir: ${elsewhere} (from --envctl-dir)\n`);
+      process.env.DSHENV_HOME = elsewhere;
+      expect(await doctor([])).toContain(`  Manager Dir: ${elsewhere} (from DSHENV_HOME)\n`);
+      expect(JSON.parse(await doctor(['--json'])).paths.managerDirSource).toBe('env');
+    } finally {
+      delete process.env.DSHENV_HOME;
+      if (oldDshCli) process.env.DSH_CLI = oldDshCli;
+      else delete process.env.DSH_CLI;
+    }
+  });
+
   it('should pass doctor with supported DSH runtime', async () => {
     const oldDshCli = process.env.DSH_CLI;
     process.env.DSH_CLI = fakeDsh;

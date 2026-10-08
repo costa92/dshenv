@@ -287,6 +287,7 @@ export interface DoctorReport {
   paths: {
     home: string;
     managerDir: string;
+    managerDirSource?: 'flag' | 'env' | 'default';
     manifestExists: boolean;
     lockExists: boolean;
     stateExists: boolean;
@@ -326,7 +327,8 @@ export function renderDoctor(report: DoctorReport): string {
   lines.push('');
   lines.push('Paths:');
   lines.push(`  Home: ${report.paths.home}`);
-  lines.push(`  Manager Dir: ${report.paths.managerDir}`);
+  const source = { flag: 'from --envctl-dir', env: 'from DSHENV_HOME', default: 'default' } as const;
+  lines.push(`  Manager Dir: ${report.paths.managerDir}${report.paths.managerDirSource ? ` (${source[report.paths.managerDirSource]})` : ''}`);
   lines.push(`  Manifest: ${report.paths.manifestExists ? 'Found' : 'Not created'}`);
   lines.push(`  Lockfile: ${report.paths.lockExists ? 'Found' : 'Not created'}`);
   lines.push(`  State: ${report.paths.stateExists ? 'Found' : 'Not created'}`);
