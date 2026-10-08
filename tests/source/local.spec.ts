@@ -58,6 +58,37 @@ describe('Local Source Lifecycle and Digest', () => {
     expect(digest3).not.toBe(digest1);
   });
 
+  it('separates a file path from its contents and separates successive files', async () => {
+    const left = path.join(tempDir, 'left');
+    const right = path.join(tempDir, 'right');
+    fs.mkdirSync(left);
+    fs.mkdirSync(right);
+    fs.writeFileSync(path.join(left, 'a'), 'bc');
+    fs.writeFileSync(path.join(right, 'ab'), 'c');
+    expect(await calculateSourceDigest(left)).not.toBe(await calculateSourceDigest(right));
+
+    fs.rmSync(path.join(right, 'ab'));
+    fs.writeFileSync(path.join(right, 'a'), 'b');
+    fs.writeFileSync(path.join(right, 'c'), '');
+    expect(await calculateSourceDigest(left)).not.toBe(await calculateSourceDigest(right));
+  });
+
+  it.skipIf(process.platform === 'win32')('separates symlink metadata and executable flags from file contents', async () => {
+    const file = path.join(pkgDir, 'alias.js');
+    fs.symlinkSync('index.js', file);
+    const linkDigest = await calculateSourceDigest(pkgDir);
+    fs.unlinkSync(file);
+    fs.writeFileSync(file, '\0symlink\0index.js');
+    expect(await calculateSourceDigest(pkgDir)).not.toBe(linkDigest);
+
+    fs.writeFileSync(file, 'payload', { mode: 0o644 });
+    fs.chmodSync(file, 0o755);
+    const executable = await calculateSourceDigest(pkgDir, { executableBit: true });
+    fs.chmodSync(file, 0o644);
+    fs.writeFileSync(file, 'payload\0executable');
+    expect(await calculateSourceDigest(pkgDir, { executableBit: true })).not.toBe(executable);
+  });
+
   describe('with a files list in package.json', () => {
     const write = (rel: string, content: string) => {
       fs.mkdirSync(path.dirname(path.join(pkgDir, rel)), { recursive: true });

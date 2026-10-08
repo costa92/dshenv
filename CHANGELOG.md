@@ -4,6 +4,11 @@
 
 ## 未发布
 
+### 升级须知
+
+- 本地插件与 skill 的源码摘要改为带长度边界和类型标记的新格式，lock/state 里的旧摘要不再兼容。升级后首次 `plan` 会为本地插件列出一次 `update`，`apply` 成功后写入新摘要。请在 DSH 里修改 skill 之前先执行一次 `apply --yes` 重建 skill 基线；否则只在 DSH 改过的 skill 会被 `plan` 报为清单改动，`pull` 报双侧冲突，需要用 `--prefer` 指定保留哪一侧。回滚到升级前的快照同理，其中的 skill 基线失效，原有 skill 按未管理处理。
+- 新快照会保存单个软链接 skill 目录的实际内容；恢复时该 skill 变为独立目录，不改写外部链接目标。旧快照只有链接的内容无法追溯补齐。
+
 ### 新增
 
 - 管理全局补丁 `$DSH_HOME/cordis.patch.yml`：清单与 overlay 新增顶层 `patches:`，`apply` 写进该文件的受管块，`pull`（不带 `--profile` 时）收回手写的条目，`plan` 列出未纳管的全局条目，并提示被全局条目覆盖、实际不生效的 Profile 条目。`--profile` 不涉及全局文件，但仍提示全局条目对该 Profile 的覆盖；覆盖按字段比较，全局条目写了 `disabled` 的 id 单独注明（DSH 插件页启停不了它）；`plan --json` 新增 `homePatchOperations`、`unmanagedHomePatches`、`shadowedPatches`（项里的 `disabled` 列出这类 id）。
@@ -35,6 +40,9 @@
 
 ### 修复
 
+- `source sync -p` 从读取清单、检查团队所有权到更新 Git 与 lock 全程持有环境锁，损坏的 lock 在改源码之前拒绝；提交校验或 lock 写入失败时恢复原提交和分支，如期间出现外部修改则保留并报告恢复失败。
+- 源码摘要明确分隔文件路径、内容、类型和可执行标记，避免不同文件树因拼接结果相同而漏报变化。
+- 单个 skill 目录为软链接时，快照不再随外部目录的修改或删除而改变；技能内部的软链接仍按原样保存。
 - `pull` 把 `insert` 行里以 `./`、`../` 开头的插件名视为本机路径，收进本机 overlay：DSH 按补丁文件所在目录解析它，换一台机器或换一层（Profile 层 / 全局层）就指向别处。此前它进了团队共享的 base 清单。
 - 停用的插件不再在 `cordis.patch.yml` 里留着补丁块：DSH 不加载停用的插件，它的补丁每次启动都报 `entry not found`，`plan` 却显示已同步。补丁仍保留在清单里，重新启用后 `apply` 写回。（升级后第一次 `plan` 会为带补丁的停用插件列出一次 `configure`。）
 - 文档说明改清单的命令会按固定格式重写 `manifest.yaml` 与 overlay 文件，去掉其中的注释（包括 `overlay create` 生成的示例注释）。

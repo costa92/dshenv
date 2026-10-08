@@ -67,6 +67,16 @@ async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, o
     // verbatimSymlinks: a relative link inside a skill would otherwise come back as an absolute, machine-specific one.
     // A linked skills directory is saved by its content, not as the link, which would follow later edits.
     await fs.promises.cp(await fs.promises.realpath(paths.skillsDir), path.join(snapshotDir, SKILLS_DIR), { recursive: true, verbatimSymlinks: true });
+    // Individual linked skill directories are declarations by content too. Materialize only these roots;
+    // symlinks inside a skill retain their original meaning. Restore uses a local copy, never writes to their targets.
+    for (const entry of await fs.promises.readdir(paths.skillsDir, { withFileTypes: true })) {
+      const source = path.join(paths.skillsDir, entry.name);
+      if (entry.isSymbolicLink() && fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()) {
+        const saved = path.join(snapshotDir, SKILLS_DIR, entry.name);
+        await fs.promises.unlink(saved);
+        await fs.promises.cp(await fs.promises.realpath(source), saved, { recursive: true, verbatimSymlinks: true });
+      }
+    }
   }
 
   if (fs.existsSync(paths.overlaysDir)) {
