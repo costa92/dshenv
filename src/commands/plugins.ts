@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { officialBundleAlias } from '../dsh/templates.js';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
@@ -161,7 +162,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         throw new ValidationError(`in-box takes a package name with no version: in-box:<package>, got '${packageName}'`);
       }
       const simpleName = packageName.startsWith('@') ? packageName.split('/')[1] : packageName;
-      return { alias: optsAlias || simpleName.replace(/^(dsh-plugin-|dsh-)/, ''), packageName, source: { type: 'in-box' } };
+      return { alias: optsAlias || officialBundleAlias(packageName) || simpleName.replace(/^(dsh-plugin-|dsh-)/, ''), packageName, source: { type: 'in-box' } };
     }
 
     let packageName = spec;
@@ -499,7 +500,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           lockedSource.url === result.source.url && !isSameCommit(lockedSource.commit, result.source.commit)) {
           ctx.writeErr(
             `lock.json pins ${result.alias} to ${lockedSource.commit}; lock ${result.source.commit} with: ` +
-              `dshenv source sync --profile ${cmdOpts.profile} --as ${result.alias} --ref ${result.source.commit}\n`
+              `dshenv source sync --profile ${cmdOpts.profile} --as ${result.alias} --ref ${result.source.commit} --yes\n`
           );
         }
       });
@@ -532,7 +533,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         }
         const npmOnly = (type: string) => {
           const instead = type === 'git'
-            ? `; move a Git plugin with dshenv source sync -p ${profile} --as ${alias} [--ref <ref>]`
+            ? `; move a Git plugin with dshenv source sync -p ${profile} --as ${alias} [--ref <ref>] --yes`
             : type === 'local-link' || type === 'local-file'
               ? '; plan and apply pick up changes in a local source by themselves'
               : '';

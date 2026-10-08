@@ -98,6 +98,23 @@ process.exit(1);
     expect(lists.length).toBeGreaterThan(1);
   });
 
+  it('has verify wait the same way with --timeout, and check once without it', async () => {
+    await serve({ bundles: [bundle()], plugins: [entry('loading')] });
+    const lists = () => fake!.requests.filter((request) => JSON.stringify(request.body ?? '').includes('listPlugins')).length;
+
+    const once = await run(['verify', '-p', 'web']);
+    expect(once.code).toBe(2);
+    expect(lists()).toBe(1);
+
+    const started = Date.now();
+    const waited = await run(['verify', '-p', 'web', '--timeout', '1']);
+    expect(waited.code).toBe(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
+    expect(lists()).toBeGreaterThan(2);
+
+    expect((await run(['verify', '-p', 'web', '--timeout', 'soon'])).code).toBe(3);
+  });
+
   it('exits 5 at once when the applied plugin failed to load, since hot reload will not change that', async () => {
     await serve({ bundles: [bundle()], plugins: [entry('failed')] });
     const started = Date.now();

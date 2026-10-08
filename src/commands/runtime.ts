@@ -88,7 +88,12 @@ export function registerRuntimeCommand(ctx: CommandContext): void {
     .option('-p, --profile <name>', TARGET_PROFILE_HELP, profileOption)
     .option('--allow-remote', 'allow sending the dsh web token to a non-loopback https host')
     .option('--start', `start dsh web for the profile, check it and stop it again, instead of using ${DSH_URL_ENV}`)
-    .action(async (cmdOpts: { profile?: string; allowRemote?: boolean; start?: boolean }) => {
+    .option('--timeout <seconds>', 'keep asking while DSH is still hot-reloading a plugin, for up to this long, as apply --verify-timeout', '0')
+    .action(async (cmdOpts: { profile?: string; allowRemote?: boolean; start?: boolean; timeout: string }) => {
+      if (!/^\d+(\.\d+)?$/.test(cmdOpts.timeout)) {
+        throw new ValidationError(`Invalid --timeout value: ${cmdOpts.timeout}`);
+      }
+      const timeoutMs = Number(cmdOpts.timeout) * 1000;
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
       const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
@@ -100,7 +105,7 @@ export function registerRuntimeCommand(ctx: CommandContext): void {
             `${DSH_URL_ENV} is not set and no dsh web started by 'dshenv web start' is running for profile ${profile}; export the URL dsh web printed, run dshenv web start -p ${profile}, or pass --start`
           );
         }
-        await checkProfile(paths, manifest, profile, parseDshWebUrl(url, { allowRemote: Boolean(cmdOpts.allowRemote) }), opts.json);
+        await checkProfile(paths, manifest, profile, parseDshWebUrl(url, { allowRemote: Boolean(cmdOpts.allowRemote) }), timeoutMs, opts.json);
         return;
       }
       if (cmdOpts.allowRemote) {
@@ -108,7 +113,7 @@ export function registerRuntimeCommand(ctx: CommandContext): void {
       }
       const web = await startDshWeb(profile, { command: await dshWebCommand(paths, opts, profile), dshHome: paths.home });
       try {
-        await checkProfile(paths, manifest, profile, parseDshWebUrl(web.url), opts.json);
+        await checkProfile(paths, manifest, profile, parseDshWebUrl(web.url), timeoutMs, opts.json);
       } finally {
         await web.stop();
       }
@@ -119,9 +124,10 @@ export function registerRuntimeCommand(ctx: CommandContext): void {
     manifest: EnvironmentManifest,
     profile: string,
     target: DshWebTarget,
+    timeoutMs: number,
     json: boolean | undefined
   ): Promise<void> {
-    const results = await checkProfileRuntime(paths, manifest, profile, target);
+    const results = await pollProfileRuntime(paths, manifest, profile, target, timeoutMs);
     if (json) {
       writeOut(JSON.stringify({ profile, endpoint: target.endpoint, results }, null, 2) + '\n');
     } else {
@@ -182,6 +188,24 @@ const HOT_RELOAD_PENDING: ReadonlySet<RuntimeCheckItem['result']> = new Set(['lo
 
 // Checks the profile after apply; DSH hot-reloads a moment later, so such results are asked about again until the timeout.
 // With several profiles to check, DSHENV_DSH_URL cannot tell which one its dsh web runs, so only `web start` records count.
+// Asks again while DSH may still hot-reload a plugin, until it settles or the time is up.
+async function pollProfileRuntime(
+  paths: EnvironmentPaths,
+  manifest: EnvironmentManifest,
+  profile: string,
+  target: DshWebTarget,
+  timeoutMs: number
+): Promise<RuntimeCheckItem[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const results = await checkProfileRuntime(paths, manifest, profile, target);
+    if (!results.some((item) => HOT_RELOAD_PENDING.has(item.result)) || Date.now() >= deadline) {
+      return results;
+    }
+    await delay(Math.min(1000, deadline - Date.now()));
+  }
+}
+
 export async function verifyProfileRuntime(
   paths: EnvironmentPaths,
   manifest: EnvironmentManifest,
@@ -201,14 +225,7 @@ export async function verifyProfileRuntime(
   }
   try {
     const target = parseDshWebUrl(url);
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const results = await checkProfileRuntime(paths, manifest, profile, target);
-      if (!results.some((item) => HOT_RELOAD_PENDING.has(item.result)) || Date.now() >= deadline) {
-        return { profile, endpoint: target.endpoint, results };
-      }
-      await delay(Math.min(1000, deadline - Date.now()));
-    }
+    return { profile, endpoint: target.endpoint, results: await pollProfileRuntime(paths, manifest, profile, target, timeoutMs) };
   } catch (err) {
     if (err instanceof DshError) {
       return { profile, error: err.message };

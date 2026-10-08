@@ -76,7 +76,7 @@ function gitCommitBlock(declared: string | undefined, locked: string | undefined
       : 'Git source has no locked commit; refusing to invent HEAD';
   }
   if (declared && !isSameCommit(declared, locked)) {
-    return `Git source declares commit ${declared} in the manifest, but the locked commit is ${locked}; drop the manifest commit or move the lock with 'dshenv source sync --profile <profile> --ref ${declared}'`;
+    return `Git source declares commit ${declared} in the manifest, but the locked commit is ${locked}; drop the manifest commit or move the lock with 'dshenv source sync --profile <profile> --ref ${declared} --yes'`;
   }
   return undefined;
 }

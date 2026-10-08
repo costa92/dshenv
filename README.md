@@ -153,8 +153,9 @@ dshenv disable agent-teams     # 等同于 dshenv disable agent-teams -p web
 
 哪些命令要加 `--yes`，只看一条规则：
 
-- **只改 envctl 声明（清单、overlay、lock）的命令直接写入**：`install`、`update`、`remove`、`enable`、`disable`、`plugins config set|unset`、`tools enable|disable|config set|unset|reset`、`overlay create|use`、`new -p`、`source clone -p`、`source sync -p`。它们不碰 DSH profile，改错了再改回来即可，DSH 要等 `apply --yes` 才变。
-- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`migrate`、`remote add|sync|remove`。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并在 stderr 提示加 `--yes` 重跑，所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。
+- **只改 envctl 声明（清单、overlay、lock）的命令直接写入**：`install`、`update`、`remove`、`enable`、`disable`、`plugins config set|unset`、`tools enable|disable|config set|unset|reset`、`overlay create|use`、`new -p`、`source clone -p`。它们不碰 DSH profile，改错了再改回来即可，DSH 要等 `apply --yes` 才变。
+- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`migrate`、`remote add|sync|remove`、`source sync`（它会移动 Git 检出并改写 lock，与 `remote sync` 一致）。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并在 stderr 提示加 `--yes` 重跑，所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。`self-update` 只替换 dshenv 自己，不碰 DSH 与 envctl，所以不需要 `--yes`，直接执行。
+- **`overlay use --none` 与 `--no-overlay` 不同**：前者清除保存的 overlay 选择，之后的命令都不再用它；后者只让这一条命令不用 overlay。
 
 `remove` 仍接受 `-y`（旧脚本兼容），但它只改清单，加不加都一样。
 
@@ -378,9 +379,12 @@ dshenv status --json
 dshenv source clone https://github.com/ex/plugin.git --profile web --as demo
 dshenv source clone https://github.com/ex/plugin.git ./external-checkout
 dshenv source show -p web --as demo            # 受管 clone 的 Git 状态（是否有未提交改动、commit、分支）与源码摘要
-dshenv source sync -p web --as demo            # 快进受管 clone，并把新的 HEAD commit 写入 lock
-dshenv source sync -p web --as demo --ref v1.2.0
+dshenv source sync -p web --as demo            # 预览：clone 与 lock 会移到哪个 commit，有变化时退出码 2
+dshenv source sync -p web --as demo --yes      # 快进受管 clone，并把新的 HEAD commit 写入 lock
+dshenv source sync -p web --as demo --ref v1.2.0 --yes
 ```
+
+`source sync` 不带 `--yes` 时只 fetch 并预览（`--dry-run` 相同），不移动检出、不写 lock，与 `remote sync` 一致。旧名 `source pull` 仍可用，但会在 stderr 提醒：它把 clone 从上游 Git 拉新，方向与 `dshenv pull`（把 DSH 里的改动收回清单）相反。
 
 `source show` / `source sync` 不带 `--profile` 时作用于给出的目录（不给时为当前目录），`sync` 只快进、不写 lock，`--ref` 指向更旧的 commit 时以退出码 3 拒绝；不给 `--ref` 时快进到当前分支对应的远端分支，处于 detached HEAD 时须给 `--ref`。带 `--profile` 时，Profile 里恰好有一个 Git 插件可省略 `--as`；`envctl/sources` 下的受管 clone 也可以用 `--ref` 退回到更旧的 commit（如 `plan` 提示的清单 commit），处于 detached HEAD 且不给 `--ref` 时跟随清单的 `ref`，没有时跟随远端默认分支；清单锁定的 `commit` 与新 commit 不一致时在 stderr 提示（`plan` 会显示 blocked）。`sync` 总是按清单中的 URL 写入完整的 lock 条目，之后 `apply --yes` 安装新 commit。base 与所有 overlay 都不再声明的别名，其 lock 条目在下次 `apply` 时删除，之后用同一别名重新加入的 Git 插件须重新锁定 commit。
 
@@ -440,6 +444,7 @@ dshenv verify --profile web
 ```
 
 - 没有设置 `DSHENV_DSH_URL` 时，使用 `dshenv web start` 为该 Profile 启动并仍在运行的 dsh web（见第 24 节）。
+- `--timeout <秒>` 在结果仍是 `loading`、`not-loaded`、`still-loaded`（DSH 可能还在热加载）时每秒再查一次，最多等这么久，与 `apply --verify-timeout` 相同；默认 0，只查一次。
 - 也可以用 `dshenv verify --profile web --start` 临时启动一个（`dsh --profile web --no-open --port 0`），核对完即停止；它不读取 `DSHENV_DSH_URL`，Profile 须已存在。
 - 显式给出地址只能用环境变量 `DSHENV_DSH_URL`，没有对应的命令行参数。地址等同于登录凭据，dshenv 不会输出或记录其中的 token；默认只连本机，连其他主机需加 `--allow-remote`，且地址必须是 https（明文 http 会把 token 暴露在网络上）。
 - 只适用于 `dsh web`；headless、sdk、acp 运行不开 web 服务，无法核对（`--start` 以退出码 3 报 `Profile <p> runs <应用包>, not dsh web`）。
@@ -595,7 +600,7 @@ dshenv remove agent-teams -p web
 DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.profile.bundles` 里选中才加载（DSH Web 插件页"官方"一组里的开关就是这个）：
 
 - `dshenv plugins official` 从 DSH 的安装位置读出这些 bundle（DSH 自带、不属于 Profile 模板的 bundle），并标出清单在哪些 Profile 里声明了它们；`-p` 只看一个 Profile，`--json` 输出 `dshVersion` 与 `bundles`。列表随 DSH 版本变化：0.2.1-alpha.1 有 agent-team-profile、voice-input-bundle、auto-review、inspector-profile 四个，0.2.0-rc.2 用 schedule-bundle 代替 inspector-profile。找不到 DSH 的安装位置时以退出码 4 报错。
-- 用 `install in-box:<包> -p <profile>` 声明，`apply` 只把它加进 `dsh.profile.bundles`，不写 `dependencies`、不跑 npm；版本总是跟随已安装的 DSH，所以不受第三方插件的 peer 范围限制。`disable` / `remove` 把它从列表里去掉。
+- 用 `install in-box:<包> -p <profile>` 声明，默认别名去掉 `dsh-experimental-` 前缀和 `-profile`、`-bundle` 后缀（如 `agent-team`、`voice-input`、`auto-review`、`inspector`；`capture` 也这样命名），`apply` 只把它加进 `dsh.profile.bundles`，不写 `dependencies`、不跑 npm；版本总是跟随已安装的 DSH，所以不受第三方插件的 peer 范围限制。`disable` / `remove` 把它从列表里去掉。
 - Profile 还不存在、而名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先运行一次 `dsh --profile <名字> --dump-config`，让 DSH 按自己的模板创建它（预览在 `Profiles DSH creates from its own template first` 下列出，`--json` 为 `createdProfiles`），再写 bundle 与补丁；apply 失败回滚时删掉这个新建的 Profile。其他名字 DSH 不会自己创建，仍为 `blocked`，要先装一个 npm 插件进去。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
 
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。

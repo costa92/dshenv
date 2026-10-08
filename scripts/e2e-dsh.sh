@@ -200,7 +200,7 @@ step "apply Git source install" 0 "${run[@]}" apply --yes
 step "plan clean after Git install" 0 "${run[@]}" plan
 echo "// upstream change" >>"$git_origin/index.js"
 commit_all "$git_origin" upstream
-step "source sync fast-forwards the clone" 0 "${run[@]}" source sync --profile web --as "$git_alias" --ref main
+step "source sync fast-forwards the clone" 0 "${run[@]}" source sync --profile web --as "$git_alias" --ref main --yes
 step "lock follows the pulled commit" 0 json_true "$envctl/lock.json" "v.profiles.web.plugins['$git_alias']?.source?.commit === '$(git -C "$git_origin" rev-parse HEAD)'"
 step "plan sees the pulled commit as an update" 2 "${run[@]}" plan
 step "apply Git update" 0 "${run[@]}" apply --yes

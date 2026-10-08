@@ -194,6 +194,8 @@ export interface FastForwardOptions {
   detachedRef?: string;
   // Commit dependent metadata before accepting the move; failure restores the checkout.
   afterUpdate?: (result: { previousCommit: string; newCommit: string }) => Promise<void>;
+  // Fetch and resolve where the checkout would move, but leave it and the metadata where they are.
+  dryRun?: boolean;
 }
 
 export async function safeFastForwardManagedGit(
@@ -242,6 +244,9 @@ export async function safeFastForwardManagedGit(
   }
   // merge --ff-only to a commit behind HEAD says "Already up to date" and succeeds, moving nothing.
   const ahead = await execa('git', ['merge-base', '--is-ancestor', 'HEAD', resolved.stdout.trim()], { ...isolatedGit(), cwd: repoDir, shell: false, reject: false, timeout: 5000 });
+  if (options.dryRun && (ahead.exitCode === 0 || options.managed)) {
+    return { previousCommit, newCommit: resolved.stdout.trim() };
+  }
   if (ahead.exitCode === 0) {
     await execa('git', ['merge', '--ff-only', target], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 10000 });
   } else if (options.managed) {

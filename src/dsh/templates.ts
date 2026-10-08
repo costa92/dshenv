@@ -20,3 +20,9 @@ export const DSH_TEMPLATE_BUNDLES: ReadonlySet<string> = new Set([
   '@deepseek-ai/dsh-acp-app',
   '@deepseek-ai/dsh-sdk-minimal'
 ]);
+
+// DSH names its official bundles @deepseek-ai/dsh-experimental-<what>[-profile|-bundle]; the alias keeps the <what>.
+export function officialBundleAlias(packageName: string): string | undefined {
+  const match = /^@deepseek-ai\/dsh-experimental-(.+?)(?:-profile|-bundle)?$/.exec(packageName);
+  return match?.[1];
+}

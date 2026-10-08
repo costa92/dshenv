@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { officialBundleAlias } from '../dsh/templates.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { EnvironmentInventory } from '../inventory/profile-reader.js';
 import type {
@@ -37,7 +38,7 @@ function parseGitSpec(spec: string): { url: string; commit?: string; ref?: strin
 }
 
 function getAliasFromPackageName(pkgName: string, usedKeys: Set<string>): string {
-  let base = pkgName.includes('/') ? pkgName.split('/')[1] : pkgName;
+  let base = officialBundleAlias(pkgName) ?? (pkgName.includes('/') ? pkgName.split('/')[1] : pkgName);
   if (base.startsWith('dsh-')) {
     base = base.slice(4);
   }

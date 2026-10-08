@@ -25,7 +25,7 @@ export function registerOverlayCommands(ctx: CommandContext): void {
   overlayCmd
     .command('use [name]')
     .description('Persist the overlay that later commands on this machine use')
-    .option('--none', 'clear the persisted overlay')
+    .option('--none', 'clear the persisted overlay for every later command (--no-overlay skips it for one command)')
     .action(async (name: string | undefined, cmdOpts: { none?: boolean }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
