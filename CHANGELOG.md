@@ -4,8 +4,13 @@
 
 ## 未发布
 
+### 升级须知
+
+- 本地插件与 skill 的源码摘要改为带长度边界和类型标记的新格式，lock/state 里的旧摘要不再兼容。升级后首次 `plan` 会为本地插件列出一次 `update`，`apply` 成功后写入新摘要。请在 DSH 里修改 skill 之前先执行一次 `apply --yes` 重建 skill 基线；否则只在 DSH 改过的 skill 会被 `plan` 报为清单改动，`pull` 报双侧冲突，需要用 `--prefer` 指定保留哪一侧。回滚到升级前的快照同理，其中的 skill 基线失效，原有 skill 按未管理处理。
+
 ### 修复
 
+- 源码摘要明确分隔文件路径、内容、类型和可执行标记，避免不同文件树因拼接结果相同而漏报变化。
 - 停用的插件不再在 `cordis.patch.yml` 里留着补丁块：DSH 不加载停用的插件，它的补丁每次启动都报 `entry not found`，`plan` 却显示已同步。补丁仍保留在清单里，重新启用后 `apply` 写回。（升级后第一次 `plan` 会为带补丁的停用插件列出一次 `configure`。）
 - 文档说明改清单的命令会按固定格式重写 `manifest.yaml` 与 overlay 文件，去掉其中的注释（包括 `overlay create` 生成的示例注释）。
 - 团队 skill 目录里本机新增的文件算作漂移：`remote show` 列为 `added locally`，`remote sync` 拒绝，`--discard-local-changes` 时一并删掉；此前不报漂移，团队删掉这个 skill 后只剩本机文件，`apply` 会把一个没有 `SKILL.md` 的 skill 装进 DSH。

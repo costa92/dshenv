@@ -20,9 +20,17 @@ export function isUndigestedEntry(name: string): boolean {
 }
 
 // A skill is copied whole, so every file counts, executable bit included; only a plugin source is narrowed to what npm
-// would publish, and its digest never changes with modes, so a plugin recorded before stays in sync.
+// would publish. Length-framed fields keep file names, contents, types and modes unambiguous.
 export async function calculateSourceDigest(dirPath: string, options: { publishedOnly?: boolean; executableBit?: boolean } = {}): Promise<string> {
   const hash = crypto.createHash('sha256');
+  hash.update('dshenv-source-digest-v1\0');
+  const field = (value: string | Buffer): void => {
+    const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : value;
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64BE(BigInt(bytes.length));
+    hash.update(size);
+    hash.update(bytes);
+  };
 
   async function walk(current: string): Promise<string[]> {
     const entries = await fs.promises.readdir(current, { withFileTypes: true });
@@ -47,20 +55,18 @@ export async function calculateSourceDigest(dirPath: string, options: { publishe
   }
 
   const publishes = options.publishedOnly === false ? () => true : await publishedFilter(dirPath);
-  const allFiles = (await walk(dirPath)).filter((file) => publishes(path.relative(dirPath, file).split(path.sep).join('/')));
-  allFiles.sort();
+  const allFiles = (await walk(dirPath))
+    .map((file) => ({ file, relative: path.relative(dirPath, file).split(path.sep).join('/') }))
+    .filter(({ relative }) => publishes(relative))
+    .sort((a, b) => (a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0));
 
-  for (const file of allFiles) {
-    const relative = path.relative(dirPath, file);
-    hash.update(relative);
-    // A symlink counts by where it points; a tree without one digests as it always has.
+  for (const { file, relative } of allFiles) {
     const stat = await fs.promises.lstat(file);
-    const content = stat.isSymbolicLink() ? `\0symlink\0${await fs.promises.readlink(file)}` : await fs.promises.readFile(file);
-    hash.update(content);
-    // Only an executable file adds anything, so a tree without one digests as before.
-    if (options.executableBit && process.platform !== 'win32' && !stat.isSymbolicLink() && (stat.mode & 0o111) !== 0) {
-      hash.update('\0executable');
-    }
+    const executable = options.executableBit && process.platform !== 'win32' && !stat.isSymbolicLink() && (stat.mode & 0o111) !== 0;
+    field(stat.isSymbolicLink() ? 'symlink' : 'file');
+    field(relative);
+    field(stat.isSymbolicLink() ? await fs.promises.readlink(file) : await fs.promises.readFile(file));
+    field(executable ? 'executable' : '');
   }
 
   return hash.digest('hex');
