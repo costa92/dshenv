@@ -9,6 +9,7 @@ import { loadManifest, loadLock, serializeManifest } from '../../src/manifest/fi
 import { buildPlan } from '../../src/planner/plan.js';
 import { readEnvironmentInventory } from '../../src/inventory/profile-reader.js';
 import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
+import { acquireEnvironmentLock } from '../../src/io/lock.js';
 
 describe('CLI source clone --profile', () => {
   let tempHome: string;
@@ -85,6 +86,74 @@ describe('CLI source clone --profile', () => {
     if (gitLock.type === 'git') {
       expect(gitLock.commit).toBe(newHead);
     }
+  });
+
+  it('waits for the environment lock before moving the clone or reading the manifest', async () => {
+    const run = (args: string[]) => runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+    expect(await run(['source', 'clone', upstream, '-p', 'web', '--as', 'demo'])).toBe(0);
+    fs.writeFileSync(path.join(upstream, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: upstream });
+    await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const clone = path.join(paths.managerDir, 'sources', 'web', 'demo-plugin');
+    const lockBefore = fs.readFileSync(paths.lockFile, 'utf8');
+    const held = await acquireEnvironmentLock(paths);
+    const pending = run(['source', 'sync', '-p', 'web', '--as', 'demo']);
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(`${held.lockPath}.wanted`)).toBe(true));
+      expect(fs.existsSync(path.join(clone, 'next.txt'))).toBe(false);
+      // A concurrent command removed this declaration. Sync must re-read it after locking.
+      const manifest = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+      delete manifest.profiles.web.plugins.demo;
+      fs.writeFileSync(paths.manifestFile, serializeManifest(manifest));
+    } finally {
+      await held.release();
+      await pending;
+    }
+    expect(await pending).not.toBe(0);
+    expect(fs.existsSync(path.join(clone, 'next.txt'))).toBe(false);
+    expect(fs.readFileSync(paths.lockFile, 'utf8')).toBe(lockBefore);
+  });
+
+  it.each(['attached', 'detached'])('restores a %s checkout and leaves the lock unchanged when sync cannot write it', async (mode) => {
+    const run = (args: string[]) => runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+    expect(await run(['source', 'clone', upstream, '-p', 'web', '--as', 'demo'])).toBe(0);
+    const clone = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
+    const git = (args: string[]) => execa('git', args, { cwd: clone });
+    if (mode === 'attached') await git(['checkout', '-b', 'review-branch']);
+    else await git(['checkout', '--detach']);
+    const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
+    const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+    const lockFile = path.join(tempHome, 'envctl', 'lock.json');
+    const before = fs.readFileSync(lockFile, 'utf8');
+    fs.writeFileSync(path.join(upstream, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: upstream });
+    await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
+    const rename = fs.promises.rename.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      if (path.basename(String(to)) === 'lock.json') throw new Error('ENOSPC: test failure');
+      return rename(from, to);
+    });
+    try {
+      expect(await run(['source', 'sync', '-p', 'web', '--as', 'demo', '--ref', 'origin/HEAD'])).not.toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await git(['rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
+    expect((await git(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()).toBe(branch);
+    expect(fs.existsSync(path.join(clone, 'next.txt'))).toBe(false);
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(before);
+  });
+
+  it('refuses a corrupt lock before sync changes the checkout', async () => {
+    const run = (args: string[]) => runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+    expect(await run(['source', 'clone', upstream, '-p', 'web', '--as', 'demo'])).toBe(0);
+    fs.writeFileSync(path.join(upstream, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: upstream });
+    await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
+    fs.writeFileSync(path.join(tempHome, 'envctl', 'lock.json'), '{broken');
+    expect(await run(['source', 'sync', '-p', 'web', '--as', 'demo'])).not.toBe(0);
+    expect(fs.existsSync(path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin', 'next.txt'))).toBe(false);
   });
 
   it('still takes the ref as a second positional argument', async () => {

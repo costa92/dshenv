@@ -320,87 +320,90 @@ export function registerSourceCommands(ctx: CommandContext): void {
       }
       const ref = cmdOpts.ref || targetRef || undefined;
 
-      let resolvedTarget: string;
-      let alias: string | undefined;
-      let packageName: string | undefined;
-      let gitUrl: string | undefined;
-      let declaredRef: string | undefined;
-      let pinnedCommit: string | undefined;
-      if (cmdOpts.profile) {
-        const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
-        alias = cmdOpts.as;
-        if (!alias) {
-          const plugins = manifest.profiles[cmdOpts.profile]?.plugins ?? {};
-          const gitAliases = Object.entries(plugins)
-            .filter(([, plugin]) => plugin.source.type === 'git')
-            .map(([name]) => name);
-          if (gitAliases.length !== 1) {
-            throw new ValidationError('source sync --profile requires --as when the profile does not have exactly one git plugin');
+      // Resolve the manifest and ownership only after locking, and hold it through Git and lock.json writes.
+      const sync = async () => {
+        let resolvedTarget: string;
+        let alias: string | undefined;
+        let packageName: string | undefined;
+        let gitUrl: string | undefined;
+        let declaredRef: string | undefined;
+        let pinnedCommit: string | undefined;
+        if (cmdOpts.profile) {
+          const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
+          alias = cmdOpts.as;
+          if (!alias) {
+            const plugins = manifest.profiles[cmdOpts.profile]?.plugins ?? {};
+            const gitAliases = Object.entries(plugins)
+              .filter(([, plugin]) => plugin.source.type === 'git')
+              .map(([name]) => name);
+            if (gitAliases.length !== 1) {
+              throw new ValidationError('source sync --profile requires --as when the profile does not have exactly one git plugin');
+            }
+            alias = gitAliases[0];
           }
-          alias = gitAliases[0];
+          const plugin = manifest.profiles[cmdOpts.profile]?.plugins[alias];
+          if (!plugin || plugin.source.type !== 'git') {
+            throw new ValidationError(`Git plugin '${alias}' not found in profile '${cmdOpts.profile}'`);
+          }
+          packageName = plugin.package;
+          gitUrl = plugin.source.url;
+          declaredRef = plugin.source.ref;
+          pinnedCommit = plugin.source.commit;
+          resolvedTarget = targetDir
+            ? path.resolve(process.cwd(), targetDir)
+            : managedGitSourceDir(paths.managerDir, cmdOpts.profile, packageName);
+        } else {
+          resolvedTarget = path.resolve(process.cwd(), targetDir ?? '.');
         }
-        const plugin = manifest.profiles[cmdOpts.profile]?.plugins[alias];
-        if (!plugin || plugin.source.type !== 'git') {
-          throw new ValidationError(`Git plugin '${alias}' not found in profile '${cmdOpts.profile}'`);
+
+        if (cmdOpts.profile && alias) {
+          // The lock entry is rewritten after the fast-forward, so refuse before touching the checkout.
+          assertLockEntryNotRemoteOwned(paths, cmdOpts.profile, alias);
         }
-        packageName = plugin.package;
-        gitUrl = plugin.source.url;
-        declaredRef = plugin.source.ref;
-        pinnedCommit = plugin.source.commit;
-        resolvedTarget = targetDir
-          ? path.resolve(process.cwd(), targetDir)
-          : managedGitSourceDir(paths.managerDir, cmdOpts.profile, packageName);
-      } else {
-        resolvedTarget = path.resolve(process.cwd(), targetDir ?? '.');
-      }
+        if (gitUrl) {
+          await assertCheckoutServes(resolvedTarget, gitUrl);
+        }
 
-      if (cmdOpts.profile && alias) {
-        // The lock entry is rewritten after the fast-forward, so refuse before touching the checkout.
-        assertLockEntryNotRemoteOwned(paths, cmdOpts.profile, alias);
-      }
-      if (gitUrl) {
-        await assertCheckoutServes(resolvedTarget, gitUrl);
-      }
-
-      // A clone under envctl/sources is dshenv's to move either way; a pinned clone is detached, so it follows the declared ref.
-      const res = await safeFastForwardManagedGit(resolvedTarget, ref, cmdOpts.profile && !targetDir
-        ? { managed: true, detachedRef: declaredRef ?? 'origin/HEAD' }
-        : {});
-      if (gitUrl) {
-        await assertCommitOnOrigin(resolvedTarget, res.newCommit);
-      }
-
-      if (cmdOpts.profile && alias && packageName && gitUrl) {
-        const profile: string = cmdOpts.profile;
-        const pluginAlias = alias;
-        const lockedPlugin = { package: packageName, source: { type: 'git' as const, url: gitUrl, commit: res.newCommit } };
-        // Written whole: a missing lock or an entry for another source would otherwise leave the new commit unlocked.
-        await withEnvironmentLock(paths, async () => {
-          const lock = fs.existsSync(paths.lockFile)
+        // A clone under envctl/sources is dshenv's to move either way; a pinned clone is detached, so it follows the declared ref.
+        // Validate the lock before moving the checkout, while the same environment lock is held.
+        const lock = cmdOpts.profile
+          ? fs.existsSync(paths.lockFile)
             ? loadLock(fs.readFileSync(paths.lockFile, 'utf8'))
-            : { apiVersion: 'dshenv-lock/v1' as const, profiles: {} };
-          (lock.profiles[profile] ??= { plugins: {} }).plugins[pluginAlias] = lockedPlugin;
-          await writeAtomic(paths.lockFile, serializeLock(lock), 'overwrite');
+            : { apiVersion: 'dshenv-lock/v1' as const, profiles: {} }
+          : null;
+        const res = await safeFastForwardManagedGit(resolvedTarget, ref, {
+          ...(cmdOpts.profile && !targetDir ? { managed: true, detachedRef: declaredRef ?? 'origin/HEAD' } : {}),
+          afterUpdate: async (result) => {
+            if (gitUrl) await assertCommitOnOrigin(resolvedTarget, result.newCommit);
+            if (cmdOpts.profile && alias && packageName && gitUrl && lock) {
+              (lock.profiles[cmdOpts.profile] ??= { plugins: {} }).plugins[alias] = {
+                package: packageName, source: { type: 'git', url: gitUrl, commit: result.newCommit }
+              };
+              await writeAtomic(paths.lockFile, serializeLock(lock), 'overwrite');
+            }
+          }
         });
-      }
 
-      if (cmdOpts.profile && pinnedCommit !== undefined && !isSameCommit(pinnedCommit, res.newCommit)) {
-        ctx.writeErr(
-          `The manifest pins commit ${pinnedCommit} for ${alias} in profile '${cmdOpts.profile}', so plan stays blocked until it matches the locked ${res.newCommit}: ` +
-            `declare it with dshenv install git+${gitUrl}#${res.newCommit} --as ${alias} -p ${cmdOpts.profile}, or move the lock back with --ref ${pinnedCommit}\n`
-        );
-      }
+        if (cmdOpts.profile && pinnedCommit !== undefined && !isSameCommit(pinnedCommit, res.newCommit)) {
+          ctx.writeErr(
+            `The manifest pins commit ${pinnedCommit} for ${alias} in profile '${cmdOpts.profile}', so plan stays blocked until it matches the locked ${res.newCommit}: ` +
+              `declare it with dshenv install git+${gitUrl}#${res.newCommit} --as ${alias} -p ${cmdOpts.profile}, or move the lock back with --ref ${pinnedCommit}\n`
+          );
+        }
 
-      if (opts.json) {
-        writeOut(JSON.stringify({
-          status: 'pulled',
-          target: resolvedTarget,
-          profile: cmdOpts.profile,
-          alias,
-          ...res
-        }, null, 2) + '\n');
-      } else {
-        writeOut(`Updated ${resolvedTarget} from ${res.previousCommit} to ${res.newCommit}\n`);
-      }
+        if (opts.json) {
+          writeOut(JSON.stringify({
+            status: 'pulled',
+            target: resolvedTarget,
+            profile: cmdOpts.profile,
+            alias,
+            ...res
+          }, null, 2) + '\n');
+        } else {
+          writeOut(`Updated ${resolvedTarget} from ${res.previousCommit} to ${res.newCommit}\n`);
+        }
+      };
+      if (cmdOpts.profile) await withEnvironmentLock(paths, sync);
+      else await sync();
     });
 }

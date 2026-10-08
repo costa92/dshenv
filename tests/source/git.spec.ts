@@ -70,6 +70,39 @@ describe('Managed Git Source Lifecycle', () => {
     await expect(safeFastForwardManagedGit(repoDir, 'HEAD')).rejects.toThrow(/dirty working tree/i);
   });
 
+  it('restores the original branch after a managed rewind fails to persist', async () => {
+    const first = (await inspectGitWorkingTree(repoDir)).commit!;
+    fs.writeFileSync(path.join(repoDir, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: repoDir });
+    await execa('git', ['commit', '-m', 'next'], { cwd: repoDir });
+    const before = await inspectGitWorkingTree(repoDir);
+    await expect(safeFastForwardManagedGit(repoDir, first, {
+      managed: true,
+      afterUpdate: async () => { throw new Error('persistence failed'); }
+    })).rejects.toThrow('persistence failed');
+    const after = await inspectGitWorkingTree(repoDir);
+    expect(after.commit).toBe(before.commit);
+    expect(after.branch).toBe(before.branch);
+    expect(after.isDirty).toBe(false);
+    expect(fs.readFileSync(path.join(repoDir, 'next.txt'), 'utf8')).toBe('next');
+  });
+
+  it('keeps external edits and reports failed recovery instead of overwriting them', async () => {
+    const first = (await inspectGitWorkingTree(repoDir)).commit!;
+    fs.writeFileSync(path.join(repoDir, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: repoDir });
+    await execa('git', ['commit', '-m', 'next'], { cwd: repoDir });
+    await expect(safeFastForwardManagedGit(repoDir, first, {
+      managed: true,
+      afterUpdate: async () => {
+        fs.writeFileSync(path.join(repoDir, 'user.txt'), 'keep me');
+        throw new Error('persistence failed');
+      }
+    })).rejects.toThrow(/could not restore.*checkout changed/);
+    expect(fs.readFileSync(path.join(repoDir, 'user.txt'), 'utf8')).toBe('keep me');
+    expect((await inspectGitWorkingTree(repoDir)).commit).toBe(first);
+  });
+
   it.each(['main', 'origin/main'])('fast-forwards a clone to the upstream commit when given %s', async (ref) => {
     await execa('git', ['branch', '-M', 'main'], { cwd: repoDir });
     const cloneDir = path.join(tempDir, 'clone');

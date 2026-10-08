@@ -192,6 +192,8 @@ export interface FastForwardOptions {
   managed?: boolean;
   // What a detached HEAD follows when no ref is given.
   detachedRef?: string;
+  // Commit dependent metadata before accepting the move; failure restores the checkout.
+  afterUpdate?: (result: { previousCommit: string; newCommit: string }) => Promise<void>;
 }
 
 export async function safeFastForwardManagedGit(
@@ -254,10 +256,29 @@ export async function safeFastForwardManagedGit(
     timeout: 5000
   });
 
-  return {
-    previousCommit,
-    newCommit: newCommitRes.stdout.trim()
-  };
+  const result = { previousCommit, newCommit: newCommitRes.stdout.trim() };
+  try {
+    await options.afterUpdate?.(result);
+  } catch (error) {
+    if (result.newCommit !== previousCommit) {
+      try {
+        const current = await inspectGitWorkingTree(repoDir);
+        const expectedBranch = ahead.exitCode === 0 ? status.branch : undefined;
+        if (current.isDirty || current.commit !== result.newCommit || current.branch !== expectedBranch) {
+          throw new Error('checkout changed after sync; refusing to overwrite it');
+        }
+        // --keep refuses conflicting edits, unlike --hard. Preserve the original branch or detached HEAD.
+        await execa('git', ['reset', '--keep', previousCommit], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 10000 });
+        if (status.branch && current.branch !== status.branch) {
+          await execa('git', ['checkout', '--quiet', status.branch], { ...isolatedGit(), cwd: repoDir, shell: false, timeout: 10000 });
+        }
+      } catch (restoreError) {
+        throw new DshError(`Source sync failed: ${error instanceof Error ? error.message : String(error)}; could not restore ${repoDir} to ${previousCommit}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+      }
+    }
+    throw error;
+  }
+  return result;
 }
 
 function comparableGitUrl(url: string): string {
