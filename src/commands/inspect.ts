@@ -39,6 +39,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
   program
     .command('plan')
     .description('Show what apply would change: the manifest against DSH on disk')
+    .addHelpText('after', '\nTo look at one plugin, run dshenv status <alias>.')
     .addOption(filterProfile())
     .action(async (cmdOpts: { profile?: string }) => {
       const opts = program.opts();

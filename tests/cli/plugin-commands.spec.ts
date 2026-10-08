@@ -53,6 +53,10 @@ describe('Convenience Plugin CLI Commands', () => {
       source: { type: 'in-box' }
     });
 
+    expect(await runCli(['install', 'in-box:@deepseek-ai/dsh-experimental-agent-team-profile', '--profile', 'acp', '--dsh-home', tempHome], io)).toBe(0);
+    expect(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.acp.plugins['agent-team']?.package)
+      .toBe('@deepseek-ai/dsh-experimental-agent-team-profile');
+
     expect(await runCli(['install', 'in-box:@deepseek-ai/dsh-base@0.1.7', '--profile', 'acp', '--dsh-home', tempHome], io)).not.toBe(0);
     expect(stderr).toMatch(/in-box.*no version/);
     expect(await runCli(['install', 'in-box:@deepseek-ai/dsh-base', '--package', 'x', '--profile', 'acp', '--dsh-home', tempHome], io)).not.toBe(0);

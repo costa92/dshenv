@@ -13,6 +13,7 @@ export function registerSelfUpdateCommand(ctx: CommandContext, input: SelfUpdate
   program
     .command('self-update')
     .description('Update dshenv itself from the npm registry with the package manager that installed it')
+    .addHelpText('after', '\nRuns right away: it changes no DSH or envctl file, only the dshenv install, so it\ntakes no --yes. Use --check (or --dry-run) to only report.')
     .option('--check', 'only report whether a newer version exists; exit code 2 when one does')
     .option('--dry-run', 'same as --check')
     .option('--to <version>', 'install this exact version instead of the latest, downgrading if it is older')

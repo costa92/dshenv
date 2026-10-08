@@ -6,11 +6,14 @@
 
 ### 升级须知
 
+- `source sync`（旧名 `source pull`）改为不带 `--yes` 只预览，与 `remote sync` 一致：脚本里直接移动检出和 lock 的调用要加 `--yes`。
 - 本地插件与 skill 的源码摘要改为带长度边界和类型标记的新格式，lock/state 里的旧摘要不再兼容。升级后首次 `plan` 会为本地插件列出一次 `update`，`apply` 成功后写入新摘要。请在 DSH 里修改 skill 之前先执行一次 `apply --yes` 重建 skill 基线；否则只在 DSH 改过的 skill 会被 `plan` 报为清单改动，`pull` 报双侧冲突，需要用 `--prefer` 指定保留哪一侧。回滚到升级前的快照同理，其中的 skill 基线失效，原有 skill 按未管理处理。
 - 新快照会保存单个软链接 skill 目录的实际内容；恢复时该 skill 变为独立目录，不改写外部链接目标。旧快照只有链接的内容无法追溯补齐。
 
 ### 新增
 
+- `source sync` 新增 `--dry-run` / `--yes`：不带 `--yes` 时 fetch 后预览检出与 lock 会移到哪个 commit，有变化时退出码 2，不移动任何东西。
+- `verify --timeout <秒>`：插件还在热加载时继续查询，最多等这么久，与 `apply --verify-timeout` 相同；默认只查一次。
 - `dshenv plugins official` 列出已安装的 DSH 自带的官方 bundle（默认关闭、在 Profile 里选中才加载的那些，随 DSH 版本变化），标出清单在哪些 Profile 声明了它们，并给出 `install in-box:` 命令；`--json` 输出 `dshVersion` 与 `bundles`。
 - Profile 还不存在、名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先让 DSH 按自己的模板创建它（`dsh --profile <名字> --dump-config`），再写 bundle 与补丁。此前只声明官方 bundle 或补丁的新 Profile 一律 `blocked`，因为只有安装 npm 插件才会创建 Profile。预览在 `Profiles DSH creates from its own template first` 下列出，`plan --json` 新增 `createdProfiles`。
 - `doctor` 注明数据目录来自 `--envctl-dir`、`DSHENV_HOME` 还是默认位置，`--json` 新增 `paths.managerDirSource`。
@@ -36,6 +39,9 @@
 
 ### 变更
 
+- 声明 DSH 官方 bundle 时（`install in-box:`、`capture`），默认别名去掉 `dsh-experimental-` 前缀和 `-profile`、`-bundle` 后缀，如 `agent-team`、`voice-input`；已有的别名不变。
+- 用旧名 `source pull` 时在 stderr 提醒它就是 `source sync`，方向与 `dshenv pull` 相反。
+- 帮助文字：`self-update` 说明它直接执行、不需要 `--yes`；`overlay use --none` 与 `--no-overlay` 互相说明区别；`plan` 提示用 `status <alias>` 看单个插件。
 - 清单与 overlay 允许 `${...}`：DSH 不做插值，按原文读取。此前一律拒绝，含 `${` 的配置（如提示词模板）所在的整个 Profile 都无法用 `pull` 收回，`config set` 也不会抄 DSH 组合出的配置。
 
 - 版本门禁放行 DSH `0.2.1` 版本族：冒烟（`scripts/smoke-dsh.sh`）默认改用 DSH 官方 bundle `@deepseek-ai/dsh-experimental-agent-team-profile`，它的版本跟随 DSH，0.1.7-rc.2、0.2.0-rc.2、0.2.1-alpha.1 都不带豁免 13 步全部通过；compat 矩阵把 `0.2.1-alpha.1` 列为必须通过。第三方插件是否支持 0.2.1 仍看它自己的 peer 范围（如 `@nanmicoder/dsh-agent-teams@0.1.22` 只到 0.2.0-rc.2，DSH 会拒装）。`dshenv new` 生成的 peer 范围加上 `>=0.2.1-0 <0.3.0-0`，否则按 npm 默认语义 `0.2.1-alpha.1` 不匹配。

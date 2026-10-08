@@ -174,7 +174,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
     .option('--allow-untested-dsh', 'allow untested or experimental DSH runtime versions')
     .option('--json', 'output in structured JSON format')
     .option('--overlay <name>', 'merge envctl/overlays/<name>.yaml over the base manifest for this command')
-    .option('--no-overlay', 'use only the base manifest for this command')
+    .option('--no-overlay', 'use only the base manifest for this command (overlay use --none clears it for good)')
     .configureOutput({
       writeOut: (str) => writeOut(str),
       writeErr: (str) => {

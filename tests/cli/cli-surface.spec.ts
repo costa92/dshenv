@@ -212,6 +212,10 @@ describe('CLI surface', () => {
       expect(source).not.toMatch(/status|pull|targetDir|sourcePath/);
       expect((await run(['source', 'status', '--help'], false)).stdout).toMatch(/Usage: dshenv source show/);
       expect((await run(['source', 'pull', '--help'], false)).stdout).toMatch(/Usage: dshenv source sync/);
+      // pull alone runs the other way, from DSH into the manifest, so the old name says which one it is.
+      const oldName = await run(['source', 'pull', tempHome, '--yes']);
+      expect(oldName.stderr).toContain("'source pull' is an old name for 'source sync', which moves a clone from its upstream Git; 'dshenv pull' takes changes made in DSH into the manifest");
+      expect((await run(['source', 'sync', tempHome, '--yes'])).stderr).not.toContain('old name');
     });
 
     it('runs the plugin commands under plugins too, and keeps the old top-level names', async () => {

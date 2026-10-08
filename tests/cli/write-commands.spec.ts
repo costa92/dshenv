@@ -84,7 +84,7 @@ describe('CLI manifest write commands', () => {
       );
       const git = await run(['update', 'demo', '--to', '1.0.0', '-p', 'web']);
       expect(git.code).toBe(3);
-      expect(git.stderr).toContain('update --to currently supports npm sources only (got git); move a Git plugin with dshenv source sync -p web --as demo [--ref <ref>]');
+      expect(git.stderr).toContain('update --to currently supports npm sources only (got git); move a Git plugin with dshenv source sync -p web --as demo [--ref <ref>] --yes');
       const local = await run(['update', 'mine', '--to', '1.0.0', '-p', 'web']);
       expect(local.code).toBe(3);
       expect(local.stderr).toContain('update --to currently supports npm sources only (got local-link); plan and apply pick up changes in a local source by themselves');
@@ -282,8 +282,8 @@ describe('CLI manifest write commands', () => {
       });
     });
 
-    it('refuses a source pull ref given both ways', async () => {
-      const out = await run(['source', 'pull', tempHome, 'v1', '--ref', 'v2']);
+    it('refuses a source sync ref given both ways', async () => {
+      const out = await run(['source', 'sync', tempHome, 'v1', '--ref', 'v2']);
       expect(out.code).toBe(3);
       expect(out.stderr).toBe('Give the ref once: with --ref or as the second argument, not both\n');
     });

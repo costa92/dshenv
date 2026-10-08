@@ -121,6 +121,24 @@ describe('captureEnvironment and initEnvironment', () => {
     expect(doc.warnings.some((w) => w.includes('odd') && w.includes(spec))).toBe(true);
   });
 
+  it('names an official DSH bundle by what it adds, without the experimental prefix and the -profile or -bundle suffix', () => {
+    const plugin = (name: string) => ({ name, installed: true, sourceType: 'in-box' as const, isSymlink: false, isExternalSymlink: false, enabled: true });
+    const doc = captureEnvironment({
+      profiles: {
+        web: {
+          name: 'web',
+          path: '/dummy',
+          plugins: {
+            '@deepseek-ai/dsh-experimental-agent-team-profile': plugin('@deepseek-ai/dsh-experimental-agent-team-profile'),
+            '@deepseek-ai/dsh-experimental-voice-input-bundle': plugin('@deepseek-ai/dsh-experimental-voice-input-bundle'),
+            '@deepseek-ai/dsh-experimental-auto-review': plugin('@deepseek-ai/dsh-experimental-auto-review')
+          }
+        }
+      }
+    });
+    expect(Object.keys(doc.manifest.profiles.web.plugins).sort()).toEqual(['agent-team', 'auto-review', 'voice-input']);
+  });
+
   it('keeps an installed range as the exact installed version', () => {
     const doc = captureEnvironment({
       profiles: {

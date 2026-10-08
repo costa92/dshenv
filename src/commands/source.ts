@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { Command } from 'commander';
 import { loadManifest, loadLock, serializeLock, serializeManifest } from '../manifest/files.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import {
@@ -27,6 +28,7 @@ import { assertLockEntryNotRemoteOwned, assertNotRemoteOwned } from '../remote/o
 import { assertBaseMergesWithOverlay, resolveWriteLayer, saveOverlay, setOverlayPluginFields, type WriteLayer } from '../overlay/write.js';
 import { overlayFilePath, type OverlaySelection } from '../overlay/selection.js';
 import { isSameCommit } from '../resources/plugin.js';
+import { reportPreview } from './confirm.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { PluginSource } from '../domain.js';
 import { resolveCliPaths, resolveCliOverlay, profileOption, aliasOption, assertKnownProfile, writeLayer, type CommandContext } from './context.js';
@@ -312,13 +314,20 @@ export function registerSourceCommands(ctx: CommandContext): void {
     .option('-p, --profile <name>', 'update this profile\'s managed clone under envctl/sources and its lock commit, instead of a directory', profileOption)
     .option('--as <alias>', 'manifest alias when --profile is set', aliasOption)
     .option('--ref <ref>', 'commit or ref to fast-forward to (default: the upstream of the checked-out branch)')
-    .action(async (targetDir: string | undefined, targetRef: string | undefined, cmdOpts) => {
+    .option('--dry-run', 'show where the checkout and lock would move without moving them; exit code 2 when they would')
+    .option('-y, --yes', 'move them; without it source sync only previews, like --dry-run')
+    .action(async (targetDir: string | undefined, targetRef: string | undefined, cmdOpts, command: Command) => {
+      // dshenv pull runs the other way, so the old name says which of the two this is.
+      if (command.parent?.args[0] === 'pull') {
+        ctx.writeErr("'source pull' is an old name for 'source sync', which moves a clone from its upstream Git; 'dshenv pull' takes changes made in DSH into the manifest\n");
+      }
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
       if (cmdOpts.ref !== undefined && targetRef !== undefined) {
         throw new ValidationError('Give the ref once: with --ref or as the second argument, not both');
       }
       const ref = cmdOpts.ref || targetRef || undefined;
+      const dryRun = Boolean(cmdOpts.dryRun) || !cmdOpts.yes;
 
       // Resolve the manifest and ownership only after locking, and hold it through Git and lock.json writes.
       const sync = async () => {
@@ -373,6 +382,7 @@ export function registerSourceCommands(ctx: CommandContext): void {
           : null;
         const res = await safeFastForwardManagedGit(resolvedTarget, ref, {
           ...(cmdOpts.profile && !targetDir ? { managed: true, detachedRef: declaredRef ?? 'origin/HEAD' } : {}),
+          dryRun,
           afterUpdate: async (result) => {
             if (gitUrl) await assertCommitOnOrigin(resolvedTarget, result.newCommit);
             if (cmdOpts.profile && alias && packageName && gitUrl && lock) {
@@ -391,6 +401,20 @@ export function registerSourceCommands(ctx: CommandContext): void {
           );
         }
 
+        if (dryRun) {
+          const lockedSource = cmdOpts.profile && alias ? lock?.profiles[cmdOpts.profile]?.plugins[alias]?.source : undefined;
+          const lockMoves = Boolean(cmdOpts.profile) && !(lockedSource?.type === 'git' && isSameCommit(lockedSource.commit, res.newCommit));
+          const pending = res.newCommit !== res.previousCommit || lockMoves;
+          if (opts.json) {
+            writeOut(JSON.stringify({ status: 'preview', target: resolvedTarget, profile: cmdOpts.profile, alias, ...res, pending }, null, 2) + '\n');
+          } else if (pending) {
+            writeOut(`Would update ${resolvedTarget} from ${res.previousCommit} to ${res.newCommit}${lockMoves ? ', and lock that commit' : ''}\n`);
+          } else {
+            writeOut(`${resolvedTarget} is already at ${res.newCommit}${cmdOpts.profile ? ', which the lock pins' : ''}\n`);
+          }
+          reportPreview(ctx, { json: opts.json, dryRun: cmdOpts.dryRun, pending, action: 'sync' });
+          return;
+        }
         if (opts.json) {
           writeOut(JSON.stringify({
             status: 'pulled',

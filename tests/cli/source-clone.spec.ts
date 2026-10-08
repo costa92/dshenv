@@ -77,7 +77,7 @@ describe('CLI source clone --profile', () => {
     const branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: upstream })).stdout.trim();
 
     const code = await runCli([
-      'source', 'pull', '--profile', 'web', '--as', 'demo', '--ref', `origin/${branch}`, '--dsh-home', tempHome
+      'source', 'pull', '--yes', '--profile', 'web', '--as', 'demo', '--ref', `origin/${branch}`, '--dsh-home', tempHome
     ]);
     expect(code).toBe(0);
     const lock = loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8'));
@@ -98,7 +98,7 @@ describe('CLI source clone --profile', () => {
     const clone = path.join(paths.managerDir, 'sources', 'web', 'demo-plugin');
     const lockBefore = fs.readFileSync(paths.lockFile, 'utf8');
     const held = await acquireEnvironmentLock(paths);
-    const pending = run(['source', 'sync', '-p', 'web', '--as', 'demo']);
+    const pending = run(['source', 'sync', '--yes', '-p', 'web', '--as', 'demo']);
     try {
       await vi.waitFor(() => expect(fs.existsSync(`${held.lockPath}.wanted`)).toBe(true));
       expect(fs.existsSync(path.join(clone, 'next.txt'))).toBe(false);
@@ -135,7 +135,7 @@ describe('CLI source clone --profile', () => {
       return rename(from, to);
     });
     try {
-      expect(await run(['source', 'sync', '-p', 'web', '--as', 'demo', '--ref', 'origin/HEAD'])).not.toBe(0);
+      expect(await run(['source', 'sync', '--yes', '-p', 'web', '--as', 'demo', '--ref', 'origin/HEAD'])).not.toBe(0);
     } finally {
       spy.mockRestore();
     }
@@ -152,7 +152,7 @@ describe('CLI source clone --profile', () => {
     await execa('git', ['add', '.'], { cwd: upstream });
     await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
     fs.writeFileSync(path.join(tempHome, 'envctl', 'lock.json'), '{broken');
-    expect(await run(['source', 'sync', '-p', 'web', '--as', 'demo'])).not.toBe(0);
+    expect(await run(['source', 'sync', '--yes', '-p', 'web', '--as', 'demo'])).not.toBe(0);
     expect(fs.existsSync(path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin', 'next.txt'))).toBe(false);
   });
 
@@ -165,7 +165,7 @@ describe('CLI source clone --profile', () => {
     const branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: upstream })).stdout.trim();
     const cloneDir = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
 
-    const code = await runCli(['source', 'pull', cloneDir, `origin/${branch}`, '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome]);
+    const code = await runCli(['source', 'pull', '--yes', cloneDir, `origin/${branch}`, '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome]);
     expect(code).toBe(0);
     const gitLock = loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).profiles.web.plugins.demo.source;
     expect(gitLock.type === 'git' && gitLock.commit).toBe(newHead);
@@ -178,7 +178,7 @@ describe('CLI source clone --profile', () => {
     await execa('git', ['clone', '--quiet', upstream, other]);
     await execa('git', ['remote', 'set-url', 'origin', 'https://example.com/someone/else.git'], { cwd: other });
     let stderr = '';
-    const code = await runCli(['source', 'pull', other, 'HEAD', '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+    const code = await runCli(['source', 'pull', '--yes', other, 'HEAD', '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
     expect(code).toBe(3);
     expect(stderr).toMatch(/origin .*not the repository .* declares/);
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).toBe(lockBefore);
@@ -192,7 +192,7 @@ describe('CLI source clone --profile', () => {
     await execa('git', ['-c', 'user.name=T', '-c', 'user.email=t@e', 'commit', '--quiet', '--allow-empty', '-m', 'unpushed'], { cwd: cloneDir });
     await execa('git', ['checkout', '--quiet', '-'], { cwd: cloneDir });
     let stderr = '';
-    const code = await runCli(['source', 'pull', '--profile', 'web', '--as', 'demo', '--ref', 'local-only', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+    const code = await runCli(['source', 'pull', '--yes', '--profile', 'web', '--as', 'demo', '--ref', 'local-only', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
     expect(code).toBe(3);
     expect(stderr).toMatch(/not on any branch of origin/);
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).toBe(lockBefore);
@@ -326,7 +326,7 @@ describe('CLI source clone --profile', () => {
     const branch = (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: upstream })).stdout.trim();
 
     const code = await runCli(
-      ['source', 'pull', '--profile', 'web', '--as', 'demo', '--ref', `origin/${branch}`, '--dsh-home', tempHome],
+      ['source', 'pull', '--yes', '--profile', 'web', '--as', 'demo', '--ref', `origin/${branch}`, '--dsh-home', tempHome],
       { stdout: () => {}, stderr: () => {} }
     );
     expect(code).toBe(0);
@@ -476,7 +476,7 @@ describe('CLI source clone --profile', () => {
     const previous = process.cwd();
     process.chdir(checkout);
     try {
-      expect(await runCli(['source', 'sync', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} })).toBe(0);
+      expect(await runCli(['source', 'sync', '--yes', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} })).toBe(0);
     } finally {
       process.chdir(previous);
     }
@@ -539,6 +539,34 @@ describe('CLI source clone --profile', () => {
       return head(upstream);
     };
 
+    it('only previews without --yes, as remote sync does: exit 2, neither the clone nor the lock moves', async () => {
+      const url = pathToFileURL(upstream).href;
+      expect((await run(['install', `git+${url}`, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      expect((await run(['source', 'clone', url, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      const clone = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
+      const first = await head(clone);
+      const second = await commitUpstream();
+
+      for (const args of [[], ['--dry-run']]) {
+        let stdout = '';
+        let stderr = '';
+        const code = await runCli(['source', 'sync', '--profile', 'web', '--as', 'demo', ...args, '--dsh-home', tempHome], {
+          stdout: (chunk) => { stdout += chunk; },
+          stderr: (chunk) => { stderr += chunk; }
+        });
+        expect(code).toBe(2);
+        expect(stdout).toContain(`Would update ${clone} from ${first} to ${second}`);
+        expect(stderr).toContain('Nothing was changed.');
+        expect(await head(clone)).toBe(first);
+        expect(locked()).toBe(first);
+      }
+
+      expect((await run(['source', 'sync', '--profile', 'web', '--as', 'demo', '--yes'])).code).toBe(0);
+      expect(locked()).toBe(second);
+      const settled = await run(['source', 'sync', '--profile', 'web', '--as', 'demo']);
+      expect(settled.code).toBe(0);
+    });
+
     it('moves a pinned clone on to the default branch, says the manifest still pins the old commit, and moves back with --ref', async () => {
       const url = pathToFileURL(upstream).href;
       const first = await head(upstream);
@@ -546,12 +574,12 @@ describe('CLI source clone --profile', () => {
       expect((await run(['source', 'clone', url, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
       const second = await commitUpstream();
 
-      const forward = await run(['source', 'sync', '--profile', 'web', '--as', 'demo']);
+      const forward = await run(['source', 'sync', '--yes', '--profile', 'web', '--as', 'demo']);
       expect(forward.code).toBe(0);
       expect(locked()).toBe(second);
       expect(forward.stderr).toContain(`The manifest pins commit ${first} for demo in profile 'web', so plan stays blocked until it matches the locked ${second}`);
 
-      const back = await run(['source', 'sync', '--profile', 'web', '--as', 'demo', '--ref', first]);
+      const back = await run(['source', 'sync', '--yes', '--profile', 'web', '--as', 'demo', '--ref', first]);
       expect(back).toEqual({ code: 0, stderr: '' });
       expect(locked()).toBe(first);
       expect(await head(path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin'))).toBe(first);
@@ -562,8 +590,8 @@ describe('CLI source clone --profile', () => {
       await execa('git', ['clone', '-q', upstream, checkout]);
       const first = await head(checkout);
       await commitUpstream();
-      expect((await run(['source', 'sync', checkout])).code).toBe(0);
-      const back = await run(['source', 'sync', checkout, '--ref', first]);
+      expect((await run(['source', 'sync', '--yes', checkout])).code).toBe(0);
+      const back = await run(['source', 'sync', '--yes', checkout, '--ref', first]);
       expect(back.code).toBe(3);
       expect(back.stderr).toContain('is not ahead of the checked-out commit; source sync only fast-forwards a checkout outside envctl');
     });
@@ -574,7 +602,7 @@ describe('CLI source clone --profile', () => {
       const second = await commitUpstream();
       const out = await run(['install', `git+${url}#${second}`, '--profile', 'web', '--as', 'demo']);
       expect(out.code).toBe(0);
-      expect(out.stderr).toContain(`lock.json pins demo to ${locked()}; lock ${second} with: dshenv source sync --profile web --as demo --ref ${second}`);
+      expect(out.stderr).toContain(`lock.json pins demo to ${locked()}; lock ${second} with: dshenv source sync --profile web --as demo --ref ${second} --yes`);
     });
   });
 });
