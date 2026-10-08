@@ -78,6 +78,10 @@ export function mergeManifest(base: EnvironmentManifest, overlay: EnvironmentOve
     ) as EnvironmentManifest['environment'];
   }
 
+  if (overlay.patches) {
+    manifest.patches = mergeProfilePatches(manifest.patches ?? [], overlay.patches);
+  }
+
   for (const [profileName, profileOverlay] of Object.entries(overlay.profiles ?? {})) {
     // Own-property checks, so names like `toString` are not mistaken for inherited members.
     if (!Object.hasOwn(manifest.profiles, profileName)) {

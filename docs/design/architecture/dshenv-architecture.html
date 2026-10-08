@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dshenv 架构图</title>
+<style>
+  :root {
+    --blue: #1f5fd6; --blue-bg: #eef4ff; --blue-line: #b9cff7;
+    --green: #1f9d55; --green-bg: #effaf3; --green-line: #b5e3c6;
+    --orange: #ef7d22; --orange-bg: #fff6ee; --orange-line: #f6cfa9;
+    --ink: #1d2a44; --muted: #5a6780; --card: #ffffff; --warn: #c2410c; --warn-bg: #fff4e5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1600px; background: #f6f8fc; color: var(--ink); font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans", sans-serif; padding: 22px 22px 18px; }
+  h1 { text-align: center; font-size: 40px; font-weight: 900; color: #10306e; letter-spacing: 1px; }
+  .sub { text-align: center; color: var(--muted); font-size: 17px; margin: 6px 0 18px; }
+  .sub b { color: #c7d2e6; margin: 0 8px; }
+  .mono { font-family: "DejaVu Sans Mono", monospace; }
+  .ico { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; font-size: 22px; flex: none; }
+  .ico.sm { width: 30px; height: 30px; font-size: 16px; border-radius: 8px; }
+  .i-blue { background: #dce8ff; } .i-green { background: #d9f3e3; } .i-orange { background: #ffe4cc; } .i-gray { background: #e7ebf3; } .i-red { background: #ffe0dc; }
+
+  /* top row */
+  .top { display: grid; grid-template-columns: 200px 1fr 318px 84px 292px; gap: 10px; align-items: stretch; }
+  .panel { border-radius: 14px; border: 2px solid; background: var(--card); overflow: hidden; display: flex; flex-direction: column; }
+  .panel > .head { color: #fff; padding: 10px 14px; }
+  .panel > .head .t { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .panel > .head .d { font-size: 12.3px; opacity: .92; margin-top: 2px; }
+  .p-user { border-color: var(--blue-line); background: var(--blue-bg); }
+  .p-user > .head { background: #3b7be8; }
+  .p-ctl { border-color: var(--blue-line); background: var(--blue-bg); }
+  .p-ctl > .head { background: var(--blue); }
+  .p-store { border-color: var(--green-line); background: var(--green-bg); }
+  .p-store > .head { background: var(--green); }
+  .p-run { border-color: var(--orange-line); background: var(--orange-bg); }
+  .p-run > .head { background: var(--orange); }
+
+  .users { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .user { background: #fff; border-radius: 10px; padding: 9px 10px; display: flex; gap: 10px; align-items: flex-start; }
+  .user .n { font-weight: 800; font-size: 15px; }
+  .user .x { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+  .mods { padding: 10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; flex: 1; }
+  .mod { background: #fff; border-radius: 10px; padding: 9px 10px; display: flex; gap: 9px; border: 1px solid #e3ebfb; }
+  .mod .n { color: var(--blue); font-weight: 800; font-size: 14.5px; }
+  .mod .f { font-size: 11px; color: #7a88a3; }
+  .mod ul { list-style: none; font-size: 12.6px; color: #33415c; line-height: 1.5; margin-top: 2px; }
+  .mod ul li::before { content: "• "; color: #8aa5d8; }
+  .mod.plan { border: 1.5px dashed #f0a35e; background: var(--warn-bg); }
+  .mod.plan .n { color: var(--warn); }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 6px; margin-left: 4px; vertical-align: 2px; }
+  .tag.new { background: #dff5e7; color: #157a41; }
+  .tag.todo { background: #ffe6cc; color: var(--warn); }
+
+  .tree { margin: 10px; background: #fff; border-radius: 10px; padding: 10px 12px; font-size: 13px; flex: 1; border: 1px solid #d5eedd; }
+  .tree .root { font-weight: 800; color: var(--green); font-size: 14.5px; margin-bottom: 2px; }
+  .tree .root.o { color: var(--orange); }
+  .tree .row { display: flex; align-items: baseline; gap: 6px; line-height: 1.62; white-space: nowrap; }
+  .tree .row .nm { color: #1d2a44; }
+  .tree .row .c { color: #7d8aa3; font-size: 11.8px; }
+  .tree .row.dim .nm { color: #9aa5b8; }
+  .tree .ind { color: #c2cbd9; font-family: "DejaVu Sans Mono", monospace; }
+  .note { margin: 0 10px 10px; font-size: 12px; border-radius: 8px; padding: 6px 9px; line-height: 1.5; }
+  .note.g { background: #dff5e7; color: #14653a; }
+  .note.o { background: #ffe9d6; color: #9a4a0d; }
+
+  .arrows { display: flex; flex-direction: column; justify-content: center; gap: 46px; text-align: center; }
+  .arr { position: relative; height: 54px; }
+  .arr svg { width: 84px; height: 50px; }
+  .arr .lab { font-weight: 900; font-size: 22px; }
+  .arr .lab2 { font-size: 11px; color: var(--muted); line-height: 1.35; }
+
+  /* flows */
+  .flows { margin-top: 14px; border: 2px solid var(--blue-line); border-radius: 14px; background: #fff; display: grid; grid-template-columns: 200px 1fr; }
+  .flows .side { padding: 16px; border-right: 1px solid #e6edf9; }
+  .flows .side .t { font-size: 22px; font-weight: 900; display: flex; gap: 8px; align-items: center; }
+  .flows .side .d { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.55; }
+  .lanes { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .lane { border-radius: 10px; padding: 8px 10px; }
+  .lane.a { background: var(--green-bg); }
+  .lane.b { background: var(--blue-bg); }
+  .lane.c { background: #f4f0ff; }
+  .lane .lt { font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .badge { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; color: #fff; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; }
+  .lane.a .badge { background: var(--green); } .lane.a .lt { color: #146c3c; }
+  .lane.b .badge { background: var(--blue); } .lane.b .lt { color: #173f8f; }
+  .lane.c .badge { background: #7046d6; } .lane.c .lt { color: #4b2aa0; }
+  .steps { display: flex; align-items: stretch; gap: 0; }
+  .step { flex: 1; background: #fff; border-radius: 9px; padding: 7px 8px; display: flex; gap: 7px; align-items: center; border: 1px solid #e3e9f3; min-width: 0; }
+  .step .s1 { font-size: 13px; font-weight: 700; line-height: 1.3; }
+  .step .s2 { font-size: 11px; color: var(--muted); line-height: 1.35; }
+  .chev { flex: none; width: 22px; display: flex; align-items: center; justify-content: center; color: #6f8fd6; font-size: 18px; font-weight: 900; }
+
+  /* bottom */
+  .bottom { margin-top: 14px; display: grid; grid-template-columns: 1.05fr 1fr 1.25fr 1.2fr 0.85fr; gap: 10px; }
+  .card { background: #fff; border-radius: 12px; border: 1.5px solid #dfe6f2; padding: 11px 12px; font-size: 12.3px; }
+  .card .ct { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .prio { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .prio .pb { background: #f5f8fd; border-radius: 8px; padding: 6px 8px; }
+  .prio .pb .h { font-weight: 800; color: #173f8f; font-size: 12.5px; margin-bottom: 2px; }
+  .prio ol { padding-left: 16px; line-height: 1.5; color: #33415c; }
+  .code { background: #f3f6fb; border-radius: 8px; padding: 7px 9px; font-family: "DejaVu Sans Mono", monospace; font-size: 11.3px; color: #24406f; line-height: 1.55; margin-top: 6px; }
+  .code .cm { color: #8a96ab; }
+  .kv { display: grid; grid-template-columns: 76px 1fr; gap: 5px 8px; align-items: start; line-height: 1.45; }
+  .kv .k { font-weight: 800; display: flex; gap: 5px; align-items: center; }
+  .kv .v { color: #33415c; }
+  .todo-box { margin-top: 7px; background: var(--warn-bg); color: var(--warn); border-radius: 7px; padding: 5px 8px; font-size: 11.6px; line-height: 1.45; border: 1px dashed #f3b47c; }
+  .sec { display: flex; gap: 8px; align-items: flex-start; padding: 6px 7px; border-radius: 8px; background: #f7f9fc; margin-bottom: 5px; line-height: 1.42; }
+  .sec .h { font-weight: 800; min-width: 62px; }
+  .plat { display: flex; flex-direction: column; gap: 6px; line-height: 1.35; }
+  .plat div { display: flex; gap: 7px; align-items: center; }
+  .plat b { font-size: 12.5px; }
+  .plat span { color: var(--muted); font-size: 11.2px; display: block; }
+
+  .legend { margin-top: 10px; display: flex; justify-content: center; gap: 22px; font-size: 12.5px; color: var(--muted); }
+  .legend i { font-style: normal; }
+</style>
+</head>
+<body>
+  <h1>dshenv 当前配置管理架构</h1>
+  <div class="sub">控制平面与运行平面分离<b>•</b>数据目录独立可配置（DSHENV_HOME）<b>•</b>声明式清单 + 精确锁<b>•</b>预览后应用<b>•</b>双向同步<b>•</b>多环境 Overlay<b>•</b>团队 Remote</div>
+
+  <div class="top">
+    <!-- users -->
+    <div class="panel p-user">
+      <div class="head"><div class="t">👥 用户 / 操作入口</div><div class="d">多种方式使用 dshenv</div></div>
+      <div class="users">
+        <div class="user"><span class="ico i-blue">⌨️</span><div><div class="n">CLI 命令</div><div class="x">init · plan · apply<br>pull · status · doctor<br>rollback · migrate</div></div></div>
+        <div class="user"><span class="ico i-blue">🧑‍💻</span><div><div class="n">开发者</div><div class="x">new 脚手架<br>source clone / sync<br>install 本地插件</div></div></div>
+        <div class="user"><span class="ico i-blue">⚙️</span><div><div class="n">CI / 自动化</div><div class="x">plan 退出码 2 = 漂移<br>全部命令支持 --json</div></div></div>
+        <div class="user"><span class="ico i-blue">🤝</span><div><div class="n">团队</div><div class="x">remote add / sync<br>订阅团队配置仓库</div></div></div>
+      </div>
+    </div>
+
+    <!-- control plane -->
+    <div class="panel p-ctl">
+      <div class="head"><div class="t">⚙️ 控制平面 · dshenv</div><div class="d">负责配置的解析、校验、规划、同步和状态维护（Control Plane）</div></div>
+      <div class="mods">
+        <div class="mod"><span class="ico sm i-blue">⌨️</span><div><div class="n">CLI</div><div class="f mono">src/cli.ts · commands/</div><ul><li>命令与参数解析</li><li>预览 / --yes 门禁</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">📂</span><div><div class="n">Path Resolver<span class="tag new">新</span></div><div class="f mono">environment/paths.ts</div><ul><li>DSH 主目录 / 数据目录</li><li>参数 &gt; 环境变量 &gt; 默认</li><li>拒绝软链接</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">📄</span><div><div class="n">Config Loader</div><div class="f mono">manifest/ · overlay/</div><ul><li>zod 严格校验</li><li>Base + Overlay 合并</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">📋</span><div><div class="n">Manifest Manager</div><div class="f mono">manifest-write · overlay/write</div><ul><li>install / config set …</li><li>Manifest / Lock 写入</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🔍</span><div><div class="n">Plan Engine</div><div class="f mono">planner/plan.ts</div><ul><li>插件 · 补丁 · 全局补丁 · skill</li><li>全局覆盖 Profile 条目检测</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🔄</span><div><div class="n">Sync Engine</div><div class="f mono">apply/ · import/pull · remote/</div><ul><li>Apply / Pull 双向</li><li>团队 remote 同步</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🗄️</span><div><div class="n">Backup / Rollback</div><div class="f mono">io/backup · rollback/ · gc/</div><ul><li>变更前快照</li><li>回滚 · 过期清理</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">📊</span><div><div class="n">State &amp; Lock</div><div class="f mono">state.json · io/lock · journal</div><ul><li>所有权与同步基线</li><li>环境锁 · 操作日志</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🔌</span><div><div class="n">DSH Adapter</div><div class="f mono">src/dsh/</div><ul><li>版本门禁 · 能力探测</li><li>调用 dsh plugin / web</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🚚</span><div><div class="n">Migrate<span class="tag new">新</span></div><div class="f mono">environment/migrate.ts</div><ul><li>锁内复制 · 核对 · 改名</li><li>改写旧路径 · 留下 dshenv.moved</li></ul></div></div>
+        <div class="mod"><span class="ico sm i-blue">🛡️</span><div><div class="n">凭据防护</div><div class="f mono">manifest/schema.ts</div><ul><li>拒绝带凭据 Git URL</li><li>清单不允许 ${…}</li></ul></div></div>
+        <div class="mod plan"><span class="ico sm i-orange">🔐</span><div><div class="n">Secret Guard<span class="tag todo">规划中</span></div><div class="f mono">security/secrets.ts</div><ul><li>明文密钥检查</li><li>推荐 *Env 写法</li></ul></div></div>
+      </div>
+    </div>
+
+    <!-- store -->
+    <div class="panel p-store">
+      <div class="head"><div class="t">🗃️ 独立配置存储</div><div class="d"><b>DSHENV_HOME</b> · dshenv 自有数据目录，可放在任意文件系统</div></div>
+      <div class="tree">
+        <div class="root">📁 &lt;DSHENV_HOME&gt;/ <span style="font-weight:400;color:#7d8aa3;font-size:12px">默认 &lt;DSH_HOME&gt;/envctl</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 manifest.yaml</span><span class="c"># 期望状态（含全局层）</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 lock.json</span><span class="c"># 精确版本 / 提交 / 摘要</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 state.json</span><span class="c"># 所有权与同步基线</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 overlay-selection.json</span><span class="c"># 本机选择</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 overlays/</span><span class="c"># 多环境差异</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 skills/</span><span class="c"># 声明的 Skills</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 sources/</span><span class="c"># 受管 Git 克隆</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 remote/ · remote.json</span><span class="c"># 团队仓库</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 backups/</span><span class="c"># 快照</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 trash/</span><span class="c"># 被替换的旧副本</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 logs/</span><span class="c"># journal.jsonl</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 run/</span><span class="c"># dsh web 进程记录</span></div>
+        <div class="row"><span class="ind">└─</span><span class="nm">🔒 dshenv.lock</span><span class="c"># 环境锁</span></div>
+      </div>
+      <div class="note g">✔ 不允许软链接 · <span class="mono">migrate --to &lt;dir&gt;</span> 搬迁并改写旧路径<br>✔ DSH 从不读取此目录</div>
+    </div>
+
+    <!-- arrows -->
+    <div class="arrows">
+      <div>
+        <div class="arr"><svg viewBox="0 0 92 54"><path d="M92 17 H36 V4 L2 27 L36 50 V37 H92 Z" fill="#22a35a"/></svg></div>
+        <div class="lab" style="color:#1f9d55">Pull</div>
+        <div class="lab2">Harness → dshenv<br>收回 DSH 里的改动</div>
+      </div>
+      <div>
+        <div class="arr"><svg viewBox="0 0 92 54"><path d="M0 17 H56 V4 L90 27 L56 50 V37 H0 Z" fill="#2f6fe0"/></svg></div>
+        <div class="lab" style="color:#1f5fd6">Apply</div>
+        <div class="lab2">dshenv → Harness<br>按清单收敛</div>
+      </div>
+    </div>
+
+    <!-- runtime -->
+    <div class="panel p-run">
+      <div class="head"><div class="t">📦 运行平面 · DSH</div><div class="d"><b>DeepSeek Harness</b> · --dsh-home / DSH_HOME / ~/.dsh</div></div>
+      <div class="tree" style="border-color:#f6dcc3">
+        <div class="root o">📁 ~/.dsh/</div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 cordis.patch.yml</span><span class="c"># 全局层</span><span class="tag new">新</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 profiles/&lt;profile&gt;/</span></div>
+        <div class="row"><span class="ind">│ ├─</span><span class="nm">📄 package.json</span><span class="c"># bundles · 依赖</span></div>
+        <div class="row"><span class="ind">│ ├─</span><span class="nm">📄 cordis.patch.yml</span><span class="c"># 受管块</span></div>
+        <div class="row"><span class="ind">│ └─</span><span class="nm">📁 node_modules/</span><span class="c"># DSH 安装</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📁 skills/</span><span class="c"># 复制进来</span></div>
+        <div class="row dim"><span class="ind">├─</span><span class="nm">📁 sessions/</span><span class="c"># 不读不写</span></div>
+        <div class="row dim"><span class="ind">├─</span><span class="nm">📁 storages/</span><span class="c"># 不读不写</span></div>
+        <div class="row dim"><span class="ind">├─</span><span class="nm">📁 logs/</span><span class="c"># 不读不写</span></div>
+        <div class="row dim"><span class="ind">└─</span><span class="nm">🔑 .credentials.yaml</span><span class="c"># 从不触碰</span></div>
+      </div>
+      <div class="note o">dshenv 写入方式：<br>• 插件：调用 <span class="mono">dsh plugin</span>（DSH_HOME=主目录）<br>• 启停：改 <span class="mono">dsh.profile.bundles</span><br>• 配置：Profile 与全局 <span class="mono">cordis.patch.yml</span> 受管块（全局层后应用、同 id 覆盖）<br>• Skills：复制，旧副本进 trash<br>• 外部 skill 目录：<span class="mono">customSkillDirs</span> 由 DSH 直接读<br>✔ DeepSeek Harness 无需任何改动</div>
+    </div>
+  </div>
+
+  <!-- flows -->
+  <div class="flows">
+    <div class="side">
+      <div class="t"><span class="ico i-blue">🔄</span>配置同步流程</div>
+      <div class="d">先预览后执行：不加 <span class="mono">--yes</span> 只预览，有待办时退出码 2。<br><br>写入前打快照，全程持有环境锁，失败自动撤销。</div>
+    </div>
+    <div class="lanes">
+      <div class="lane a">
+        <div class="lt"><span class="badge">A</span>从 Harness 导入配置（Harness → dshenv）· <span class="mono">dshenv pull --yes</span></div>
+        <div class="steps">
+          <div class="step"><span class="ico sm i-green">📂</span><div><div class="s1">读取 DSH 配置</div><div class="s2">Profile 补丁 · 全局补丁<br>Skills</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-green">🧹</span><div><div class="s1">跳过无关数据</div><div class="s2">sessions · logs · node_modules</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-green">🧭</span><div><div class="s1">规范化</div><div class="s2">本机路径 → 本机 overlay<br>${…} 留在 DSH</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-green">⚖️</span><div><div class="s1">三方比较</div><div class="s2">以 state 为基线<br>冲突 --prefer</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-green">🗄️</span><div><div class="s1">快照</div><div class="s2">backups/</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-green">💾</span><div><div class="s1">写回</div><div class="s2">Manifest · Lock · State<br>envctl/skills</div></div></div>
+        </div>
+      </div>
+      <div class="lane b">
+        <div class="lt"><span class="badge">B</span>将配置应用到 Harness（dshenv → Harness）· <span class="mono">dshenv apply --yes</span></div>
+        <div class="steps">
+          <div class="step"><span class="ico sm i-blue">🔒</span><div><div class="s1">环境锁</div><div class="s2">dshenv.lock</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">📄</span><div><div class="s1">加载清单</div><div class="s2">Manifest + Overlay</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">🔌</span><div><div class="s1">DSH 版本门禁</div><div class="s2">能力探测</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">🔍</span><div><div class="s1">Plan</div><div class="s2">install · update · remove<br>enable · configure · skill</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">🗄️</span><div><div class="s1">快照</div><div class="s2">失败自动撤销</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">🚀</span><div><div class="s1">执行</div><div class="s2">dsh plugin · bundles · 补丁块<br>全局补丁 · 复制 skill</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-blue">✅</span><div><div class="s1">复盘收敛</div><div class="s2">重新盘点 · 写 State / Lock</div></div></div>
+        </div>
+      </div>
+      <div class="lane c">
+        <div class="lt"><span class="badge">C</span>迁移数据目录 · <span class="mono">dshenv migrate --to &lt;dir&gt; --yes</span><span class="tag new">新</span></div>
+        <div class="steps">
+          <div class="step"><span class="ico sm i-gray">🧪</span><div><div class="s1">前置校验</div><div class="s2">是数据目录 · 目标为空</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">📑</span><div><div class="s1">锁内复制</div><div class="s2">软链接按内容复制</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">🔎</span><div><div class="s1">核对</div><div class="s2">结构 · 类型 · 大小</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">✏️</span><div><div class="s1">改写旧路径</div><div class="s2">manifest · overlay · lock · backups</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">📦</span><div><div class="s1">改名到目标</div><div class="s2">可跨文件系统</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">🧽</span><div><div class="s1">锁内标记并清空旧目录</div><div class="s2">先写 dshenv.moved · 链接保留</div></div></div><div class="chev">›</div>
+          <div class="step"><span class="ico sm i-gray">👉</span><div><div class="s1">下一步</div><div class="s2">设置 DSHENV_HOME<br>plan → apply</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- bottom -->
+  <div class="bottom">
+    <div class="card">
+      <div class="ct"><span class="ico sm i-blue">🧭</span>目录解析优先级</div>
+      <div class="prio">
+        <div class="pb"><div class="h">dshenv 数据目录</div><ol><li><span class="mono">--envctl-dir</span>（参数）</li><li><span class="mono">DSHENV_HOME</span>（环境变量）</li><li><span class="mono">&lt;DSH_HOME&gt;/envctl</span>（默认）</li></ol></div>
+        <div class="pb"><div class="h">Harness 运行目录</div><ol><li><span class="mono">--dsh-home</span>（参数）</li><li><span class="mono">DSH_HOME</span>（环境变量）</li><li><span class="mono">~/.dsh</span>（默认）</li></ol></div>
+        <div class="pb"><div class="h">DSH 命令</div><ol><li><span class="mono">--harness-source</span> → <span class="mono">DSH_CLI</span></li><li>清单 sourceDir → PATH 中的 dsh</li></ol></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ct"><span class="ico sm i-blue">🧩</span>多环境配置（Base + Overlay）</div>
+      <div class="tree" style="margin:0;padding:6px 8px;border-color:#e3e9f3">
+        <div class="row"><span class="nm">📁 &lt;DSHENV_HOME&gt;/</span></div>
+        <div class="row"><span class="ind">├─</span><span class="nm">📄 manifest.yaml</span><span class="c"># Base</span></div>
+        <div class="row"><span class="ind">└─</span><span class="nm">📁 overlays/</span></div>
+        <div class="row"><span class="ind">&nbsp;&nbsp;&nbsp;├─</span><span class="nm">📄 laptop.yaml</span></div>
+        <div class="row"><span class="ind">&nbsp;&nbsp;&nbsp;├─</span><span class="nm">📄 ci.yaml</span></div>
+        <div class="row"><span class="ind">&nbsp;&nbsp;&nbsp;└─</span><span class="nm">📄 local.yaml</span><span class="c"># pull 写入的本机路径</span></div>
+      </div>
+      <div class="code"><span class="cm"># 选择 overlay</span><br>dshenv overlay use laptop<br>dshenv --overlay ci plan<br>DSHENV_OVERLAY=ci dshenv apply --yes</div>
+    </div>
+
+    <div class="card">
+      <div class="ct"><span class="ico sm i-blue">🧱</span>Skills / Plugins 来源与同步</div>
+      <div class="kv">
+        <div class="k">📚 Skills</div><div class="v"><span class="mono">envctl/skills</span> → 复制到 <span class="mono">~/.dsh/skills</span>；DSH 里的修改由 pull 收回；可快照、回滚</div><div class="k">📁 外部目录</div><div class="v">DSH <span class="mono">customSkillDirs</span> 直接读取任意目录并监视；dshenv 经补丁 + 本机 overlay 管理该配置</div>
+        <div class="k">🔌 Plugins</div><div class="v">npm 精确版本 · git url + commit · <span class="mono">local-link</span> / <span class="mono">local-file</span>（任意路径）· in-box</div>
+        <div class="k">🔁 同步方式</div><div class="v">Skill 复制；本地插件由 pnpm <span class="mono">link:</span> / <span class="mono">file:</span> 引用；不使用 symlink</div>
+        <div class="k">⚔️ 冲突</div><div class="v">默认报错；<span class="mono">--prefer dsh|manifest</span> 指定以哪边为准</div>
+      </div>
+      <div class="todo-box">规划中：冲突跳过 <span class="mono">--prefer skip</span></div>
+    </div>
+
+    <div class="card">
+      <div class="ct"><span class="ico sm i-blue">🛡️</span>数据边界与安全策略</div>
+      <div class="sec"><span class="ico sm i-green">✅</span><div><div class="h">纳入管理</div>Manifest · Lock · Overlays · Skills · 插件来源与版本 · 非敏感配置</div></div>
+      <div class="sec"><span class="ico sm i-gray">⛔</span><div><div class="h">不纳入管理</div>sessions · storages · logs · node_modules · <span class="mono">.credentials.yaml</span></div></div>
+      <div class="sec"><span class="ico sm i-blue">🔒</span><div><div class="h">安全措施</div>预览与 --yes 门禁 · 环境锁 · 原子写 · 快照回滚 · 拒绝路径穿越 · 数据目录不允许软链接 · 拒绝带凭据的 Git URL</div></div>
+      <div class="todo-box">规划中：明文密钥检查（Secret Guard），密钥一律写成 <span class="mono">apiKeyEnv</span> 等环境变量引用</div>
+    </div>
+
+    <div class="card">
+      <div class="ct"><span class="ico sm i-blue">☁️</span>多平台支持</div>
+      <div class="plat">
+        <div><span class="ico sm i-gray">🍎</span><b>macOS / Linux<span>本地开发 · 服务器</span></b></div>
+        <div><span class="ico sm i-gray">🪟</span><b>Windows<span>EPERM 重试 · junction</span></b></div>
+        <div><span class="ico sm i-gray">🐳</span><b>Docker<span>容器示例 · 卷挂载</span></b></div>
+        <div><span class="ico sm i-gray">🔧</span><b>GitHub Actions<span>plan 漂移门禁</span></b></div>
+        <div><span class="ico sm i-gray">💽</span><b>跨文件系统<span>EXDEV 自动回退</span></b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend"><i><span class="tag new">新</span> 本次 feat/envctl-dir 新增</i><i><span class="tag todo">规划中</span> 尚未实现，见《设计文档》</i><i>基于 dshenv 0.10.2 + feat/envctl-dir · 2026-10-08</i></div>
+</body>
+</html>

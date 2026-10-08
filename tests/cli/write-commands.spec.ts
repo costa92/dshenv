@@ -288,6 +288,34 @@ describe('CLI manifest write commands', () => {
       expect(out.stderr).toBe('Give the ref once: with --ref or as the second argument, not both\n');
     });
 
+    it('refuses a plaintext credential in either layer, without echoing it, and writes an *Env key', async () => {
+      const before = manifestText();
+      const refused = await run(['config', 'set', 'agent-teams', 'auth.apiKey', 'sk-live-123', '-p', 'web', '--force']);
+      expect(refused.code).toBe(3);
+      expect(refused.stderr).toContain("Refusing to write a plaintext credential into the manifest (profile 'web' / plugin agent-teams / config.auth.apiKey)");
+      expect(refused.stderr).toContain('*Env');
+      expect(refused.stderr).not.toContain('sk-live-123');
+      expect(manifestText()).toBe(before);
+
+      useOverlay('laptop');
+      const overlayRefused = await run(['config', 'set', 'agent-teams', 'githubToken', 'ghp_x', '-p', 'web', '--layer', 'overlay', '--force']);
+      expect(overlayRefused.code).toBe(3);
+      expect(overlayRefused.stderr).toContain("into overlay 'laptop'");
+
+      expect((await run(['config', 'set', 'agent-teams', 'auth.apiKeyEnv', 'DEEPSEEK_API_KEY', '-p', 'web', '--layer', 'base', '--force'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toMatchObject({ auth: { apiKeyEnv: 'DEEPSEEK_API_KEY' } });
+    });
+
+    it('refuses a new credential value even where the manifest already holds one at the same place', async () => {
+      const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');
+      fs.writeFileSync(manifestFile, `${fs.readFileSync(manifestFile, 'utf8')}patches:\n  - insert: [{ name: x, config: { token: old-secret } }]\n`);
+      const out = await run(['config', 'set', 'agent-teams', 'token', 'old-secret', '-p', 'web', '--force']);
+      expect(out.code).toBe(0);
+      const replaced = await run(['config', 'set', 'agent-teams', 'token', 'new-secret', '-p', 'web', '--force']);
+      expect(replaced.code).toBe(3);
+      expect(replaced.stderr).not.toContain('new-secret');
+    });
+
     it('unsets one key and drops parents it leaves empty', async () => {
       await run(['config', 'set', 'agent-teams', 'mode', 'fast', '-p', 'web']);
       expect((await run(['config', 'unset', 'agent-teams', 'team.lead', '-p', 'web'])).code).toBe(0);
@@ -432,12 +460,11 @@ describe('CLI manifest write commands', () => {
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
       });
 
-      it('does not copy a composed config holding ${...}, which the manifest refuses', async () => {
+      it('copies a composed config holding ${...}, which DSH reads as plain text', async () => {
         fakeDump(`- id: agent-teams\n  name: '${PKG}'\n  config:\n    stateDir: \${HOME}/teams\n`);
         const out = await run(['config', 'set', 'agent-teams', 'memberProvider', 'spawn', '-p', 'web', '--force']);
         expect(out.code).toBe(0);
-        expect(out.stderr).toContain(`The config DSH composes for ${PKG} holds \${...}, which the manifest does not allow, so the patch holds only memberProvider`);
-        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ memberProvider: 'spawn' });
+        expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '${HOME}/teams', memberProvider: 'spawn' });
       });
 
       it('says the defaults are dropped when DSH has no config for the plugin yet', async () => {

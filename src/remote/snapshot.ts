@@ -5,6 +5,7 @@ import { mergeManifest } from '../overlay/merge.js';
 import { isUndigestedEntry } from '../source/local.js';
 import { listTree, readBlob } from './git.js';
 import { lockEntryDigests, lockEntryId } from './lock-entries.js';
+import { ENV_KEY_ADVICE, documentSecrets } from '../security/secrets.js';
 import { isRemoteFileKey, overlayNameFromKey, sha256Hex, type RemoteLockEntries } from './schema.js';
 
 export interface RemoteSnapshot {
@@ -99,12 +100,16 @@ function hasJsExpression(value: unknown): boolean {
 
 // dshenv writes { __jsExpr } as a cordis `!!js` value, which DSH evaluates; a team must not ship code onto every machine.
 function assertNoJsExpressions(
-  profiles: Record<string, { plugins?: Record<string, { patches?: unknown[] }>; patches?: unknown[] }> | undefined
+  profiles: Record<string, { plugins?: Record<string, { patches?: unknown[] }>; patches?: unknown[] }> | undefined,
+  globalPatches?: unknown[]
 ): void {
   const refuse = (owner: string) =>
     new ValidationError(
       `${owner} patch has a JavaScript expression (__jsExpr) that DSH would run; set it in a local overlay, not in a team configuration`
     );
+  if (hasJsExpression(globalPatches)) {
+    throw refuse('Global');
+  }
   for (const [profile, { plugins, patches }] of Object.entries(profiles ?? {})) {
     if (hasJsExpression(patches)) {
       throw refuse(`Profile '${profile}'`);
@@ -114,6 +119,14 @@ function assertNoJsExpressions(
         throw refuse(`Plugin '${lockEntryId(profile, alias)}'`);
       }
     }
+  }
+}
+
+// A team repository is shared by every member, so a credential committed there leaks to all of them.
+function assertNoPlaintextSecrets(doc: Parameters<typeof documentSecrets>[0]): void {
+  const found = documentSecrets(doc);
+  if (found.length > 0) {
+    throw new ValidationError(`Holds plaintext credentials (${found.map((secret) => secret.location).join(', ')}), which a team configuration must not carry; ${ENV_KEY_ADVICE}`);
   }
 }
 
@@ -175,7 +188,8 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
     const parsed = loadManifest(files['manifest.yaml'].toString('utf8'));
     assertNoLocalEnvironment(parsed.environment);
     assertNoLocalPluginSources(parsed.profiles);
-    assertNoJsExpressions(parsed.profiles);
+    assertNoJsExpressions(parsed.profiles, parsed.patches);
+    assertNoPlaintextSecrets(parsed);
     return parsed;
   });
   const lockText = lockData?.toString('utf8') ?? null;
@@ -220,7 +234,8 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
       const overlay = parseOverlay(files[key].toString('utf8'), where(key));
       assertNoLocalEnvironment(overlay.environment);
       assertNoLocalPluginSources(overlay.profiles);
-      assertNoJsExpressions(overlay.profiles);
+      assertNoJsExpressions(overlay.profiles, overlay.patches);
+      assertNoPlaintextSecrets(overlay);
       mergeManifest(manifest, overlay, name);
     });
   }

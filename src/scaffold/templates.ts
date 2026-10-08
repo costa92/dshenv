@@ -7,7 +7,8 @@ export const COMPONENT_KINDS: readonly ComponentKind[] = ['skill', 'agent', 'too
 export type TemplateVariant = 'skill' | 'agent' | 'tool' | 'tool-ts' | 'mcp';
 
 // DSH checks @deepseek-ai/dsh-* peers against its own version with prereleases included; templates need 0.1.7+ (agent presets, linked peer lookup).
-export const PEER_RANGE = '>=0.1.7-0 <0.2.0-0';
+// One range per minor: npm and pnpm match a prerelease such as 0.2.0-rc.2 only against a bound on its own version.
+export const PEER_RANGE = '>=0.1.7-0 <0.2.0-0 || >=0.2.0-0 <0.3.0-0';
 export const ComponentNameRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 // Walks up from this module so both src/ (tsx) and the bundled lib/ find the package's templates.

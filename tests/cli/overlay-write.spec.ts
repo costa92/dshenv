@@ -287,12 +287,10 @@ warnings: []
     expect(fs.existsSync(target)).toBe(false);
   });
 
-  it('refuses an overlay write of ${...}, as a base write is refused, and leaves the overlay loadable', async () => {
-    const overlayBefore = fs.readFileSync(overlayFile(), 'utf8');
+  it('writes ${...} into an overlay as plain text, which DSH does not interpolate', async () => {
     const set = await run(['config', 'set', 'shared', 'greeting', 'hi ${USER}', '--profile', 'web', '--layer', 'overlay']);
-    expect(set.code).toBe(3);
-    expect(set.stderr).toMatch(/interpolations \$\{\.\.\.\} are not allowed/);
-    expect(fs.readFileSync(overlayFile(), 'utf8')).toBe(overlayBefore);
+    expect(set.code).toBe(0);
+    expect(fs.readFileSync(overlayFile(), 'utf8')).toContain('hi ${USER}');
     expect((await run(['plugins', 'list', '--profile', 'web'])).code).toBe(0);
   });
 

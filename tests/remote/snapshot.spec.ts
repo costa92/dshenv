@@ -200,12 +200,42 @@ describe('loadRemoteSnapshot', () => {
       /^Remote file envctl\/manifest\.yaml: Plugin 'web\/shared' patch has a JavaScript expression \(__jsExpr\)/
     ],
     [
+      'manifest with a JavaScript expression in a global patch',
+      {
+        'envctl/manifest.yaml': `${TEAM_MANIFEST}patches:\n  - id: persona\n    disabled: { __jsExpr: "process.exit()" }\n`
+      },
+      /^Remote file envctl\/manifest\.yaml: Global patch has a JavaScript expression \(__jsExpr\)/
+    ],
+    [
+      'overlay with a JavaScript expression in a global patch',
+      {
+        'envctl/manifest.yaml': TEAM_MANIFEST,
+        'envctl/overlays/dev.yaml': 'apiVersion: dshenv-overlay/v1\npatches:\n  - id: persona\n    disabled: { __jsExpr: "1" }\n'
+      },
+      /^Remote file envctl\/overlays\/dev\.yaml: Global patch has a JavaScript expression \(__jsExpr\)/
+    ],
+    [
       'overlay with a JavaScript expression in a profile patch',
       {
         'envctl/manifest.yaml': TEAM_MANIFEST,
         'envctl/overlays/dev.yaml': 'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    patches:\n      - id: persona\n        disabled: { __jsExpr: "1" }\n'
       },
       /^Remote file envctl\/overlays\/dev\.yaml: Profile 'web' patch has a JavaScript expression \(__jsExpr\)/
+    ],
+    [
+      'manifest with a plaintext credential in a plugin patch',
+      {
+        'envctl/manifest.yaml': `${TEAM_MANIFEST}        patches:\n          - id: shared\n            config: { apiKey: sk-team-123 }\n`
+      },
+      /^Remote file envctl\/manifest\.yaml: Holds plaintext credentials \(profile 'web' \/ plugin shared \/ config\.apiKey\), which a team configuration must not carry; use an \*Env key/
+    ],
+    [
+      'overlay with a plaintext credential in a global patch',
+      {
+        'envctl/manifest.yaml': TEAM_MANIFEST,
+        'envctl/overlays/dev.yaml': 'apiVersion: dshenv-overlay/v1\npatches:\n  - id: llm\n    config: { clientSecret: s }\n'
+      },
+      /^Remote file envctl\/overlays\/dev\.yaml: Holds plaintext credentials \(the global patches \/ llm \/ config\.clientSecret\)/
     ],
     [
       'pair of overlays differing only by case',

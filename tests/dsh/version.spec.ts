@@ -16,9 +16,15 @@ describe('knownDshFamily', () => {
   it.each(['0.1.7', '0.1.7-rc.2'])('接受已知族 %s', value => {
     expect(knownDshFamily(value)).toBe('0.1.7')
   })
+  it.each(['0.2.0', '0.2.0-rc.1', '0.2.0-rc.2'])('接受已知族 %s', value => {
+    expect(knownDshFamily(value)).toBe('0.2.0')
+  })
   it.each([
     '0.1.70',
     '0.1.8',
+    '0.2.1-alpha.1',
+    '0.2.00',
+    '0.20.0',
     '0.0.1',
     '',
     'v0.1.7',
@@ -52,14 +58,20 @@ describe('isCompatibleDshVersion', () => {
     expect(res.isUntested).toBe(false);
   });
 
-  it('rejects version 0.0.1, 0.1.8, or 0.2.0 by default without override', () => {
+  it('accepts exact certified 0.2.0 versions', () => {
+    const res = isCompatibleDshVersion('0.2.0-rc.2');
+    expect(res.compatible).toBe(true);
+    expect(res.isUntested).toBe(false);
+  });
+
+  it('rejects version 0.0.1, 0.1.8, or 0.2.1 by default without override', () => {
     expect(isCompatibleDshVersion('0.0.1').compatible).toBe(false);
     expect(isCompatibleDshVersion('0.1.8').compatible).toBe(false);
-    expect(isCompatibleDshVersion('0.2.0').compatible).toBe(false);
+    expect(isCompatibleDshVersion('0.2.1-alpha.1').compatible).toBe(false);
   });
 
   it('accepts version with allowUntested override', () => {
-    const res = isCompatibleDshVersion('0.2.0', { allowUntested: true });
+    const res = isCompatibleDshVersion('0.2.1', { allowUntested: true });
     expect(res.compatible).toBe(true);
     expect(res.isUntested).toBe(true);
     expect(res.reason).toContain('--allow-untested-dsh');

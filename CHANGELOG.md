@@ -9,11 +9,41 @@
 - 本地插件与 skill 的源码摘要改为带长度边界和类型标记的新格式，lock/state 里的旧摘要不再兼容。升级后首次 `plan` 会为本地插件列出一次 `update`，`apply` 成功后写入新摘要。请在 DSH 里修改 skill 之前先执行一次 `apply --yes` 重建 skill 基线；否则只在 DSH 改过的 skill 会被 `plan` 报为清单改动，`pull` 报双侧冲突，需要用 `--prefer` 指定保留哪一侧。回滚到升级前的快照同理，其中的 skill 基线失效，原有 skill 按未管理处理。
 - 新快照会保存单个软链接 skill 目录的实际内容；恢复时该 skill 变为独立目录，不改写外部链接目标。旧快照只有链接的内容无法追溯补齐。
 
+### 新增
+
+- 管理全局补丁 `$DSH_HOME/cordis.patch.yml`：清单与 overlay 新增顶层 `patches:`，`apply` 写进该文件的受管块，`pull`（不带 `--profile` 时）收回手写的条目，`plan` 列出未纳管的全局条目，并提示被全局条目覆盖、实际不生效的 Profile 条目。`--profile` 不涉及全局文件，但仍提示全局条目对该 Profile 的覆盖；覆盖按字段比较，全局条目写了 `disabled` 的 id 单独注明（DSH 插件页启停不了它）；`plan --json` 新增 `homePatchOperations`、`unmanagedHomePatches`、`shadowedPatches`（项里的 `disabled` 列出这类 id）。
+- dshenv 数据目录可以放在 DSH 主目录之外：`--envctl-dir <path>` 或环境变量 `DSHENV_HOME` 指定，默认仍是 `<DSH 主目录>/envctl`。DSH 不读这个目录，无需改动 DSH。
+- `dshenv migrate --to <dir> --yes` 把现有数据目录搬到新位置：
+  - 先复制并核对，再在持有环境锁时先写下记着新位置的 `dshenv.moved`，然后清空旧目录（先删 `manifest.yaml`、`lock.json`、`state.json`）。之后在旧位置运行的命令——包括搬迁时正在等锁的——以退出码 3 拒绝并给出新位置，不会在旧位置悄悄建出新环境；清空中途失败时旧位置也已有标记。
+  - 软链接形式的数据目录按内容复制，链接与目标都保留，只在目标里写 `dshenv.moved`；路径结尾带分隔符时同样按软链接处理。
+  - 不是 dshenv 数据目录（没有 `manifest.yaml`、`lock.json`、`state.json`）的不搬；再次对旧位置运行会说明已移到哪里，也可以把数据目录移回原处。
+  - 清单、overlay、lock 与 `backups/` 快照（含 `existing-overlays/`）中指向旧数据目录内部的路径改写为新位置；读不了的快照原样保留并列出。之后 `plan` / `apply --yes` 让 DSH 按新路径重装对应插件。
+  - 数据目录与 DSH 主目录在不同文件系统上时，skill 移入 trash 改为复制后删除。
+- `init` 持环境锁执行。
+- 明文密钥检查：补丁里凭据类的键名（以 `apiKey`、`secret`、`secretKey`、`privateKey`、`accessKey`、`password`、`token`、`Authorization`、`credentials` 结尾，或以 `PAT` 结尾，如 `OPENAI_API_KEY`、`clientSecret`、`AWS_SECRET_ACCESS_KEY`、`GH_PAT`；以 `Env` 结尾的如 `apiKeyEnv` 除外，`maxTokens`、`max_token` 这类计数也不算）下的非空字符串，`password` 类键下的数字，任何键下带密码或 token 的 URL（如 `postgres://u:pw@host/db`），以及 MCP 客户端行（`@deepseek-ai/dsh-mcp-client`）`headers` 里的全部值；它的 `env` 按键名判断。输出只给出 `目标 / 条目 / 键路径`，从不打印值；判断"新的"明文按值比较，清单里已有的同一个值不算新。
+  - `pull` 不收含新明文的条目，把它们留在 `cordis.patch.yml` 里、放到 dshenv 受管块之后（它可能覆盖块里条目插入的行），同一 Profile 的其他条目照常同步。新明文写进了 dshenv 受管块时，这个目标的补丁不收，`apply` 也被阻断，直到在 DSH 里改成 `*Env` 写法；`--prefer skip` 时它算作跳过。清单里已有的明文旁边改了别的字段，照常收回。
+  - `config set`、`tools config set` 等写清单或 overlay 的命令拒绝写入新的明文值（退出码 3），包括替换已有的明文值。
+  - `plan`、`status`、`doctor` 在清单或 overlay 已有明文时在 stderr 警告，不影响退出码。
+  - 团队仓库的清单或 overlay 含明文时，`remote add` / `sync` 拒绝。
+- `apply` 先用 `dsh --dump-config` 在临时的 DSH 主目录副本里组合一遍要写入的 Profile 补丁与全局补丁：预览列出 DSH 会因为 id 匹配不到（或 `name` 不符）而跳过的条目。`apply --yes` 只在两种情况下停下、不做任何改动：Profile 条目的 id 现在在任何一层都匹配得到、写入后却匹配不到；全局条目的 id 在每个已有 Profile 里都没有对应的行。已经匹配不到的 id（例如 0.2 起移进 preset 的 `time-context`）换层也照常放行；本次 apply 要装、启用、停用或卸载插件的 Profile 不检查，因为它的行要等插件步骤之后才确定。预览的 `--json` 新增 `patchTargets`。
+- 全局补丁有变化时，`apply` 探测每个已有 Profile 的热重载状态，热重载关闭的列为需要重启。
+- `status` 与 `doctor` 报告 DSH 加载时跳过的 bundle（`dsh: skipping profile bundle …`），`status` 因此为 `degraded`（退出码 5）。`status` 只在 DSH 版本通过门禁时才运行 `--dump-config`，DSH 每次运行它都会重写 Profile 的 `cordis.yml`。`status` 还列出各 Profile `compatibility.json` 里 DSH 认可的版本豁免（不合规的记录在 stderr 警告），它们绑定精确的 DSH 版本，不进清单；以及清单仍启用的退役 bundle。给出插件时只列与它有关的项。`status --json` 新增 `skippedBundles`、`versionExemptions`、`retiredBundles`。
+- `pull --prefer skip`：两边都改过的补丁目标（一个 Profile 或全局层）和 skill 原样跳过，基线不动，下次 `pull` 仍报告，其余照常收进清单。有跳过时退出码为 6，`--json` 的 `skipped` 列出它们。
+- 清单声明并启用了已退役的 bundle（`@deepseek-ai/dsh-experimental-schedule-bundle`，DSH 0.2.1-alpha.1 退役）时，`plan` 警告并给出 `remove` 命令（别名只在 overlay 里声明时带 `--layer overlay`）：DSH 0.2.1 每次加载都会把它从 Profile 删掉，它会一直显示为漂移。`plan --json` 新增 `retiredBundles`。
+
+### 变更
+
+- 清单与 overlay 允许 `${...}`：DSH 不做插值，按原文读取。此前一律拒绝，含 `${` 的配置（如提示词模板）所在的整个 Profile 都无法用 `pull` 收回，`config set` 也不会抄 DSH 组合出的配置。
+
+- 版本门禁放行 DSH `0.2.0` 版本族（npm `0.2.0-rc.2` 冒烟全部通过），`0.1.7` 照常放行；`0.2.1-alpha.1` 等其他版本仍需 `--allow-untested-dsh`。`dshenv new` 生成的插件 peer 范围改为 `>=0.1.7-0 <0.2.0-0 || >=0.2.0-0 <0.3.0-0`，可以装进 DSH 0.2（按 npm 的预发布版规则，每个 minor 单写一段，`0.2.0-rc.2` 才能匹配）。兼容性冒烟的默认插件改为 `@nanmicoder/dsh-agent-teams@0.1.22`。
+- 数据目录本身或其中任何顶层条目（文件或目录）是软链接时，命令以退出码 3 拒绝，并提示改用 `DSHENV_HOME` 与 `migrate`。此前用软链接把它们放到别处的环境，升级后先运行 `dshenv migrate --to <新位置> --yes`，再把 `export DSHENV_HOME=<新位置>` 写进 shell 配置、CI 与容器环境；输出里有 `rewrote` 时再 `dshenv apply --yes`，让 DSH 按新路径重装本地插件。
+
 ### 修复
 
 - `source sync -p` 从读取清单、检查团队所有权到更新 Git 与 lock 全程持有环境锁，损坏的 lock 在改源码之前拒绝；提交校验或 lock 写入失败时恢复原提交和分支，如期间出现外部修改则保留并报告恢复失败。
 - 源码摘要明确分隔文件路径、内容、类型和可执行标记，避免不同文件树因拼接结果相同而漏报变化。
 - 单个 skill 目录为软链接时，快照不再随外部目录的修改或删除而改变；技能内部的软链接仍按原样保存。
+- `pull` 把 `insert` 行里以 `./`、`../` 开头的插件名视为本机路径，收进本机 overlay：DSH 按补丁文件所在目录解析它，换一台机器或换一层（Profile 层 / 全局层）就指向别处。此前它进了团队共享的 base 清单。
 - 停用的插件不再在 `cordis.patch.yml` 里留着补丁块：DSH 不加载停用的插件，它的补丁每次启动都报 `entry not found`，`plan` 却显示已同步。补丁仍保留在清单里，重新启用后 `apply` 写回。（升级后第一次 `plan` 会为带补丁的停用插件列出一次 `configure`。）
 - 文档说明改清单的命令会按固定格式重写 `manifest.yaml` 与 overlay 文件，去掉其中的注释（包括 `overlay create` 生成的示例注释）。
 - 团队 skill 目录里本机新增的文件算作漂移：`remote show` 列为 `added locally`，`remote sync` 拒绝，`--discard-local-changes` 时一并删掉；此前不报漂移，团队删掉这个 skill 后只剩本机文件，`apply` 会把一个没有 `SKILL.md` 的 skill 装进 DSH。
@@ -25,7 +55,7 @@
 - 没有 npm 时 `self-update` 说明 npm 不在 PATH 里；此前报「exit code undefined」。
 - `purge` 预览与真正执行一样拒绝指向 DSH_HOME 之外的补丁文件或受管克隆；此前预览说「Would purge」，加 `--yes` 才拒绝。
 - `init` 遇到没有清单但已有 `lock.json` 或 `state.json` 时，写任何文件之前就拒绝并说明；此前先写出清单再失败，之后再 `init` 报「already initialized」，`state.json` 一直没写出。
-- 容器示例 README 的版本 tag 改为 `v<版本>` 占位（此前停在 `v0.3.0`）；DSH 版本升级文档说明实际生效的门禁是 `isCompatibleDshVersion`，`knownDshFamily` 只被测试引用。
+- 容器示例 README 的版本 tag 改为 `v<版本>` 占位（此前停在 `v0.3.0`）；DSH 版本升级文档说明门禁由 `VERIFIED_FAMILIES` 决定，`isCompatibleDshVersion` 与 `knownDshFamily` 都读它。
 
 ## 0.10.2 - 2026-10-07
 

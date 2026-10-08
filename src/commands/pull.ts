@@ -1,5 +1,6 @@
 import { ValidationError } from '../errors.js';
 import { pullProfilePatches, type PullResult } from '../import/pull.js';
+import { HOME_PATCH_TARGET } from '../profile-patches/entries.js';
 import { reportPreview } from './confirm.js';
 import { resolveCliPaths, resolveCliOverlay, profileOption, PROFILE_FILTER_HELP, type CommandContext } from './context.js';
 
@@ -22,6 +23,12 @@ export function renderPullResult(result: PullResult): string {
     ];
     const layers = `base ${change.base}${change.overlayName ? `, overlay '${change.overlayName}' ${change.overlay}` : ''}`;
     const summary = entries.length > 0 ? entries.join(', ') : 'rewrites the block';
+    // DSH never writes the global file; its entries come from hand edits.
+    if (change.profile === HOME_PATCH_TARGET) {
+      return change.from === 'manifest'
+        ? `[global] keeps the manifest, dropping the hand edits (${layers})`
+        : `[global] from the global file: ${summary} (${layers})`;
+    }
     return change.from === 'manifest'
       ? `[${change.profile}] keeps the manifest, dropping DSH's edits (${layers})`
       : `[${change.profile}] from DSH: ${summary} (${layers})`;
@@ -47,12 +54,12 @@ export function registerPullCommand(ctx: CommandContext): void {
     .command('pull')
     .description('Take plugins, patch entries and loose skills changed in DSH into the manifest')
     .option('-p, --profile <name>', PROFILE_FILTER_HELP, profileOption)
-    .option('--prefer <side>', 'when both DSH and the manifest changed since the last apply: dsh or manifest')
-    .option('--dry-run', 'show what would be taken over without writing; exit code 2 when there is any')
+    .option('--prefer <side>', 'when both DSH and the manifest changed since the last apply: dsh, manifest, or skip to leave it (exit code 6)')
+    .option('--dry-run', 'show what would be taken over without writing; exit code 2 when there is any (6 when --prefer skip left something)')
     .option('-y, --yes', 'take it over; without it pull only previews, like --dry-run')
     .action(async (cmdOpts) => {
-      if (cmdOpts.prefer !== undefined && cmdOpts.prefer !== 'dsh' && cmdOpts.prefer !== 'manifest') {
-        throw new ValidationError(`Invalid --prefer '${cmdOpts.prefer}'; expected dsh or manifest`);
+      if (cmdOpts.prefer !== undefined && !['dsh', 'manifest', 'skip'].includes(cmdOpts.prefer)) {
+        throw new ValidationError(`Invalid --prefer '${cmdOpts.prefer}'; expected dsh, manifest or skip`);
       }
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
@@ -66,5 +73,9 @@ export function registerPullCommand(ctx: CommandContext): void {
       writeOut(opts.json ? `${JSON.stringify(result, null, 2)}\n` : renderPullResult(result));
       const pending = result.changes.length > 0 || Boolean(result.skills) || Boolean(result.plugins);
       reportPreview(ctx, { json: opts.json, dryRun: cmdOpts.dryRun, pending: result.dryRun && pending, action: 'pull' });
+      // Its own code, so a scheduled pull in CI does not read a skipped conflict as success or as a pending preview.
+      if (result.skipped) {
+        ctx.setExitCode(6);
+      }
     });
 }

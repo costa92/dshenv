@@ -9,7 +9,7 @@ version="${1:?usage: scripts/e2e-dsh.sh <dsh-version> [work-dir]}"
 work="${2:-$(mktemp -d)}"
 # An npm plugin compatible with the DSH under test; a local tool plugin covers source updates.
 pkg="${E2E_PLUGIN:-@nanmicoder/dsh-agent-teams}"
-pkg_version="${E2E_PLUGIN_VERSION:-0.1.21}"
+pkg_version="${E2E_PLUGIN_VERSION:-0.1.22}"
 tool="e2e-tool"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dshenv=(node "$root/bin/dshenv.js")

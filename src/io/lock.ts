@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { EnvironmentPaths } from '../environment/paths.js';
+import { assertEnvctlNotMoved } from '../environment/moved.js';
 import { DshError } from '../errors.js';
 import { retryWhileBusy } from './windows-retry.js';
 import { isZombie } from './process-tree.js';
@@ -153,7 +154,15 @@ export async function acquireEnvironmentLock(
   timeoutMs = 5000
 ): Promise<LockHandle> {
   await fs.promises.mkdir(paths.managerDir, { recursive: true });
-  return acquireFileLock(path.join(paths.managerDir, 'dshenv.lock'), 'Environment lock', timeoutMs);
+  const handle = await acquireFileLock(path.join(paths.managerDir, 'dshenv.lock'), 'Environment lock', timeoutMs);
+  // A command that waited for migrate resolved its paths before the move.
+  try {
+    assertEnvctlNotMoved(paths.managerDir);
+  } catch (err) {
+    await handle.release();
+    throw err;
+  }
+  return handle;
 }
 
 // A lock held by a dshenv process through lockFilePath; one whose holder died is taken over.

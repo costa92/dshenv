@@ -12,7 +12,7 @@ import type {
 } from '../domain.js';
 import { ValidationError, missingManifestError } from '../errors.js';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
-import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock, serializeManifest, serializeState, withResources } from '../manifest/files.js';
+import { loadLock, loadManifest, loadState, serializeLock, serializeManifest, serializeState, withResources } from '../manifest/files.js';
 import { captureUnmanagedPlugins, freeAlias, pluginOwnershipRecord, withLinkDigest } from '../resources/plugin.js';
 import { importSkill, ownedSkillDigests, planSkillImport, remoteSkillNames, skillOwnership, summarizeSkillImport, type SkillImportChanges } from '../resources/skill.js';
 import { readOverlay } from '../overlay/effective.js';
@@ -27,9 +27,10 @@ import { createEnvironmentSnapshot, restoreEnvironmentSnapshot } from '../io/bac
 import { appendJournalEntry } from '../io/journal.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { withEnvironmentLock } from '../io/lock.js';
-import { containsLocalPath, diffProfilePatches, localPatchEntries, mergeProfilePatches, overrideKey } from '../profile-patches/entries.js';
+import { HOME_PATCH_TARGET, containsLocalPath, describePatchTarget, diffProfilePatches, localPatchEntries, mergeProfilePatches, overrideKey } from '../profile-patches/entries.js';
 import {
   describeProfilePatchImport,
+  describeSecrets,
   importProfilePatchFile,
   planProfilePatchImport,
   type ProfilePatchImport
@@ -40,8 +41,8 @@ export const LOCAL_OVERLAY = 'local';
 
 export interface PullOptions {
   profiles?: string[];
-  // When both sides changed since the last apply: which one wins.
-  prefer?: 'dsh' | 'manifest';
+  // When both sides changed since the last apply: which one wins, or skip to leave that target as it is.
+  prefer?: 'dsh' | 'manifest' | 'skip';
   dryRun?: boolean;
   selection: OverlaySelection | null;
   // False under --no-overlay, where machine-local entries have no overlay to go to.
@@ -85,17 +86,28 @@ export interface PullResult {
   // Plugins not in the manifest that could not be taken over, as capture reports them.
   warnings?: string[];
   overlayCreated?: string;
+  // Under --prefer skip: the patch targets (a profile, or @home) and skills that changed on both sides, left as they are.
+  skipped?: { patchTargets: string[]; skills: string[] };
   operationId?: string;
   snapshotId?: string;
 }
 
 function effectivePatches(base: EnvironmentManifest, overlay: EnvironmentOverlay | null, name: string | null, profile: string): ProfilePatch[] {
   const manifest = overlay && name ? mergeManifest(base, overlay, name).manifest : base;
-  return manifest.profiles[profile]?.patches ?? [];
+  return basePatchesOf(manifest, profile) ?? [];
+}
+
+// The global target's entries live at the top level of the manifest and the overlay.
+function basePatchesOf(manifest: EnvironmentManifest, profile: string): ProfilePatch[] | undefined {
+  return profile === HOME_PATCH_TARGET ? manifest.patches : manifest.profiles[profile]?.patches;
+}
+
+function overlayPatchesOf(overlay: EnvironmentOverlay | null, profile: string): ProfilePatch[] | undefined {
+  return profile === HOME_PATCH_TARGET ? overlay?.patches : overlay?.profiles?.[profile]?.patches;
 }
 
 function setBasePatches(manifest: EnvironmentManifest, profile: string, entries: ProfilePatch[]): void {
-  const target = (manifest.profiles[profile] ??= { plugins: {} });
+  const target = profile === HOME_PATCH_TARGET ? manifest : (manifest.profiles[profile] ??= { plugins: {} });
   if (entries.length > 0) {
     target.patches = entries;
   } else {
@@ -104,8 +116,7 @@ function setBasePatches(manifest: EnvironmentManifest, profile: string, entries:
 }
 
 function setOverlayPatches(overlay: EnvironmentOverlay, profile: string, entries: ProfilePatch[]): void {
-  const profiles = (overlay.profiles ??= {});
-  const target = (profiles[profile] ??= {});
+  const target = profile === HOME_PATCH_TARGET ? overlay : ((overlay.profiles ??= {})[profile] ??= {});
   if (entries.length > 0) {
     target.patches = entries;
   } else {
@@ -169,26 +180,47 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     }
   }
   const profiles = options.profiles ?? Object.keys(inventory.profiles).sort();
+  // -p pulls one profile; the global file is every profile's, so only a pull of all of them takes it.
+  const homeTargets = options.profiles === undefined && inventory.homePatchesError === undefined ? [HOME_PATCH_TARGET] : [];
 
-  const { reads: allReads, conflicts } = await planProfilePatchImport(
+  // A skipped conflict is read like an unsettled one, then left out instead of refused.
+  const prefer = options.prefer === 'skip' ? undefined : options.prefer;
+  const { reads, conflicts, secrets } = await planProfilePatchImport(
     paths,
-    profiles,
+    [...profiles, ...homeTargets],
     (profile) => effectivePatches(base, selectedOverlay, selectedName, profile),
-    options.prefer
+    prefer
   );
-  // The manifest refuses ${...}; such a profile stays as DSH has it, so the rest of the pull still goes ahead.
-  const interpolated = allReads.filter((read) => read.from === 'dsh' && hasInterpolation(JSON.stringify(read.desired)));
-  const reads = allReads.filter((read) => !interpolated.includes(read));
-  const patchWarnings = interpolated.map(
-    (read) => `Patch entries of profile '${read.profile}' hold \${...}, which the manifest does not allow; left in its cordis.patch.yml, not pulled`
-  );
+  // Plaintext credentials stay out of the manifest and overlays, which are both shared; the rest of the pull goes ahead.
+  const held = secrets.filter((secret) => !secret.managed);
+  const edited = secrets.filter((secret) => secret.managed);
+  const patchWarnings = [
+    ...(held.length > 0
+      ? [`${describeSecrets(held)} holds a plaintext credential; its entry was left in cordis.patch.yml, not pulled. Use an *Env key naming an environment variable instead`]
+      : []),
+    ...(edited.length > 0
+      ? [`${describeSecrets(edited)} was written into the dshenv block as plaintext; its patch entries were not pulled and apply is blocked for it. Use an *Env key naming an environment variable instead`]
+      : []),
+    ...(options.profiles === undefined && inventory.homePatchesError !== undefined
+      ? [`The global cordis.patch.yml was not pulled: ${inventory.homePatchesError}`]
+      : [])
+  ];
   const state = fs.existsSync(paths.stateFile) ? loadState(fs.readFileSync(paths.stateFile, 'utf8')) : null;
-  const skills = options.skills === false ? null : planSkillImport(inventory.skills ?? { declared: {}, live: {} }, ownedSkillDigests(state), options.prefer);
+  const skills = options.skills === false ? null : planSkillImport(inventory.skills ?? { declared: {}, live: {} }, ownedSkillDigests(state), prefer);
   const conflictNames = [
-    ...(conflicts.length > 0 ? [`Profile patches of ${conflicts.join(', ')}`] : []),
+    ...(conflicts.length > 0 ? [`Patch entries of ${conflicts.map(describePatchTarget).join(', ')}`] : []),
     ...(skills && skills.conflicts.length > 0 ? [`skill ${skills.conflicts.join(', ')}`] : [])
   ];
-  if (conflictNames.length > 0) {
+  // A target left for a credential written into its block is skipped too, so a scheduled pull does not read as clean.
+  const blockedTargets = [...new Set(edited.map((secret) => secret.profile))];
+  const skipped = options.prefer === 'skip' && (conflictNames.length > 0 || blockedTargets.length > 0)
+    ? { patchTargets: [...new Set([...conflicts, ...blockedTargets])].sort(), skills: skills?.conflicts ?? [] }
+    : undefined;
+  if (skipped && conflictNames.length > 0) {
+    patchWarnings.push(
+      `${conflictNames.join(' and ')} changed both in DSH and in the manifest since the last apply; skipped, so the next pull reports them again`
+    );
+  } else if (!skipped && conflictNames.length > 0) {
     throw new ValidationError(
       `${conflictNames.join(' and ')} changed both in DSH and in the manifest since the last apply; ` +
         "pass --prefer dsh to keep DSH's version, or --prefer manifest to keep the manifest's"
@@ -239,8 +271,8 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
   const counts = new Map<string, { base: number; overlay: number }>();
   for (const read of reads.filter((entry) => entry.from === 'dsh')) {
     const local = localPatchEntries(read.desired);
-    const basePatches = base.profiles[read.profile]?.patches ?? [];
-    const selectedPatches = selectedOverlay?.profiles?.[read.profile]?.patches;
+    const basePatches = basePatchesOf(base, read.profile) ?? [];
+    const selectedPatches = overlayPatchesOf(selectedOverlay, read.profile);
     const baseEntries = baseOwnedByRemote
       ? basePatches
       : selectedPatches
@@ -254,7 +286,8 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
       setBasePatches(nextBase, read.profile, baseEntries);
     }
     if (overlayEntries.length > 0) {
-      overlayFor(`Profile '${read.profile}' has patch entries with machine-local paths${baseOwnedByRemote ? ' or a team-owned base' : ''}, which belong`);
+      const owner = describePatchTarget(read.profile);
+      overlayFor(`${owner[0].toUpperCase()}${owner.slice(1)} has patch entries with machine-local paths${baseOwnedByRemote ? ' or a team-owned base' : ''}, which belong`);
     }
     if (nextOverlay) {
       setOverlayPatches(nextOverlay, read.profile, overlayEntries);
@@ -346,8 +379,8 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     profile: read.profile,
     from: read.from,
     ...describeProfilePatchImport(read.expected, read.desired),
-    base: counts.get(read.profile)?.base ?? (nextBase.profiles[read.profile]?.patches ?? []).length,
-    overlay: counts.get(read.profile)?.overlay ?? (nextOverlay?.profiles?.[read.profile]?.patches ?? []).length,
+    base: counts.get(read.profile)?.base ?? (basePatchesOf(nextBase, read.profile) ?? []).length,
+    overlay: counts.get(read.profile)?.overlay ?? (overlayPatchesOf(nextOverlay, read.profile) ?? []).length,
     ...(overlayName ? { overlayName } : {})
   }));
   const warnings = [...patchWarnings, ...pluginWarnings, ...(captured?.warnings ?? [])];
@@ -357,7 +390,8 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     ...(skillChanges ? { skills: skillChanges } : {}),
     ...(plugins.length > 0 ? { plugins } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
-    ...(overlayCreated ? { overlayCreated } : {})
+    ...(overlayCreated ? { overlayCreated } : {}),
+    ...(skipped ? { skipped } : {})
   };
   // Checked before the preview returns too, so it does not promise a write --yes then refuses.
   if (nextOverlay && overlayName && !isDeepStrictEqual(nextOverlay, selectedOverlay)) {
@@ -395,7 +429,7 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
       await writeAtomic(paths.stateFile, serializeState(withResources(base, { plugin: ownership, skill })), 'overwrite');
     }
     for (const read of reads) {
-      rewritten.push({ read, written: await importProfilePatchFile(paths, read, merged.profiles[read.profile]?.patches ?? []) });
+      rewritten.push({ read, written: await importProfilePatchFile(paths, read, basePatchesOf(merged, read.profile) ?? []) });
     }
   } catch (err) {
     // DSH may have edited a rewritten file since; its edits win over the undo.

@@ -39,7 +39,8 @@ export const OverlaySchema = z
         ProfileNameKeySchema,
         z.object({ plugins: z.record(PluginAliasSchema, OverlayPluginSchema).optional(), patches: z.array(OverlayProfilePatchSchema).optional() }).strict()
       )
-      .optional()
+      .optional(),
+    patches: z.array(OverlayProfilePatchSchema).optional()
   })
   .strict();
 

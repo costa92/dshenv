@@ -8,7 +8,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/costa92/dshenv.svg)](https://github.com/costa92/dshenv/releases/latest)
 [![Node.js](https://img.shields.io/node/v/@costa92/dshenv.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/github/package-json/dependency-version/costa92/dshenv/dev/typescript.svg)](https://www.typescriptlang.org/)
-[![DSH](https://img.shields.io/badge/DSH-0.1.7-blue.svg)](docs/DSH版本升级.md)
+[![DSH](https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0-blue.svg)](docs/DSH版本升级.md)
 [![Last commit](https://img.shields.io/github/last-commit/costa92/dshenv.svg)](https://github.com/costa92/dshenv/commits/master)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -39,6 +39,19 @@ Harness 主目录解析优先级：
 1. CLI 参数 `--dsh-home <path>`
 2. 环境变量 `DSH_HOME`（为空或只有空白时视为未设置，与 DSH 一致）
 3. 默认用户主目录 `~/.dsh`
+
+dshenv 数据目录（清单、lock、state、overlay、声明的 skill、快照、trash、日志）解析优先级：
+1. CLI 参数 `--envctl-dir <path>`
+2. 环境变量 `DSHENV_HOME`（为空或只有空白时视为未设置）
+3. 默认 `<Harness 主目录>/envctl`
+
+DSH 读写 Profile，读 `<Harness 主目录>/skills` 与全局 `cordis.patch.yml`，从不读这个目录，所以它可以放在 `~/.dsh` 之外，不改 DSH。数据目录本身及其中任何顶层条目（文件或目录）不能是软链接，否则命令以退出码 3 拒绝。把已有的数据目录（包括软链接方式放在别处的）搬到新位置用 `dshenv migrate --to <dir> --yes`：先完整复制并核对，再在旧位置留下记着新位置的 `dshenv.moved` 并清空旧目录，之后在旧位置运行的命令以退出码 3 拒绝并给出新位置；软链接形式的旧目录保留链接和目标。清单、overlay、lock 与快照里指向旧目录内部的路径会改写为新位置，之后运行 `plan` 与 `apply --yes` 让 DSH 按新路径重装本地插件。细节见[设计文档 4.3、4.4 节](docs/design/2026-10-08-设计文档.md)。搬完后设置 `DSHENV_HOME=<dir>`。迁移在当前解析出的数据目录上进行，所以要在设置 `DSHENV_HOME` 之前运行；设置了新位置但其中还没有清单、而默认位置有清单时，命令会在 stderr 提示迁移。
+
+```bash
+dshenv migrate --to ~/dshenv-data          # 预览，退出码 2
+dshenv migrate --to ~/dshenv-data --yes
+export DSHENV_HOME=~/dshenv-data
+```
 
 开头的 `~`、`~/`、`~\` 按 DSH 的规则展开为用户主目录（`.env`、Docker `ENV` 里的 `~` 不经 shell 展开）；其余相对路径先按当前工作目录转为绝对路径。盘点读取 Profile 的 `package.json`（`dsh.profile.bundles` + `dependencies`），不把 `node_modules` 中的传递依赖当成插件，也不跟随 Profile 外的 symlink 读取包元数据。
 
@@ -141,7 +154,7 @@ dshenv disable agent-teams     # 等同于 dshenv disable agent-teams -p web
 哪些命令要加 `--yes`，只看一条规则：
 
 - **只改 envctl 声明（清单、overlay、lock）的命令直接写入**：`install`、`update`、`remove`、`enable`、`disable`、`plugins config set|unset`、`tools enable|disable|config set|unset|reset`、`overlay create|use`、`new -p`、`source clone -p`、`source sync -p`。它们不碰 DSH profile，改错了再改回来即可，DSH 要等 `apply --yes` 才变。
-- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`remote add|sync|remove`。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并在 stderr 提示加 `--yes` 重跑，所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。
+- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`migrate`、`remote add|sync|remove`。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并在 stderr 提示加 `--yes` 重跑，所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。
 
 `remove` 仍接受 `-y`（旧脚本兼容），但它只改清单，加不加都一样。
 
@@ -215,6 +228,8 @@ dshenv plan
 dshenv plan -p web     # 只看一个 Profile
 ```
 
+`plan` 只读文件，不调用 DSH。清单声明并启用了 DSH 0.2.1-alpha.1 退役的 bundle（`@deepseek-ai/dsh-experimental-schedule-bundle`，Web 组合自己挂载 Schedule）时，`plan` 在 `Retired bundles` 下警告并给出 `dshenv remove <别名> -p <profile>`（别名只在当前 overlay 里声明时加 `--layer overlay`）：DSH 0.2.1 每次加载都会把它从 Profile 的 bundle 列表里删掉，它会一直显示为漂移。`--json` 新增 `retiredBundles`（overlay 声明的项带 `layer: "overlay"`）。
+
 ### 6. `dshenv apply`
 基于受管清单与锁文件，将期望状态安全收敛应用到 DSH 运行环境中（具备独占写锁、快照备份与操作日志审计）。
 
@@ -253,7 +268,16 @@ Restart DSH to load:
 Then run: dshenv mark-restarted
 ```
 
+全局补丁（`$DSH_HOME/cordis.patch.yml`）有变化时，它对每个 Profile 都生效，所以对每个已创建的 Profile 都探测一次，热加载关闭的列为 `[<profile>] configure global patches`。
+
 `--dry-run` 在每个计划操作后标注 `(no restart)` 或 `(restart required: <原因>)`。`--json` 结果新增 `restart: { notRequired, required }`，每项为 `{ profile, package, kind, reason, detail? }`，`reason` 取 `hmr-on`、`package-update`、`hmr-off`、`hmr-unknown`，`detail` 只在 `hmr-unknown` 时出现，为探测失败的原因。Profile 尚未创建时不运行探测（`--dump-config` 会创建 Profile），按无法判断处理。
+
+要写 Profile 补丁或全局补丁时，`apply`（含预览）先在一个临时的 DSH 主目录副本里放上要写入的补丁文件（主目录下的目录用软链接、其余文件不放入；Profile 目录里的目录用软链接、文件复制；真实的 DSH 主目录不变），对相关 Profile 运行 `dsh --profile <p> --dump-config`，读 DSH 在 stderr 里报告的被跳过的条目（`patch: entry "<id>" not found`，以及 `name mismatch … skipping`），再对当前文件运行一次作对比：
+
+- 预览在 `Patch entries DSH would skip, as no row has their id` 下列出全部匹配不到的条目，本次新增的标为 `(new: apply --yes stops on it)`；`--json` 结果新增 `patchTargets: { unmatched, added, unchecked }`。
+- `apply --yes` 只在两种情况下以退出码 3 停下，什么都不改：Profile 条目的 id 现在在任何一层都匹配得到，写入后却匹配不到；全局条目的 id 在每个已有 Profile 里都没有对应的行（全局条目指向部分 Profile 才有的行属正常，只列出不阻断）。已经匹配不到的 id 照常放行，换到另一层也一样，例如 0.2 起移进 preset 的 `time-context`。
+- 本次 apply 要装、启用、停用或卸载插件的 Profile 不检查：插件提供的行要等插件步骤之后才有，在 `Patch ids not checked` 下注明；有这样的 Profile 时全局条目也不阻断。
+- 检测不到的情况：`--dump-config` 不加载插件、不求值 `!!js`，所以条件表达式的结果、插件启动失败都发现不了；被策略禁用的插件行仍算存在。找不到 DSH 时不检查；DSH 运行失败时在 `Patch ids not checked` 下说明原因，不阻断。
 
 `apply --yes --verify` 在应用之后，对每个有操作的 Profile 像 `verify` 一样核对运行中的 `dsh web`（先看 `DSHENV_DSH_URL`，否则用 `dshenv web start` 启动的那个；有操作的 Profile 不止一个时不用 `DSHENV_DSH_URL`，因为无法判断它指向哪个 Profile，只核对各自 `web start` 启动的那个），并输出同样的核对结果。结果仍可能随热加载改变（`loading`、`not-loaded`、`still-loaded`）时每秒再问一次，最多等 `--verify-timeout <秒>`（默认 30）；`failed`、`missing` 等立即报告。退出码与 `verify` 相同：都已加载为 0，超时仍在加载为 2，加载失败或核对出错为 5。没有 `dsh web` 在运行的 Profile 在 stderr 注明 `Not verified`，不影响退出码；不带 `--yes` 时拒绝 `--verify`（退出码 3）。`--json` 结果新增 `verify`，每项为 `{ profile, endpoint, results }`、`{ profile, skipped }` 或 `{ profile, error }`。
 
@@ -332,6 +356,12 @@ dshenv plugins config unset agent-teams taskPlanning --profile web     # 删掉�
 
 ### 13. `dshenv status`
 显示当前环境状态摘要与操作统计；给出插件别名或包名时只显示该插件。有待执行的变更时退出码 2，环境已同步时为 0；环境降级（`degraded`）或 DSH 不兼容（`incompatible`）时为 5。
+
+- 能找到 DSH、且版本通过门禁时，对每个已创建的 Profile 运行一次 `dsh --dump-config`（DSH 每次都会重写 Profile 的 `cordis.yml`，0.2.1 还会从 `package.json` 删掉退役 bundle），列出 DSH 加载时跳过的 bundle（`Bundles DSH skips when it loads the profile`）。这类 bundle 声明了、装上了，却没有运行，`plan` 看不出来，所以 `status` 记为 `degraded`。`doctor` 在 `Profile bundles` 下给出同样的列表。
+- 列出各 Profile `compatibility.json` 里的版本豁免（`dsh plugin allow-version` 写入的 `包@版本 -> DSH 版本`）。只列 DSH 认可的记录（精确的 `包名@版本` 映射到精确的 DSH 版本），其余记录和读不了的文件在 stderr 警告。豁免绑定精确的 DSH 版本，换机器或升级 DSH 后就失效，所以不进清单。
+- 列出清单仍启用的退役 bundle（详见 `plan`）。
+- 给出插件时，以上几项只列与它有关的。
+- `--json` 新增 `skippedBundles`、`versionExemptions`、`retiredBundles`。
 
 ```bash
 dshenv status
@@ -478,15 +508,26 @@ dshenv pull                        # 预览，有变更时退出码 2（与 --dr
 dshenv pull --yes                  # 收进清单，并把这些条目整理进 dshenv 的受管块
 dshenv pull --yes --profile web    # 只处理一个 Profile
 dshenv pull --yes --prefer dsh     # DSH 与清单都改过时，以 DSH 为准（--prefer manifest 以清单为准）
+dshenv pull --yes --prefer skip    # 跳过两边都改过的部分，其余照常收进清单；有跳过时退出码 6
 ```
 
 - 条目写进清单的 `profiles.<profile>.patches`，原样保留 `id`、`name`、`config`、`disabled`、`insert` 与 `!!js` 表达式（清单里记作 `{ __jsExpr: ... }`）。
 - 含本机绝对路径（如技能目录）的条目写进当前 overlay；没有选中 overlay 时新建并选中 `local`。带 `--no-overlay` 时遇到这类条目会拒绝。订阅了团队 remote 时基础清单只读，全部条目写进本机 overlay。
-- 自上次 `apply` 以来 DSH 与清单都改过时拒绝执行，需用 `--prefer` 指定以哪一边为准。
+- 自上次 `apply` 以来 DSH 与清单都改过时拒绝执行，需用 `--prefer` 指定以哪一边为准。`--prefer skip` 按补丁目标（一个 Profile 或全局层）和单个 skill 跳过，不是按单个条目：跳过的部分合成一条警告，基线不动，下次 `pull` 仍会报告。有跳过时退出码为 6（即使只是预览，也即使还有别的改动待收：跳过的部分要人来处理，所以 6 优先于 2，与 `plan` 有 blocked 操作时 5 优先于 2 相同；要知道有没有待收的改动看 `--json` 的 `changes`），明文写进受管块而被挡下的目标也算跳过，`--json` 的 `skipped: { patchTargets, skills }` 列出它们，适合 CI 定时同步。
+- 条目里有新的明文密钥时不收。明文指凭据类的键名（以 `apiKey`、`secret`、`secretKey`、`privateKey`、`accessKey`、`password`、`token`、`Authorization`、`credentials` 结尾，或以 `PAT` 结尾，如 `OPENAI_API_KEY`、`clientSecret`、`AWS_SECRET_ACCESS_KEY`、`GH_PAT`；以 `Env` 结尾的如 `apiKeyEnv` 除外，`maxTokens`、`max_token` 这类计数也不算）下的非空字符串，`password` 类键下的数字，任何键下带密码或 token 的 URL（如 `postgres://u:pw@host/db`），以及 MCP 客户端行（`@deepseek-ai/dsh-mcp-client`）`headers` 里的全部值；它的 `env` 按键名判断。清单里已有的同一个值不算新：在 DSH 里改了它旁边的别的字段，照常收回。这样的条目留在 `cordis.patch.yml` 里，放到 dshenv 受管块之后（它可能覆盖块里条目插入的行），同一 Profile 的其他条目照常收进清单；警告给出 `目标 / 条目 / 键路径`，不打印值。清单与 overlay 都会跨机器同步，所以明文也不会转存进 overlay。请改用 `apiKeyEnv: DEEPSEEK_API_KEY` 这类只写环境变量名的写法。明文写进了 dshenv 受管块（在 DSH 界面改了受管的条目）时，这个目标的补丁一条都不收，`plan` 把它的写入标为 blocked，因为 `apply` 会覆盖掉这次改动；在 DSH 里改成 `*Env` 写法后再 `pull`。
+- `${...}` 按原文收进清单：DSH 不做插值。
+- **全局补丁 `$DSH_HOME/cordis.patch.yml`**：DSH 先应用 Profile 自己的补丁，再应用这个文件，所以它对每个 Profile 都生效，而且同 id 时覆盖 Profile 层。DSH 界面从不写它，条目都是手写的。dshenv 把它当作独立的一层管理：
+  - 清单（以及 overlay）的顶层 `patches:` 对应这个文件，写法与 `profiles.<profile>.patches` 相同；`apply` 写进文件里 dshenv 的受管块，受管块之外的手写内容与注释保留；不再声明任何条目时文件写成 `[]`（空文件或只有注释的文件会让 DSH 启动失败）。
+  - 不带 `--profile` 的 `pull` 收回其中手写的条目（输出记为 `[global]`），含本机路径的进 overlay，规则与 Profile 层相同；手改了受管块时 `plan` 提示，`pull --yes` 保留、`apply --yes` 覆盖。
+  - `--profile` 只作用于单个 Profile，`plan`、`apply`、`pull` 带它时都不碰全局文件。
+  - Profile 层（含插件补丁）有与全局文件同 id 的条目，且全局那一条写了 Profile 条目也写的字段时，`plan`（也包括 `plan -p`、`status`、`apply` 预览）在 `Profile patches the global cordis.patch.yml overrides` 下列出：DSH 按字段整体替换，这些字段实际用的是全局那一条。两层写的字段不同（如全局只写 `disabled`、Profile 只写 `config`）时互不覆盖，不算。被覆盖的配置要改清单的顶层 `patches`，不要在 DSH 界面里改：config-editor 拒绝保存这些字段。
+  - 全局条目写了 `disabled` 时，这个 id 无论 Profile 条目写什么都会列出，并单独注明：DSH 插件页通过 Profile 层的 `disabled` 启停插件，全局的值总是优先，在插件页启停不生效。`--json` 的 `shadowedPatches` 项带 `disabled` 列出这些 id。
+  - 文件无法解析时，`apply` 以退出码 5 拒绝写入（原样保留，需手动修好），`pull` 跳过它并给出警告，其余照常。
+  - 团队 remote 的清单与 overlay 同样不允许在顶层 `patches` 里带 `!!js` 表达式。
 - `plan` 在 `Unmanaged plugins` 下列出的插件（装在 Profile 里、清单没有声明）也一并接管，描述方式与 `capture` 相同（别名、来源、版本；只靠 `insert` 加载、不在 bundles 里的记为 `enabled: false`），并像 `adopt` 一样写入 lock 与所有权记录，之后 `plan` 不会要求重装；`local-file` 插件除外：装进 Profile 的是当时的副本，无法证明与源目录一致，下一次 `apply` 会重装一次以记下源码 digest。`local-link`/`local-file` 插件按含本机路径条目的规则写进 overlay（`local-link` 同时记下源码 digest），其余写进基础清单；团队 remote 拥有基础清单时写进 overlay。`adopt` 之后的那次 `pull` 只接管候选清单中的本地来源插件。
 - 写入前先建快照，`dshenv rollback <快照 id> --yes` 可撤销（id 见 `--json` 输出的 `snapshotId`）。
 - `$DSH_HOME/skills` 下的 loose skill 也一并处理：目录复制到 `envctl/skills/<名字>`，DSH 里删掉的技能从清单里删除。`apply` 反向复制，被覆盖或删除的 DSH 副本移进 `envctl/trash`（`gc` 清理）；`plan` 在 `Planned skill changes` 与 `Skills not in the manifest` 下列出技能。`envctl/skills` 可以放进团队配置仓库，随 `remote`/`sync` 同步；团队拥有的技能在 DSH 里改动后 `pull` 会拒绝。Git 标记为可执行的文件同步后保持可执行；只改可执行位的提交也会同步，skill 的摘要同样计入可执行位，所以这类改动会一直到 DSH 里的副本（Windows 没有可执行位，不比较）。
-- `--json` 输出 `{dryRun, changes: [{profile, from, added, changed, removed, base, overlay, overlayName?}], skills?: {added, changed, removed}, plugins?: [{profile, alias, package, sourceType, enabled, layer, overlayName?}], warnings?, overlayCreated?, operationId?, snapshotId?}`；`warnings` 列出无法接管的插件（如 npm 版本不是确定版本）。
+- `--json` 输出 `{dryRun, changes: [{profile, from, added, changed, removed, base, overlay, overlayName?}], skills?: {added, changed, removed}, plugins?: [{profile, alias, package, sourceType, enabled, layer, overlayName?}], warnings?, overlayCreated?, skipped?, operationId?, snapshotId?}`；`warnings` 列出无法接管的插件（如 npm 版本不是确定版本）。
 
 ### 23. `dshenv tools`
 
@@ -567,17 +608,18 @@ dshenv remove agent-teams -p web
 | :--- | :--- |
 | `0` | 成功 / 环境与清单完全同步（Clean） |
 | `1` | 意外失败（如 Git、npm 或网络错误） |
-| `2` | 存在有效变更计划（Drifted，`plan`/`status`/`apply --dry-run`）；不带 `--yes` 的 `apply`、`pull`、`rollback`、`gc`、`purge`、`adopt`、`remote add`、`remote remove`、`remote sync` 预览有待执行的内容；`verify` 有插件仍在加载；`self-update --check` 有可安装的版本 |
+| `2` | 存在有效变更计划（Drifted，`plan`/`status`/`apply --dry-run`）；不带 `--yes` 的 `apply`、`pull`、`rollback`、`gc`、`purge`、`adopt`、`migrate`、`remote add`、`remote remove`、`remote sync` 预览有待执行的内容；`verify` 有插件仍在加载；`self-update --check` 有可安装的版本 |
 | `3` | 用法错误（缺参数、未知选项或命令）或输入、清单格式校验失败（ValidationError）；`--json` 时以 `{"error": {...}}` 输出 |
 | `4` | DSH 运行时能力不支持或未找到（CapabilityError） |
 | `5` | 环境降级或运行时响应异常（DegradedError） |
+| `6` | `pull --prefer skip` 跳过了两边都改过的补丁目标或 skill；预览时也优先于 `2`，待收的改动看 `--json` 的 `changes` |
 
 ---
 
 ## 安全边界与约束
 
 1. **路径约束**：清单中的本地链接和本地文件路径必须为绝对路径；仍应只使用可信源码目录和规范的 npm 包名。Profile 名（清单、overlay、lock 与 `-p`）只能含字母、数字、`.`、`_`、`-`，不能以 `-` 开头，也不能是 `.` 或 `..`；Git 地址与 ref 不能以 `-` 开头，清单中的 `commit` 必须是 7-64 位十六进制 commit id。
-2. **凭据使用约束**：不要把明文密钥写入清单、锁文件、patch 配置或源码 `package.json`。清单与 lock 中带账号密码或 token 的 git URL 会被 schema 拒绝，`capture` 会跳过这类依赖并告警。`doctor` 不回显 `DSH_CLI` 参数，但 `source show --json` 会输出源码包摘要，使用前应检查其中是否含敏感字段。
+2. **凭据使用约束**：不要把明文密钥写入清单、锁文件、patch 配置或源码 `package.json`。清单与 lock 中带账号密码或 token 的 git URL 会被 schema 拒绝，`capture` 会跳过这类依赖并告警。补丁里的明文密钥（规则见 [`pull`](#22-dshenv-pull)）：`pull` 不收；`config set`、`tools config set` 等写清单或 overlay 的命令拒绝写入新的明文（退出码 3）；`plan`、`status`、`doctor` 发现清单或 overlay 已有明文时在 stderr 警告；团队仓库的清单或 overlay 含明文时 `remote add` / `sync` 拒绝。`doctor` 不回显 `DSH_CLI` 参数，但 `source show --json` 会输出源码包摘要，使用前应检查其中是否含敏感字段。
 3. **非受管保护**：实际 Profile 中未写入 `manifest.yaml` 的插件保持 `unmanaged`，不会被自动删除（DSH 创建 Profile 时自带的 base/app bundle 不算 `unmanaged`）。
 4. **锁与管理文件快照**：所有写 `manifest`/overlay/`lock`/`state` 的命令都先获取环境锁（最多等 5 秒）。`apply` 执行前备份当时已经存在的管理文件；失败时只原子恢复它自己会写的 `lock.json` 与 `state.json`（快照中不存在的会被删除），`manifest.yaml`、overlay 与 `envctl/skills` 保持原样，以免覆盖 apply 期间的手工修改；已成功安装的插件在恢复后仍记入所有权；恢复本身失败时错误信息会提示运行 `dshenv rollback <id> --yes`。某一步失败时，错误信息写明失败的步骤（如 `[web] install cc (cc), step 2 of 2`）、本次的 operation id、仍然留在 Profile 里的已装插件，以及回到上一次成功 apply 所用清单的命令 `dshenv rollback <上次的 id> --yes`。apply 还会逆序撤销本工具对 Profile `dsh.profile.bundles` 与 `cordis.patch.yml` 的改动；DSH CLI 已完成的包安装、更新或卸载不会撤销，已成功卸载的包也不会恢复其 bundle 与受管块。失败后应重新运行 `status` 与 `plan`。
 

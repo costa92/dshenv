@@ -20,7 +20,7 @@ export default function setup(): () => void {
   delete process.env.DSHENV_LAYER;
   // The same goes for the rest of the environment dshenv reads: an overlay, a dsh web URL or a DSH home in the
   // developer's shell would point tests at the developer's own setup.
-  const dropped = ['DSHENV_OVERLAY', 'DSHENV_DSH_URL', 'DSH_HOME', 'DSH_PLUGIN_SOURCE_HOME'].map((name) => {
+  const dropped = ['DSHENV_OVERLAY', 'DSHENV_DSH_URL', 'DSH_HOME', 'DSHENV_HOME', 'DSH_PLUGIN_SOURCE_HOME'].map((name) => {
     const value = process.env[name];
     delete process.env[name];
     return [name, value] as const;

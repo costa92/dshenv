@@ -4,7 +4,7 @@ import type { EnvironmentPaths } from '../environment/paths.js';
 import type { SourceType } from '../domain.js';
 import { PackageNameRegex } from '../manifest/schema.js';
 import { extractManagedPatches, needsPatchFileRepair, type ExtractedPatch } from '../patch/patch.js';
-import { readProfilePatchState, type ProfilePatchState } from '../profile-patches/entries.js';
+import { HOME_PATCH_TARGET, readProfilePatchState, type ProfilePatchState } from '../profile-patches/entries.js';
 import { isBundlePackage, readMounts } from '../patch/mount.js';
 import { readSkillInventory, type SkillInventory } from '../resources/skill.js';
 
@@ -40,6 +40,10 @@ export interface ProfileInventory {
 export interface EnvironmentInventory {
   profiles: Record<string, ProfileInventory>;
   skills?: SkillInventory;
+  // $DSH_HOME/cordis.patch.yml; absent when the file does not exist.
+  homePatches?: ProfilePatchState;
+  // Why the global file could not be read; dshenv then leaves it alone.
+  homePatchesError?: string;
 }
 
 const MAX_JSON_SIZE = 1024 * 1024; // 1 MiB
@@ -195,12 +199,25 @@ function nodeModulesPackagePath(profileDir: string, packageName: string): string
   return path.join(profileDir, 'node_modules', ...packageName.split('/'));
 }
 
+function readHomePatches(paths: EnvironmentPaths): Pick<EnvironmentInventory, 'homePatches' | 'homePatchesError'> {
+  const file = path.join(paths.home, 'cordis.patch.yml');
+  try {
+    const stat = fs.statSync(file, { throwIfNoEntry: false });
+    if (!stat) return {};
+    if (stat.size > MAX_JSON_SIZE) return { homePatchesError: `${file} exceeds 1 MiB` };
+    return { homePatches: readProfilePatchState(fs.readFileSync(file, 'utf8'), HOME_PATCH_TARGET) };
+  } catch (err) {
+    return { homePatchesError: `${file}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function readEnvironmentInventory(
   paths: EnvironmentPaths
 ): Promise<EnvironmentInventory> {
   const result: EnvironmentInventory = {
     profiles: {},
-    skills: await readSkillInventory(paths)
+    skills: await readSkillInventory(paths),
+    ...readHomePatches(paths)
   };
 
   if (!fs.existsSync(paths.profilesDir)) {

@@ -4,6 +4,7 @@ import { assertNotReservedKey, assertProfileName, isValidProfileName } from '../
 import { Option, type Command } from 'commander';
 import { ValidationError } from '../errors.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../environment/paths.js';
+import { assertEnvctlNotMoved } from '../environment/moved.js';
 import { resolveOverlaySelection, type OverlaySelection } from '../overlay/selection.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
 import { didYouMean } from './suggest.js';
@@ -15,12 +16,41 @@ export interface CommandContext {
   setExitCode: (code: number) => void;
 }
 
-export function resolveCliPaths(opts: { dshHome?: string }): EnvironmentPaths {
+export const ENVCTL_ENV = 'DSHENV_HOME';
+
+export function resolveCliPaths(opts: { dshHome?: string; envctlDir?: string }): EnvironmentPaths {
+  const paths = resolveUncheckedCliPaths(opts);
+  // Moved first: migrate leaves a symlinked envctl in place with the marker in its target.
+  assertEnvctlNotMoved(paths.managerDir);
+  assertEnvctlNotLinked(paths);
+  return paths;
+}
+
+// Only for migrate, which moves a linked envctl to where it can live without the link.
+export function resolveUncheckedCliPaths(opts: { dshHome?: string; envctlDir?: string }): EnvironmentPaths {
   return resolveEnvironmentPaths({
     cliDshHome: opts.dshHome,
     envDshHome: process.env.DSH_HOME,
+    cliEnvctlDir: opts.envctlDir,
+    envEnvctlDir: process.env[ENVCTL_ENV],
     cwd: process.cwd()
   });
+}
+
+// A link would put envctl's content in two places; snapshots, trash and migrate then copy or move the wrong one.
+function assertEnvctlNotLinked(paths: EnvironmentPaths): void {
+  const stat = fs.lstatSync(paths.managerDir, { throwIfNoEntry: false });
+  const linked = stat?.isSymbolicLink()
+    ? paths.managerDir
+    : stat?.isDirectory()
+      ? fs.readdirSync(paths.managerDir, { withFileTypes: true }).find((entry) => entry.isSymbolicLink())?.name
+      : undefined;
+  if (linked !== undefined) {
+    throw new ValidationError(
+      `${path.resolve(paths.managerDir, linked)} is a symlink, which dshenv does not support; keep envctl in a real directory and point ${ENVCTL_ENV} or --envctl-dir at it ` +
+        `(dshenv migrate --to <dir> --yes moves it there)`
+    );
+  }
 }
 
 export function resolveCliOverlay(opts: { overlay?: string | false }, paths: EnvironmentPaths): OverlaySelection | null {
@@ -160,6 +190,22 @@ function layerFromEnv(): string | undefined {
 // A left-out targetProfile() falls back to DSHENV_PROFILE, else fails naming the profiles to choose from; a left-out
 // writeLayer() falls back to DSHENV_LAYER while an overlay is active. A command that writes says so on stderr, as it
 // is easy to forget; one that only reads stays quiet, as the note would repeat on every call.
+// A new envctl location that is still empty, while the default one holds an environment, is a migration not done yet.
+export function envctlLocationHint(program: Command, writeErr: (chunk: string) => void): void {
+  program.hook('preAction', (_program, action) => {
+    const opts = action.optsWithGlobals<{ dshHome?: string; envctlDir?: string; json?: boolean }>();
+    if (opts.json || action.name() === 'migrate' || action.name() === 'init') return;
+    const paths = resolveUncheckedCliPaths(opts);
+    const defaultDir = path.join(paths.home, 'envctl');
+    if (paths.managerDir !== defaultDir && !fs.existsSync(paths.manifestFile) && fs.existsSync(path.join(defaultDir, 'manifest.yaml'))) {
+      writeErr(
+        `No manifest in ${paths.managerDir}, but ${defaultDir} has one; to move it there, run dshenv migrate --to ${paths.managerDir} --yes ` +
+          `without ${ENVCTL_ENV} or --envctl-dir\n`
+      );
+    }
+  });
+}
+
 export function defaultTargetProfile(program: Command, writeErr: (chunk: string) => void): void {
   program.hook('preAction', (_program, action) => {
     const opts = action.optsWithGlobals<{ dshHome?: string; overlay?: string | false; json?: boolean }>();
