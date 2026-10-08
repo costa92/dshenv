@@ -291,6 +291,13 @@ describe('CLI envctl location', () => {
     expect(throughLink.stderr).toContain('one contains the other');
     expect(fs.existsSync(path.join(real, 'manifest.yaml'))).toBe(true);
     expect(fs.existsSync(path.join(real, 'nested'))).toBe(false);
+
+    // As macOS's /var is a link to /private/var: the target names the real directory through a linked ancestor.
+    const alias = path.join(tempRoot, 'alias');
+    fs.symlinkSync(tempRoot, alias);
+    const throughAncestor = await run(['migrate', '--to', path.join(alias, 'real', 'nested'), '--yes']);
+    expect(throughAncestor.code).toBe(3);
+    expect(throughAncestor.stderr).toContain('one contains the other');
   });
 
   it('has plan reinstall a local plugin DSH still links from the old envctl', async () => {

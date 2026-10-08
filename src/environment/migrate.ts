@@ -154,6 +154,19 @@ function planRewrites(dir: string, prefixes: string[], target: string): { rewrit
   return { rewrites, skipped };
 }
 
+// The target may not exist yet, so resolve its nearest existing ancestor: on macOS /var is a link to /private/var.
+function realpathOfExisting(target: string): string {
+  let dir = target;
+  const rest: string[] = [];
+  while (!fs.existsSync(dir)) {
+    const parent = path.dirname(dir);
+    if (parent === dir) return target;
+    rest.unshift(path.basename(dir));
+    dir = parent;
+  }
+  return path.join(fs.realpathSync(dir), ...rest);
+}
+
 export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options: { dryRun?: boolean } = {}): Promise<MigrateResult> {
   const from = paths.managerDir;
   const fromStat = fs.lstatSync(from, { throwIfNoEntry: false });
@@ -169,7 +182,8 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
     throw new ValidationError(`${from} is not a dshenv data directory (it has no ${ENVIRONMENT_FILES.join(', ')}); nothing was moved`);
   }
   const target = path.resolve(to);
-  if (isPathInside(source, target) || isPathInside(target, source) || isPathInside(from, target) || isPathInside(target, from)) {
+  const realTarget = realpathOfExisting(target);
+  if ([target, realTarget].some((t) => isPathInside(source, t) || isPathInside(t, source) || isPathInside(from, t) || isPathInside(t, from))) {
     throw new ValidationError(`Cannot migrate ${from} to ${target}: one contains the other`);
   }
   const targetStat = fs.lstatSync(target, { throwIfNoEntry: false });

@@ -38,8 +38,10 @@ export function resolveHomePath(value: string, label: string, cwd: string, userH
     throw new ValidationError(`${label} must not be empty`);
   }
   const expanded = value === '~' ? userHome : value.startsWith('~/') || value.startsWith('~\\') ? path.join(userHome, value.slice(2)) : value;
-  // resolve, not normalize: a trailing separator would make lstat follow a symlinked directory.
-  return path.resolve(cwd, expanded);
+  if (!path.isAbsolute(expanded)) return path.resolve(cwd, expanded);
+  // No trailing separator, which would make lstat follow a symlinked directory; not resolve, which adds a drive on Windows.
+  const normalized = path.normalize(expanded);
+  return normalized.length > path.parse(normalized).root.length ? normalized.replace(/[\\/]+$/, '') : normalized;
 }
 
 export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentPaths {
