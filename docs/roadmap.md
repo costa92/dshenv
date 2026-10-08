@@ -188,7 +188,7 @@
 - [x] CI：Release 拆成只读的 build 与只下载 tarball 的 publish，打包后先安装冒烟；action 固定 SHA、checkout 不保留凭据；CI 增加 Windows 与 macOS（`check-os`）
 - [x] 全量测试套件覆盖（当前 109 个测试文件，1068 项测试全部通过；e2e 148 项）
 
-## 数据目录外置（已实现，待合并）
+## 数据目录外置（已合并，PR #149）
 - [x] `--envctl-dir` / `DSHENV_HOME` 指定 dshenv 数据目录，默认仍为 `<DSH 主目录>/envctl`，不改 DSH
 - [x] 数据目录本身及其任何顶层条目不允许软链接，退出码 3 并提示迁移
 - [x] `dshenv migrate --to <dir>`：复制、核对后改名；改写清单、overlay、lock 与快照中的旧路径；锁内先写墓碑文件 `dshenv.moved` 再清空旧目录；软链接按内容复制，链接与目标保留
