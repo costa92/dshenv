@@ -131,14 +131,14 @@ DSH 发布新版本时，用 `make smoke-dsh DSH_VERSION=<版本>` 验证兼容�
 
 ## 命令参考
 
-插件命令也可以写在 `plugins` 下（`dshenv plugins install|update|remove|enable|disable|list|config`），与 `tools`、`web`、`source` 等命令组写法一致；`install`、`update`、`remove`、`enable`、`disable` 同时保留在顶层。旧命令名 `list`、`config`、`runtime`、`source pull` 仍可使用，但不再出现在帮助里，分别对应 `plugins list`、`plugins config`、`verify`、`source sync`。
+插件命令也可以写在 `plugins` 下（`dshenv plugins install|update|remove|enable|disable|list|config|official`），与 `tools`、`web`、`source` 等命令组写法一致；`install`、`update`、`remove`、`enable`、`disable` 同时保留在顶层。旧命令名 `list`、`config`、`runtime`、`source pull` 仍可使用，但不再出现在帮助里，分别对应 `plugins list`、`plugins config`、`verify`、`source sync`。
 
 ### 选择 Profile（`-p`）
 
 `-p, --profile <name>` 是 DSH Profile 的名字，即 `profiles/<name>/` 的目录名和清单 `profiles:` 下的键。所有命令用同一套规则：
 
 - 作用于单个 Profile 的命令（`install`、`update`、`enable`、`disable`、`remove`、`purge`、`plugins config`、`tools`、`verify`、`web start`、`web stop`）：不写 `-p` 时取环境变量 `DSHENV_PROFILE`；两者都没有时以退出码 3 报错并列出可选的 Profile（清单声明的与 DSH 已创建的）。`verify`、`web start`、`web stop` 在清单只声明一个 Profile 时直接用它。
-- 按 Profile 过滤的命令（`plugins list`、`plan`、`apply`、`status`、`pull`、`capture`、`overlay show`、`mark-restarted`、`web list`）：不写 `-p` 表示全部 Profile，`DSHENV_PROFILE` 对它们不生效；`-p` 写了清单没声明、DSH 也没创建的名字时以退出码 3 拒绝，不会把拼错的名字报成“已同步”。
+- 按 Profile 过滤的命令（`plugins list`、`plugins official`、`plan`、`apply`、`status`、`pull`、`capture`、`overlay show`、`mark-restarted`、`web list`）：不写 `-p` 表示全部 Profile，`DSHENV_PROFILE` 对它们不生效；`-p` 写了清单没声明、DSH 也没创建的名字时以退出码 3 拒绝，不会把拼错的名字报成“已同步”。
 - `source`、`new` 的 `-p` 表示把克隆或新建的包登记到该 Profile，不写就不登记。
 
 - 写入命令（`install`、`new -p`、`source clone -p`）指定一个清单没声明、DSH 也没创建的 Profile 时，默认按拼写错误拒绝并给出相近的名字；确实要新建时加 `--new-profile`。
@@ -188,7 +188,7 @@ dshenv doctor --json
 `runtime.mutationsSupported=false`（能力矩阵中的 `mutations=false`）表示通用、完整的环境写能力仍未开放。它不代表 `apply` 命令不存在：当前 `apply` 通过 DSH CLI 执行 `install/update/remove`，通过 Profile `dsh.profile.bundles` 执行 `enable/disable`，并对 `configure` 写入 `cordis.patch.yml` 受管块。计划之外的通用环境变更仍不受支持。
 
 ### 2. `dshenv init`
-在 `$DSH_HOME/envctl/` 下初始化空的清单、锁文件与初始状态。
+在 dshenv 数据目录（默认 `$DSH_HOME/envctl/`，见[路径与解析优先级](#路径与解析优先级)）下初始化空的清单、锁文件与初始状态。
 
 ```bash
 dshenv init
@@ -249,7 +249,7 @@ dshenv apply -p web --yes
 
 `-p` 与 `plan -p` 一样只读取、只改动这个 Profile 的插件与 profile patch，其他 Profile 的所有权与重启记录原样保留；skill 在 `$DSH_HOME/skills` 下、不属于任何 Profile，照常一并应用。
 
-不带 `--yes` 的 `apply` 与 `--dry-run` 相同：展示计划、有变更时退出码 2，并在 stderr 提示加 `--yes` 重跑。`pull`、`rollback`、`gc`、`purge`、`adopt`、`remote add`、`remote remove`、`remote sync` 同样如此：不带 `--yes` 只预览，有待执行的内容时退出码 2，没有时退出码 0。例外：要做的事无从做起时按错误处理，退出码 3，例如没有任何快照时的 `rollback`、没有订阅时的 `remote remove`。
+不带 `--yes` 的 `apply` 与 `--dry-run` 相同：展示计划、有变更时退出码 2，并在 stderr 提示加 `--yes` 重跑。`pull`、`rollback`、`gc`、`purge`、`adopt`、`migrate`、`remote add`、`remote remove`、`remote sync`、`source sync` 同样如此：不带 `--yes` 只预览，有待执行的内容时退出码 2，没有时退出码 0。例外：要做的事无从做起时按错误处理，退出码 3，例如没有任何快照时的 `rollback`、没有订阅时的 `remote remove`。
 
 当前执行计划中的 `install/update/enable/disable/remove/configure`。`configure` 只写入 Profile `cordis.patch.yml` 的受管块；停用的插件 DSH 不会加载，它的补丁块会被清掉（清单里保留，重新启用时写回）。没有所有权记录的实际插件只标为 `unmanaged`，不会卸载。
 
@@ -354,9 +354,6 @@ dshenv plugins config unset agent-teams taskPlanning --profile web     # 删掉�
 - 读取或删除不存在的键时以退出码 3 报错；只认配置里自己的键，不会读到 `toString` 这类继承来的属性。路径为空，或含 `__proto__`、`prototype`、`constructor` 时以退出码 3 拒绝。
 - `config unset` 在该插件声明的所有 patch 里找这个键；删完后什么都不设的 patch 会一并删掉，不留下 `config: {}`。
 
-```bash
-```
-
 ### 13. `dshenv status`
 显示当前环境状态摘要与操作统计；给出插件别名或包名时只显示该插件。有待执行的变更时退出码 2，环境已同步时为 0；环境降级（`degraded`）或 DSH 不兼容（`incompatible`）时为 5。
 
@@ -430,9 +427,6 @@ dshenv mark-restarted --profile web --json
 ```
 
 旧名 `dshenv restarted` 仍可使用。
-
-```bash
-```
 
 #### verify：核对运行中的 DSH 是否已加载
 
@@ -574,8 +568,8 @@ dshenv web stop -p web             # 停止它以及它启动的子进程（如 
 
 - 启动命令为 `dsh --profile <P> --no-open --port <端口>`，DSH CLI 的选择与其他命令相同（`DSH_CLI`、`--harness-source`、`environment.harness.sourceDir`、`PATH`）。DSH 的 `cordis.patch.yml`（如 `$DSH_HOME/cordis.patch.yml`）设置了 `webserver.port` 时，DSH 忽略 `--port`，`web start --port` 与 `verify --start` 的随机空闲端口都不起作用。dsh web 在独立的进程组中运行，dshenv 退出或关闭终端后继续运行。
 - 地址（含登录 token）与 pid 记在 `envctl/run/<profile>.json`，输出写到 `envctl/run/<profile>.log`，两者权限均为 `0600`；不在快照、同步与团队仓库范围内。`start` 打印地址，已在运行时再次 `start` 也会打印现有的地址；`web list`（旧名 `web status`）从不打印 token。
-- 已在运行时 `start` 只报告现有的那个；它自己退出后，`status` 显示 `not running`，再次 `start` 会启动新的。dsh web 自己退出但它启动的子进程还在时，`status` 显示 `not running (leftover processes)`，`start` 先停掉这些子进程再启动，`stop` 也会停掉它们。
-- 记录里保存了 dsh web 的启动时间，`stop` 只停止 pid 与启动时间都对得上的进程，被系统复用的 pid 不会被误停；无法确认时（`status` 显示 `unknown`）`stop` 和 `start` 报错并保留记录，不做任何停止。SIGKILL 后仍未退出时 `stop` 以非零退出码报错并保留记录，可以再次执行。
+- 已在运行时 `start` 只报告现有的那个；它自己退出后，`web list` 显示 `not running`，再次 `start` 会启动新的。dsh web 自己退出但它启动的子进程还在时，`web list` 显示 `not running (leftover processes)`，`start` 先停掉这些子进程再启动，`stop` 也会停掉它们。
+- 记录里保存了 dsh web 的启动时间，`stop` 只停止 pid 与启动时间都对得上的进程，被系统复用的 pid 不会被误停；无法确认时（`web list` 显示 `unknown`）`stop` 和 `start` 报错并保留记录，不做任何停止。SIGKILL 后仍未退出时 `stop` 以非零退出码报错并保留记录，可以再次执行。
 - 同一 Profile 的 `start`、`stop` 依次执行，两个 `start` 同时运行也只会启动一个；启动过程中按 Ctrl+C 会停止正在启动的 dsh web（`verify --start` 在核对过程中被中断也一样），不会遗留进程。
 - Profile 必须已存在（DSH 会自动创建不存在的 Profile）；bundles 选了其他应用（`dsh-headless`、`dsh-acp-app`、`dsh-sdk-app`）的 Profile 以退出码 3 报 `Profile <p> runs <应用包>, not dsh web`，60 秒内没有打印地址也会停止并报错。
 - Windows 上 dsh web 以 detached 方式启动，不附着在启动它的控制台上，关闭启动它的控制台窗口后继续运行；停止用 `taskkill /T /F` 结束整棵进程树。
@@ -623,7 +617,7 @@ DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.
 | :--- | :--- |
 | `0` | 成功 / 环境与清单完全同步（Clean） |
 | `1` | 意外失败（如 Git、npm 或网络错误） |
-| `2` | 存在有效变更计划（Drifted，`plan`/`status`/`apply --dry-run`）；不带 `--yes` 的 `apply`、`pull`、`rollback`、`gc`、`purge`、`adopt`、`migrate`、`remote add`、`remote remove`、`remote sync` 预览有待执行的内容；`verify` 有插件仍在加载；`self-update --check` 有可安装的版本 |
+| `2` | 存在有效变更计划（Drifted，`plan`/`status`/`apply --dry-run`）；不带 `--yes` 的 `apply`、`pull`、`rollback`、`gc`、`purge`、`adopt`、`migrate`、`remote add`、`remote remove`、`remote sync`、`source sync` 预览有待执行的内容；`verify` 有插件仍在加载；`self-update --check` 有可安装的版本 |
 | `3` | 用法错误（缺参数、未知选项或命令）或输入、清单格式校验失败（ValidationError）；`--json` 时以 `{"error": {...}}` 输出 |
 | `4` | DSH 运行时能力不支持或未找到（CapabilityError） |
 | `5` | 环境降级或运行时响应异常（DegradedError） |
