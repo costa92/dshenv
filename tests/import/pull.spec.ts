@@ -102,6 +102,28 @@ describe('pullProfilePatches', () => {
     expect(live()).toMatchObject({ unmanaged: [], block: { isDigestValid: true, entries: [{ ...LOCALE, config: { preference: 'fr' } }, SKILLS] } });
   });
 
+  it('skips a conflicting target under prefer skip, keeps its baseline, takes the rest, and reports it again next time', async () => {
+    await pull();
+    const manifest = base();
+    manifest.profiles.web.patches = [{ ...LOCALE, config: { preference: 'fr' } }];
+    fs.writeFileSync(paths.manifestFile, YAML.stringify(manifest));
+    fs.writeFileSync(patchFile(), `${fs.readFileSync(patchFile(), 'utf8')}- id: extra\n  config: {}\n`);
+    fs.mkdirSync(path.join(paths.dshSkillsDir, 'notes'), { recursive: true });
+    fs.writeFileSync(path.join(paths.dshSkillsDir, 'notes', 'SKILL.md'), 'notes');
+    const patchBefore = fs.readFileSync(patchFile(), 'utf8');
+    const selection = { name: 'local', via: 'file' as const };
+
+    const result = await pull({ selection, prefer: 'skip' });
+    expect(result.skipped).toEqual({ patchTargets: ['web'], skills: [] });
+    expect(result.warnings).toEqual([expect.stringMatching(/^Patch entries of profile 'web' changed both in DSH and in the manifest.*skipped/)]);
+    expect(result.skills).toMatchObject({ added: ['notes'] });
+    expect(base().profiles.web.patches).toEqual([{ ...LOCALE, config: { preference: 'fr' } }]);
+    expect(fs.readFileSync(patchFile(), 'utf8')).toBe(patchBefore);
+
+    expect((await pull({ selection, prefer: 'skip' })).skipped).toEqual({ patchTargets: ['web'], skills: [] });
+    await expect(pull({ selection })).rejects.toThrow(/changed both in DSH and in the manifest/);
+  });
+
   it('keeps DSH when DSH is preferred in a conflict', async () => {
     await pull();
     const manifest = base();
@@ -139,19 +161,83 @@ describe('pullProfilePatches', () => {
     expect((await applyEnvironment(paths, { dryRun: true, overlay: selection })).plan.operations).toEqual([]);
   });
 
-  it('leaves a profile whose entries hold ${...} in DSH and still takes the rest', async () => {
-    const dynamic = { id: 'skill-filesystem', config: { customSkillDirs: ['${HOME}/skills'] } };
-    fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([LOCALE, dynamic])}`);
-    const before = fs.readFileSync(patchFile(), 'utf8');
-    fs.mkdirSync(path.join(paths.dshSkillsDir, 'notes'), { recursive: true });
-    fs.writeFileSync(path.join(paths.dshSkillsDir, 'notes', 'SKILL.md'), 'notes');
+  it('takes entries holding ${...}, which DSH reads as plain text', async () => {
+    const prompt = { id: 'prompt', config: { template: 'Hello ${name}' } };
+    fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([LOCALE, prompt])}`);
 
     const result = await pull();
-    expect(result.warnings).toEqual([expect.stringMatching(/profile 'web'.*\$\{\.\.\.\}.*left in .*cordis\.patch\.yml/)]);
+    expect(result.warnings).toBeUndefined();
+    expect(base().profiles.web.patches).toEqual([LOCALE, prompt]);
+    expect((await planOperations()).operations).toEqual([]);
+  });
+
+  it('leaves an entry holding a plaintext credential in DSH, names its path without the value, and takes the rest', async () => {
+    const secret = { id: 'llm', config: { model: 'v3', apiKey: 'sk-live-123' } };
+    fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([LOCALE, secret])}`);
+
+    const result = await pull();
+    expect(result.warnings).toEqual([expect.stringMatching(/^profile 'web' \/ llm \/ config\.apiKey holds a plaintext credential.*\*Env/)]);
+    expect(JSON.stringify(result)).not.toContain('sk-live-123');
+    expect(base().profiles.web.patches).toEqual([LOCALE]);
+    expect(fs.readFileSync(paths.manifestFile, 'utf8')).not.toContain('sk-live-123');
+    expect(live().unmanaged).toEqual([secret]);
+    expect(live().block?.entries).toEqual([LOCALE]);
+
+    // The entry left behind is no DSH change: a manifest edit since is no conflict, and nothing else is pulled.
+    const manifest = base();
+    manifest.profiles.web.patches = [{ ...LOCALE, config: { preference: 'en' } }];
+    fs.writeFileSync(paths.manifestFile, YAML.stringify(manifest));
+    const again = await pull();
+    expect(again.changes).toEqual([]);
+    expect(again.warnings).toEqual([expect.stringContaining("profile 'web' / llm / config.apiKey")]);
+  });
+
+  it('pulls nothing for a target whose dshenv block was edited in DSH to hold a plaintext credential, and blocks its apply', async () => {
+    await pull();
+    fs.writeFileSync(patchFile(), fs.readFileSync(patchFile(), 'utf8').replace('preference: zh', 'preference: zh\n    token: abc'));
+    const before = fs.readFileSync(patchFile(), 'utf8');
+    const manifestBefore = fs.readFileSync(paths.manifestFile, 'utf8');
+
+    const result = await pull({ prefer: 'dsh' });
     expect(result.changes).toEqual([]);
-    expect(result.skills).toMatchObject({ added: ['notes'] });
+    expect(result.warnings).toEqual([expect.stringMatching(/^profile 'web' \/ locale \/ config\.token was written into the dshenv block as plaintext/)]);
     expect(fs.readFileSync(patchFile(), 'utf8')).toBe(before);
-    expect(base().profiles).toEqual({});
+    expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(manifestBefore);
+
+    const blocked = (await planOperations()).operations.find((op) => op.resource === 'profile-patch');
+    expect(blocked).toMatchObject({ kind: 'blocked', blockedReason: expect.stringContaining("profile 'web' / locale / config.token") });
+    expect(blocked?.blockedReason).not.toContain('abc');
+  });
+
+  it('takes an edit next to a credential the manifest already holds, without blocking anything', async () => {
+    const llm = { id: 'llm', config: { model: 'v3', apiKey: 'sk-live-123' } };
+    fs.writeFileSync(paths.manifestFile, YAML.stringify({ apiVersion: 'dshenv/v1', profiles: { web: { plugins: {}, patches: [llm] } } }));
+    fs.writeFileSync(patchFile(), `${HEADER}[]\n`);
+    await applyEnvironment(paths, { overlay: null });
+    fs.writeFileSync(patchFile(), fs.readFileSync(patchFile(), 'utf8').replace('model: v3', 'model: v4'));
+
+    const result = await pull();
+    expect(result.warnings).toBeUndefined();
+    expect(base().profiles.web.patches).toEqual([{ ...llm, config: { ...llm.config, model: 'v4' } }]);
+    expect((await planOperations()).operations).toEqual([]);
+  });
+
+  it('puts an entry it leaves for a credential after the block, so it still overrides the row an entry there inserts', async () => {
+    const insert = { insert: [{ id: 'gh', name: '@deepseek-ai/dsh-mcp-client', config: { command: 'gh-mcp' } }] };
+    const override = { id: 'gh', config: { headers: { Authorization: 'Bearer ghp_x' } } };
+    fs.writeFileSync(patchFile(), `${HEADER}${YAML.stringify([insert, override])}`);
+
+    const result = await pull();
+    expect(result.warnings).toEqual([expect.stringContaining("profile 'web' / gh / config.headers.Authorization")]);
+    const content = fs.readFileSync(patchFile(), 'utf8');
+    expect(content.indexOf('# dshenv:end profile=web')).toBeLessThan(content.indexOf('Bearer ghp_x'));
+    expect(live()).toMatchObject({ block: { entries: [insert] }, unmanaged: [override] });
+  });
+
+  it('counts a target left for a credential written into its block as skipped under prefer skip', async () => {
+    await pull();
+    fs.writeFileSync(patchFile(), fs.readFileSync(patchFile(), 'utf8').replace('preference: zh', 'preference: zh\n    token: abc'));
+    expect((await pull({ prefer: 'skip' })).skipped).toEqual({ patchTargets: ['web'], skills: [] });
   });
 
   it('refuses machine-local entries under --no-overlay', async () => {

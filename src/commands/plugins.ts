@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Option, type Command } from 'commander';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { assertConfigPath, disabledPatches, getAtPath, parseConfigValue, readPluginConfig, setAtPath, unsetAtPath, upsertPluginPatch } from '../config/config.js';
-import { hasInterpolation, loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
+import { loadLock, loadManifest, loadState, serializeLock } from '../manifest/files.js';
 import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
@@ -793,9 +793,6 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
               `DSH has no config for ${declared.package} in profile '${profile}' yet`,
               " To keep them: config unset it, apply, then config set it again, which also moves the patch onto the id DSH loads the plugin as, if a bundle names it apart from the alias"
             );
-            } else if (hasInterpolation(JSON.stringify(seed))) {
-              seed = undefined;
-              unknown(`The config DSH composes for ${declared.package} holds \${...}, which the manifest does not allow`, '');
             } else if (!overlay && containsLocalPath(seed)) {
               throw new ValidationError(
                 `The config DSH composes for ${declared.package} has machine-local paths, which do not belong in the shared base manifest; set it in an overlay with --layer overlay`

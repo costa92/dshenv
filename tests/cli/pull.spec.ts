@@ -107,6 +107,21 @@ describe('CLI pull', () => {
     expect(after.stdout).not.toMatch(/Planned operations|Unmanaged plugins/);
   });
 
+  it('exits 6 under --prefer skip when a conflict was left, and lists it in --json', async () => {
+    expect((await run(['init'])).code).toBe(0);
+    expect((await run(['pull', '--yes'])).code).toBe(0);
+    const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');
+    fs.writeFileSync(manifestFile, fs.readFileSync(manifestFile, 'utf8').replace('preference: zh', 'preference: fr'));
+    fs.writeFileSync(patchFile(), fs.readFileSync(patchFile(), 'utf8').replace('preference: zh', 'preference: en'));
+
+    const out = await run(['pull', '--prefer', 'skip', '--yes']);
+    expect(out.code).toBe(6);
+    expect(out.stdout).toContain("! Patch entries of profile 'web' changed both in DSH and in the manifest since the last apply; skipped");
+    const json = await run(['pull', '--prefer', 'skip', '--json']);
+    expect(json.code).toBe(6);
+    expect(JSON.parse(json.stdout).skipped).toEqual({ patchTargets: ['web'], skills: [] });
+  });
+
   it('rejects an unknown --prefer and machine-local entries under --no-overlay', async () => {
     await run(['init']);
     expect((await run(['pull', '--prefer', 'both'])).code).toBe(3);

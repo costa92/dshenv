@@ -155,7 +155,7 @@ describe('CLI surface', () => {
       expect(group('Plugins & tools:')).toEqual(['install', 'update', 'remove', 'enable', 'disable', 'plugins', 'tools', 'source']);
       expect(group('Team & machine:')).toEqual(['remote', 'overlay']);
       expect(group('Run & check:')).toEqual(['web', 'verify', 'doctor']);
-      expect(group('Maintenance:')).toEqual(['rollback', 'purge', 'gc', 'self-update']);
+      expect(group('Maintenance:')).toEqual(['rollback', 'purge', 'gc', 'migrate', 'self-update']);
       const examples = help.split('Examples:')[1].split('Data flow:')[0];
       for (const example of ['dshenv pull --yes', 'dshenv verify --start -p web', 'dshenv remote add <url> --yes', 'dshenv adopt capture.yaml --yes']) {
         expect(examples).toContain(example);
@@ -166,7 +166,7 @@ describe('CLI surface', () => {
       expect(flat).toContain('apply [options] Make DSH match the manifest');
       expect(flat).toContain('doctor Check that DSH runs and the dshenv files are readable (not whether plugins are loaded: verify)');
       expect(flat).toMatch(/remove \[options\] <alias> [^:]*purge/);
-      for (const name of ['DSH_HOME', 'DSH_CLI', 'DSHENV_PROFILE', 'DSHENV_LAYER', 'DSHENV_OVERLAY', 'DSHENV_DSH_URL']) {
+      for (const name of ['DSH_HOME', 'DSH_CLI', 'DSHENV_HOME', 'DSHENV_PROFILE', 'DSHENV_LAYER', 'DSHENV_OVERLAY', 'DSHENV_DSH_URL']) {
         expect(help).toContain(name);
       }
       expect(help).toMatch(/remote sync\s+team repository -> local envctl/);

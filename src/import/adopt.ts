@@ -181,7 +181,8 @@ async function adoptUnderLock(
   const mergedManifest: EnvironmentManifest = {
     apiVersion: 'dshenv/v1',
     environment: candidate.manifest.environment ?? existingManifest.environment,
-    profiles: { ...existingManifest.profiles }
+    profiles: { ...existingManifest.profiles },
+    ...(existingManifest.patches ? { patches: existingManifest.patches } : {})
   };
 
   const mergedLock: EnvironmentLock = {

@@ -16,6 +16,7 @@
 
 ### Phase 2A：只读能力基础设施（已验证）
 - [x] 精确识别已验证的 DSH `0.1.7` 版本族，拒绝 `0.1.70` 等相似版本
+- [x] 放行 DSH `0.2.0` 版本族（2026-10-08）：npm `0.2.0-rc.2` 冒烟 13 步全部通过；`0.2.1-alpha.1` 只在插件豁免下通过，暂不放行；模板 peer 范围放宽到 `<0.3.0-0`
 - [x] 只读探测官方 operations export 的声明与目标文件，不执行插件管理器代码
 - [x] 建立细粒度能力矩阵与单向收紧的证据评估
 - [x] `doctor` 增加能力状态，并保留原有 JSON 字段与 `mutations=false`
@@ -186,6 +187,31 @@
 - [x] 安全：团队配置不能设置 `environment.harness.sourceDir`/`sourceRoot` 或引用本机 Git 地址；Profile 名、Git 地址、ref、commit 统一校验；`self-update` 在主目录运行；`remote sync` 预览不跟随软链接；`--allow-remote` 只接受 https
 - [x] CI：Release 拆成只读的 build 与只下载 tarball 的 publish，打包后先安装冒烟；action 固定 SHA、checkout 不保留凭据；CI 增加 Windows 与 macOS（`check-os`）
 - [x] 全量测试套件覆盖（当前 109 个测试文件，1068 项测试全部通过；e2e 148 项）
+
+## 数据目录外置（已实现，待合并）
+- [x] `--envctl-dir` / `DSHENV_HOME` 指定 dshenv 数据目录，默认仍为 `<DSH 主目录>/envctl`，不改 DSH
+- [x] 数据目录本身及其任何顶层条目不允许软链接，退出码 3 并提示迁移
+- [x] `dshenv migrate --to <dir>`：复制、核对后改名；改写清单、overlay、lock 与快照中的旧路径；锁内先写墓碑文件 `dshenv.moved` 再清空旧目录；软链接按内容复制，链接与目标保留
+- 文档：[设计文档](design/2026-10-08-设计文档.md)
+
+## DSH 配置体系对齐
+- [x] 全局补丁 `$DSH_HOME/cordis.patch.yml`：清单与 overlay 顶层 `patches`，plan / apply / pull / 团队 remote 全链路；覆盖检测
+- [x] 门禁放行 DSH 0.2.0 版本族，模板 peer 范围与 compat 矩阵同步
+- [x] `insert` 行的相对插件名算作本机路径
+- [x] 退役 bundle：`plan` 警告并给出 `remove` 命令
+- [ ] 放行 DSH 0.2.1：等第三方插件的 peer 范围覆盖 0.2.1（`@nanmicoder/dsh-agent-teams@0.1.22` 只声明到 0.2.0-rc.2，不靠豁免的冒烟装不上）
+- [x] 应用前用 `dsh --dump-config` 在临时 DSH 主目录副本里校验补丁 id；新增 id 匹配不到时 `apply --yes` 中止
+- [x] 报告 DSH 跳过的 bundle（`status` / `doctor`）；全局补丁改动的重启提示；`status` 展示 `compatibility.json` 的版本豁免
+- [x] 放宽 `${...}` 限制（DSH 不做插值）
+- [x] 全局补丁覆盖警告按字段比较，`-p` 下也提示，单独点出全局写的 `disabled`
+- 文档：[设计文档](design/2026-10-08-设计文档.md)、[DSH 配置参考](design/2026-10-08-DSH配置参考.md)
+
+## 架构缺口
+- [x] 明文密钥检查（Secret Guard）：`pull` 不收含明文密钥的补丁，写清单的命令拒绝，`plan` / `status` / `doctor` 警告，团队仓库拒绝；推荐 `*Env` 写法
+- [x] ~~用 DSH schema 的 `credential-ref` 豁免引用字段~~：不做，DSH 里这类字段（`apiKeyEnv`、`secretEnv`）都以 `Env` 结尾，已按键名豁免
+- [x] 指定位置的 Skill / Plugin：经核实已支持（DSH `customSkillDirs` 由 dshenv 经补丁管理；插件用 `local-link`），不新增功能
+- [x] 冲突跳过：`pull --prefer skip`（退出码 6）
+- 文档：[设计文档](design/2026-10-08-设计文档.md)；架构图：[dshenv-architecture.png](design/images/dshenv-architecture.png)
 
 ## 延后能力
 

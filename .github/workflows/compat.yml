@@ -28,6 +28,8 @@ jobs:
         include:
           - dsh: 0.1.7-rc.2
             informational: false
+          - dsh: 0.2.0-rc.2
+            informational: false
           - dsh: latest
             informational: true
           - dsh: next

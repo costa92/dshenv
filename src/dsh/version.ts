@@ -33,13 +33,17 @@ export function parseDshVersion(value: string): DshVersion | null {
   };
 }
 
-export function knownDshFamily(value: string): '0.1.7' | null {
-  const version = parseDshVersion(value);
-  if (version?.major === 0 && version.minor === 1 && version.patch === 7) {
-    return '0.1.7';
-  }
+// Families whose npm release passed the smoke test, prereleases included (docs/DSH版本升级.md).
+const VERIFIED_FAMILIES = ['0.1.7', '0.2.0'] as const;
+export type DshFamily = (typeof VERIFIED_FAMILIES)[number];
 
-  return null;
+export function knownDshFamily(value: string): DshFamily | null {
+  const version = parseDshVersion(value);
+  if (!version) {
+    return null;
+  }
+  const family = `${version.major}.${version.minor}.${version.patch}`;
+  return VERIFIED_FAMILIES.find((candidate) => candidate === family) ?? null;
 }
 
 export interface CompatibilityCheckOptions {
@@ -55,8 +59,7 @@ export function isCompatibleDshVersion(
     return { compatible: false, reason: 'Malformed or unparseable version string' };
   }
 
-  // Exact known/verified family 0.1.7 (e.g. 0.1.7, 0.1.7-rc.2)
-  if (parsed.major === 0 && parsed.minor === 1 && parsed.patch === 7) {
+  if (knownDshFamily(value)) {
     return { compatible: true, isUntested: false };
   }
 
@@ -96,7 +99,7 @@ export function unsupportedDshVersionMessage(value: string): string {
   const parsed = parseDshVersion(value);
   const shown = parsed ? ` ${parsed.major}.${parsed.minor}.${parsed.patch}${parsed.prerelease ? ' (a prerelease)' : ''}` : '';
   return (
-    `Unsupported DSH version${shown}: dshenv supports DSH 0.1.7 (e.g. 0.1.7-rc.2). ` +
+    `Unsupported DSH version${shown}: dshenv supports DSH ${VERIFIED_FAMILIES.join(', ')} (e.g. 0.2.0-rc.2). ` +
     'Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.'
   );
 }

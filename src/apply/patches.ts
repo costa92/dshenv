@@ -6,7 +6,7 @@ import { ValidationError } from '../errors.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { withProfilePackageLock } from '../io/profile-lock.js';
 import { assertPatchFileArray, extractPluginBlocks, removePatchBlock, repairPatchFile, replacePluginBlocks, splicePluginBlocks } from '../patch/patch.js';
-import { PROFILE_PATCHES_ALIAS, replaceProfileBlock } from '../profile-patches/entries.js';
+import { HOME_PATCH_TARGET, PROFILE_PATCHES_ALIAS, replaceProfileBlock } from '../profile-patches/entries.js';
 import { mountBlockAlias, writeMount } from '../patch/mount.js';
 import { isValidProfileName } from '../manifest/schema.js';
 
@@ -20,6 +20,9 @@ function isPathInside(root: string, candidate: string): boolean {
 }
 
 export function profilePatchFile(paths: EnvironmentPaths, profileName: string): string {
+  if (profileName === HOME_PATCH_TARGET) {
+    return path.join(paths.home, 'cordis.patch.yml');
+  }
   if (!isValidProfileName(profileName)) {
     throw new ValidationError(`Invalid profile name: ${profileName}`);
   }
@@ -31,10 +34,12 @@ export function profilePatchFile(paths: EnvironmentPaths, profileName: string): 
 }
 
 // DSH's plugin manager rewrites cordis.patch.yml while holding the profile's package.json lock.
-async function withPatchFileLock<T>(file: string, operation: () => Promise<T>): Promise<T> {
+async function withPatchFileLock<T>(paths: EnvironmentPaths, profileName: string, operation: () => Promise<T>): Promise<T> {
+  const file = profilePatchFile(paths, profileName);
   const profileDir = path.dirname(file);
   // Without a profile directory no DSH runs this profile yet, and the lock file would have nowhere to live.
-  if (!fs.existsSync(profileDir)) {
+  // DSH never writes the global file, which has no package.json beside it to lock.
+  if (profileName === HOME_PATCH_TARGET || !fs.existsSync(profileDir)) {
     return operation();
   }
   return withProfilePackageLock(path.join(profileDir, 'package.json'), operation);
@@ -72,7 +77,7 @@ function restorePatchFile(
 ): RestorePatchFile {
   const file = profilePatchFile(paths, profileName);
   return () =>
-    withPatchFileLock(file, async () => {
+    withPatchFileLock(paths, profileName, async () => {
       const current = fs.existsSync(file) ? await readProfilePatchFile(paths, profileName) : null;
       if (current !== null && current !== written) {
         const blocks = extractPluginBlocks(content, profileName, pluginAlias);
@@ -104,7 +109,7 @@ export async function writeManagedPatches(
 ): Promise<RestorePatchFile> {
   const active = patches.filter((patch) => patch.enabled !== false);
   const file = profilePatchFile(paths, profileName);
-  return withPatchFileLock(file, async () => {
+  return withPatchFileLock(paths, profileName, async () => {
     const existed = fs.existsSync(file);
     const before = await readProfilePatchFile(paths, profileName);
     const content = replacePluginBlocks(repairedOrSelf(before), profileName, pluginAlias, active);
@@ -126,7 +131,7 @@ export async function writePluginMount(
   if (packageName === null && !fs.existsSync(file)) {
     return async () => {};
   }
-  return withPatchFileLock(file, async () => {
+  return withPatchFileLock(paths, profileName, async () => {
     const existed = fs.existsSync(file);
     const before = await readProfilePatchFile(paths, profileName);
     const content = writeMount(repairedOrSelf(before), profileName, pluginAlias, packageName);
@@ -149,12 +154,18 @@ export async function clearManagedPatches(
   if (!fs.existsSync(file)) {
     return async () => {};
   }
-  return withPatchFileLock(file, async () => {
+  return withPatchFileLock(paths, profileName, async () => {
     const existed = fs.existsSync(file);
     const before = await readProfilePatchFile(paths, profileName);
     const written = await writePatchFile(file, removePatchBlock(repairedOrSelf(before), profileName, pluginAlias));
     return restorePatchFile(paths, profileName, pluginAlias, existed, before, written);
   });
+}
+
+// The file writeProfilePatches leaves, from the content it finds.
+export function profilePatchContent(before: string, profileName: string, entries: ProfilePatch[]): string {
+  const content = replaceProfileBlock(repairedOrSelf(before), profileName, entries);
+  return content.endsWith('\n') ? content : `${content}\n`;
 }
 
 // Returns how to undo the write.
@@ -164,12 +175,12 @@ export async function writeProfilePatches(
   entries: ProfilePatch[]
 ): Promise<RestorePatchFile> {
   const file = profilePatchFile(paths, profileName);
-  return withPatchFileLock(file, async () => {
+  return withPatchFileLock(paths, profileName, async () => {
     const existed = fs.existsSync(file);
     const before = await readProfilePatchFile(paths, profileName);
-    const content = replaceProfileBlock(repairedOrSelf(before), profileName, entries);
+    const content = profilePatchContent(before, profileName, entries);
     assertPatchFileArray(content, file);
-    const written = await writePatchFile(file, content.endsWith('\n') ? content : `${content}\n`);
+    const written = await writePatchFile(file, content);
     return restorePatchFile(paths, profileName, PROFILE_PATCHES_ALIAS, existed, before, written);
   });
 }
@@ -181,7 +192,7 @@ export async function rewriteProfilePatchFile(
   transform: (content: string) => string
 ): Promise<void> {
   const file = profilePatchFile(paths, profileName);
-  await withPatchFileLock(file, async () => {
+  await withPatchFileLock(paths, profileName, async () => {
     const content = transform(await readProfilePatchFile(paths, profileName));
     assertPatchFileArray(content, file);
     await writePatchFile(file, content);

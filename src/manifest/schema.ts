@@ -195,7 +195,8 @@ export const ManifestSchema = z
   .object({
     apiVersion: z.literal('dshenv/v1'),
     environment: EnvironmentConfigSchema.optional(),
-    profiles: z.record(ProfileNameKeySchema, ProfileManifestEntrySchema).default({})
+    profiles: z.record(ProfileNameKeySchema, ProfileManifestEntrySchema).default({}),
+    patches: z.array(ProfilePatchSchema).optional()
   })
   .strict();
 

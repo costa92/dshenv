@@ -312,7 +312,7 @@ process.exit(0);
     process.env.DSH_CLI = JSON.stringify([process.execPath, fakeDsh]);
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     await expect(applyEnvironment(paths)).rejects.toThrow(
-      'Unsupported DSH version 0.1.70: dshenv supports DSH 0.1.7 (e.g. 0.1.7-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.'
+      'Unsupported DSH version 0.1.70: dshenv supports DSH 0.1.7, 0.2.0 (e.g. 0.2.0-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.'
     );
     // Refused before it started: no snapshot for rollback to pick, no journal entry.
     expect(fs.existsSync(paths.backupsDir) ? fs.readdirSync(paths.backupsDir) : []).toEqual([]);

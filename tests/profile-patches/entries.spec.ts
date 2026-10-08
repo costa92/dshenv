@@ -102,6 +102,16 @@ describe('profile patch entries', () => {
     expect(containsLocalPath({ id: 'm', config: { model: 'MiniMax-M3', url: 'http://127.0.0.1:3000/mcp' } })).toBe(false);
   });
 
+  it('treats an inserted plugin named by a patch-relative path as machine-local', () => {
+    expect(containsLocalPath({ insert: [{ id: 'p', name: './plugins/p' }] })).toBe(true);
+    expect(containsLocalPath({ id: 'g', insert: [{ id: 'grp', group: true, config: [{ id: 'p', name: '../p' }] }] })).toBe(true);
+    // DSH anchors only inserted names; an override's name is an assertion and config values stay literal.
+    expect(containsLocalPath({ id: 'p', name: './plugins/p', config: { dir: './data' } })).toBe(false);
+    expect(containsLocalPath({ insert: [{ id: 'p', name: '@scope/p' }] })).toBe(false);
+    // DSH anchors only an entry's own insert rows, not an `insert` key deep in some config.
+    expect(containsLocalPath({ id: 'x', config: { insert: [{ name: './x' }] } })).toBe(false);
+  });
+
   it('diffs a desired list against a base into overlay entries that merge back to it', () => {
     const base = [
       { id: 'a', config: { v: 1 } },

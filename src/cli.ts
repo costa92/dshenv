@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { DshError, ValidationError } from './errors.js';
 import { visibleText } from './output/visible.js';
-import { defaultTargetProfile, type CommandContext } from './commands/context.js';
+import { defaultTargetProfile, envctlLocationHint, type CommandContext } from './commands/context.js';
 import { registerSetupCommands } from './commands/setup.js';
 import { registerLifecycleCommands } from './commands/lifecycle.js';
 import { registerInspectCommands } from './commands/inspect.js';
@@ -17,6 +17,7 @@ import { registerWebCommands } from './commands/web.js';
 import { registerSelfUpdateCommand } from './commands/self-update.js';
 import { registerPullCommand } from './commands/pull.js';
 import { registerToolsCommands } from './commands/tools.js';
+import { registerMigrateCommand } from './commands/migrate.js';
 import type { Runner } from './self-update/self-update.js';
 
 // src/cli.ts and the bundled lib/*.js both sit one level below package.json.
@@ -38,7 +39,7 @@ const HELP_GROUPS: Array<[string, string[]]> = [
   ['Run & check:', ['web', 'verify', 'doctor']],
   ['Team & machine:', ['remote', 'overlay']],
   ['Authoring:', ['new']],
-  ['Maintenance:', ['rollback', 'purge', 'gc', 'self-update']]
+  ['Maintenance:', ['rollback', 'purge', 'gc', 'migrate', 'self-update']]
 ];
 
 const ROOT_HELP_AFTER = `
@@ -63,6 +64,7 @@ Data flow:
 Environment variables:
   DSH_HOME          DSH home directory (default ~/.dsh; --dsh-home wins)
   DSH_CLI           DSH command to run, e.g. a path or a JSON array
+  DSHENV_HOME       dshenv data directory (default <DSH home>/envctl; --envctl-dir wins)
   DSHENV_PROFILE    default -p for commands that act on one profile
   DSHENV_LAYER      default --layer (base or overlay) when an overlay is active
   DSHENV_OVERLAY    overlay to use (--overlay / --no-overlay win)
@@ -167,6 +169,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
     .description('Environment-as-Code manager for DeepSeek Harness')
     .version(version, '-v, --version', 'output the current version')
     .option('--dsh-home <path>', 'custom DSH home directory')
+    .option('--envctl-dir <path>', 'dshenv data directory (default <DSH home>/envctl)')
     .option('--harness-source <path>', 'custom DSH source directory')
     .option('--allow-untested-dsh', 'allow untested or experimental DSH runtime versions')
     .option('--json', 'output in structured JSON format')
@@ -187,6 +190,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
     .exitOverride();
 
   defaultTargetProfile(program, writeErr);
+  envctlLocationHint(program, writeErr);
 
   const ctx: CommandContext = {
     program,
@@ -208,6 +212,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
   registerWebCommands(ctx);
   registerPullCommand(ctx);
   registerToolsCommands(ctx);
+  registerMigrateCommand(ctx);
   registerSelfUpdateCommand(ctx, { version, packageRoot, run: io?.selfUpdateRunner });
 
   // Help lists groups, and commands within them, in the order the commands were registered.

@@ -25,17 +25,21 @@ export interface EnvironmentPaths {
 export interface ResolvePathsInput {
   cliDshHome?: string;
   envDshHome?: string;
+  // Where envctl lives instead of <home>/envctl; DSH never reads it, so it can sit anywhere.
+  cliEnvctlDir?: string;
+  envEnvctlDir?: string;
   userHome?: string;
   cwd?: string;
 }
 
 // As DSH's own resolveDshHome does, so both name the same directory when a shell did not expand the ~ (.env, Docker ENV).
-function resolveHomePath(value: string, label: string, cwd: string, userHome: string): string {
+export function resolveHomePath(value: string, label: string, cwd: string, userHome: string): string {
   if (!value.trim()) {
     throw new ValidationError(`${label} must not be empty`);
   }
   const expanded = value === '~' ? userHome : value.startsWith('~/') || value.startsWith('~\\') ? path.join(userHome, value.slice(2)) : value;
-  return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(cwd, expanded);
+  // resolve, not normalize: a trailing separator would make lstat follow a symlinked directory.
+  return path.resolve(cwd, expanded);
 }
 
 export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentPaths {
@@ -52,7 +56,12 @@ export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentP
 
   const home = explicitHome ?? path.join(userHome, '.dsh');
   const profilesDir = path.join(home, 'profiles');
-  const managerDir = path.join(home, 'envctl');
+  const managerDir =
+    input?.cliEnvctlDir !== undefined
+      ? resolveHomePath(input.cliEnvctlDir, 'CLI envctl-dir', cwd, userHome)
+      : input?.envEnvctlDir !== undefined && input.envEnvctlDir.trim() !== ''
+        ? resolveHomePath(input.envEnvctlDir, 'DSHENV_HOME environment variable', cwd, userHome)
+        : path.join(home, 'envctl');
 
   return {
     home,

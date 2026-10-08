@@ -2,7 +2,7 @@ import type { EnvironmentManifest, EnvironmentLock, EnvironmentState } from '../
 import type { EnvironmentInventory } from '../inventory/profile-reader.js';
 import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 import { planPlugins } from '../resources/plugin.js';
-import { planProfilePatches } from '../resources/profile-patch.js';
+import { findShadowedPatches, planHomePatches, planProfilePatches } from '../resources/profile-patch.js';
 import { ownedSkillDigests, planSkills } from '../resources/skill.js';
 
 export type OperationKind =
@@ -14,7 +14,7 @@ export type OperationKind =
   | 'configure'
   | 'blocked';
 
-export type ResourceKind = 'plugin' | 'profile-patch' | 'skill';
+export type ResourceKind = 'plugin' | 'profile-patch' | 'home-patch' | 'skill';
 
 export interface PluginOperation {
   resource: 'plugin';
@@ -39,6 +39,14 @@ export interface ProfilePatchOperation {
   blockedReason?: string;
 }
 
+// The dshenv block of $DSH_HOME/cordis.patch.yml, which every profile loads after its own; it names no profile.
+export interface HomePatchOperation {
+  resource: 'home-patch';
+  kind: 'configure' | 'blocked';
+  reason: string;
+  blockedReason?: string;
+}
+
 // A loose skill in $DSH_HOME/skills; skills are home-wide, so it names no profile.
 export interface SkillPlanOperation {
   resource: 'skill';
@@ -48,10 +56,10 @@ export interface SkillPlanOperation {
 }
 
 export type ProfileOperation = PluginOperation | ProfilePatchOperation;
-export type PlanOperation = ProfileOperation | SkillPlanOperation;
+export type PlanOperation = ProfileOperation | HomePatchOperation | SkillPlanOperation;
 
 export function isProfileOperation(operation: PlanOperation): operation is ProfileOperation {
-  return operation.resource !== 'skill';
+  return operation.resource === 'plugin' || operation.resource === 'profile-patch';
 }
 
 export interface UnmanagedPlugin {
@@ -76,16 +84,43 @@ export interface UnmanagedPatches {
   entries: string[];
 }
 
+// Ids a profile sets that an entry of the global cordis.patch.yml sets again; DSH applies the global one.
+export interface ShadowedPatches {
+  profile: string;
+  ids: string[];
+  // Ids whose `disabled` the global file sets, which DSH's plugin page cannot toggle from the profile.
+  disabled?: string[];
+}
+
+// Bundles DSH stopped shipping; from 0.2.1 it drops them from a profile's bundle list on every load.
+export const RETIRED_BUNDLES: Readonly<Record<string, string>> = {
+  '@deepseek-ai/dsh-experimental-schedule-bundle': 'DSH 0.2.1-alpha.1 retired it, as the Web composition mounts Schedule itself'
+};
+
+export interface RetiredBundle {
+  profile: string;
+  alias: string;
+  package: string;
+  reason: string;
+  // Set when the active overlay declares the alias and the base does not, so only an overlay write removes it.
+  layer?: 'overlay';
+}
+
 export interface EnvironmentPlan {
   hasChanges: boolean;
-  // Per-profile operations in execution order, then the skill operations.
+  // Per-profile operations in execution order, then the global patch and skill operations.
   operations: PlanOperation[];
   unmanaged: UnmanagedPlugin[];
   unverified: UnverifiedPlugin[];
   unmanagedPatches: UnmanagedPatches[];
+  // Entries of the global cordis.patch.yml outside dshenv's block.
+  unmanagedHomePatches?: string[];
+  shadowedPatches?: ShadowedPatches[];
   unmanagedSkills: string[];
   // Agent presets a manifest patch restates whole (dshenv tools); DSH upgrades to them no longer apply.
   pinnedPresets?: Array<{ profile: string; id: string }>;
+  // Enabled plugins of the manifest that are retired bundles: DSH 0.2.1 keeps undoing the enable.
+  retiredBundles?: RetiredBundle[];
 }
 
 export type StableStatus =
@@ -110,6 +145,12 @@ export interface EnvironmentStatusSummary {
   unmanagedCount: number;
   profilesCount: number;
   plugins: PluginStatusEntry[];
+  // Bundles DSH skips at load, from `dsh --dump-config`: declared and installed, yet not running.
+  skippedBundles?: Array<{ profile: string; package: string; reason: string }>;
+  // From each profile's compatibility.json: package@version -> the DSH versions it may load on.
+  versionExemptions?: Array<{ profile: string; package: string; dshVersions: string[] }>;
+  // Enabled retired bundles the manifest declares, which DSH 0.2.1 keeps dropping (see EnvironmentPlan).
+  retiredBundles?: RetiredBundle[];
 }
 
 const KIND_ORDER: Record<OperationKind, number> = {
@@ -123,11 +164,26 @@ const KIND_ORDER: Record<OperationKind, number> = {
 };
 
 // -p narrows plan, status and apply to one profile by reading only that profile; skills live home-wide, so they stay in.
+// The global patches apply to every profile, so they are no one profile's to change.
 export function onlyProfile<T extends { profiles: Record<string, unknown> }>(value: T, profile: string | undefined): T {
   if (profile === undefined) {
     return value;
   }
-  return { ...value, profiles: Object.hasOwn(value.profiles, profile) ? { [profile]: value.profiles[profile] } : {} };
+  const { patches: _patches, homePatches: _homePatches, homePatchesError: _error, ...rest } = value as T & Record<string, unknown>;
+  return { ...rest, profiles: Object.hasOwn(value.profiles, profile) ? { [profile]: value.profiles[profile] } : {} } as T;
+}
+
+// -p leaves the global file out of the plan, but its overrides of that profile's entries still make a sync look false.
+export function addProfileShadows(
+  plan: EnvironmentPlan,
+  manifest: EnvironmentManifest,
+  inventory: EnvironmentInventory,
+  profile: string | undefined
+): EnvironmentPlan {
+  if (profile === undefined) return plan;
+  const narrowed = onlyProfile(manifest, profile);
+  const shadowed = findShadowedPatches(narrowed, [...(manifest.patches ?? []), ...(inventory.homePatches?.unmanaged ?? [])]);
+  return shadowed.length > 0 ? { ...plan, shadowedPatches: shadowed } : plan;
 }
 
 export function buildPlan(
@@ -185,16 +241,25 @@ export function buildPlan(
   });
 
   const skills = inventory.skills ? planSkills(inventory.skills, ownedSkillDigests(state)) : { operations: [], unmanaged: [] };
+  const home = planHomePatches(manifest, inventory);
   const { pinnedPresets } = patches;
+  const retiredBundles = Object.entries(manifest.profiles).flatMap(([profile, entry]) =>
+    Object.entries(entry.plugins)
+      .filter(([, plugin]) => plugin.enabled !== false && Object.hasOwn(RETIRED_BUNDLES, plugin.package))
+      .map(([alias, plugin]) => ({ profile, alias, package: plugin.package, reason: RETIRED_BUNDLES[plugin.package] }))
+  );
 
   return {
-    hasChanges: operations.length > 0 || skills.operations.length > 0,
-    operations: [...operations, ...skills.operations],
+    hasChanges: operations.length > 0 || home.operations.length > 0 || skills.operations.length > 0,
+    operations: [...operations, ...home.operations, ...skills.operations],
     unmanaged,
     unverified: plugins.unverified,
     unmanagedPatches: patches.unmanaged,
+    ...(home.unmanaged.length > 0 ? { unmanagedHomePatches: home.unmanaged } : {}),
+    ...(home.shadowed.length > 0 ? { shadowedPatches: home.shadowed } : {}),
     unmanagedSkills: skills.unmanaged,
-    ...(pinnedPresets.length > 0 ? { pinnedPresets } : {})
+    ...(pinnedPresets.length > 0 ? { pinnedPresets } : {}),
+    ...(retiredBundles.length > 0 ? { retiredBundles } : {})
   };
 }
 
@@ -219,9 +284,15 @@ export function buildStatus(
   }
 
   const plugins = collectPluginStatuses(manifest, state, inventory, plan);
+  const homeOperations = plan.operations.filter((op) => op.resource === 'home-patch');
 
   let status: StableStatus = 'healthy';
-  if (!manifest || operationCounts.blocked > 0 || plugins.some((p) => p.status === 'degraded')) {
+  if (
+    !manifest ||
+    operationCounts.blocked > 0 ||
+    homeOperations.some((op) => op.kind === 'blocked') ||
+    plugins.some((p) => p.status === 'degraded')
+  ) {
     status = 'degraded';
   } else if (plugins.some((p) => p.status === 'incompatible')) {
     status = 'incompatible';
@@ -235,9 +306,14 @@ export function buildStatus(
     0
   ) {
     status = 'drifted';
-  } else if (plan.operations.some((op) => op.resource === 'skill')) {
+  } else if (homeOperations.length > 0 || plan.operations.some((op) => op.resource === 'skill')) {
     status = 'drifted';
-  } else if (plan.unmanaged.length > 0 || plan.unmanagedPatches.length > 0 || plan.unmanagedSkills.length > 0) {
+  } else if (
+    plan.unmanaged.length > 0 ||
+    plan.unmanagedPatches.length > 0 ||
+    (plan.unmanagedHomePatches ?? []).length > 0 ||
+    plan.unmanagedSkills.length > 0
+  ) {
     status = 'unmanaged';
   } else if (plugins.some((p) => p.status === 'restart-required')) {
     status = 'restart-required';
@@ -344,7 +420,7 @@ function collectPluginStatuses(
 
 // The --json shape: profile patches under the '@profile' alias, skills in skillOperations.
 export function planJson(plan: EnvironmentPlan): Record<string, unknown> {
-  const { hasChanges, unmanaged, unverified, unmanagedPatches, unmanagedSkills, pinnedPresets } = plan;
+  const { hasChanges, unmanaged, unverified, unmanagedPatches, unmanagedHomePatches, shadowedPatches, unmanagedSkills, pinnedPresets, retiredBundles } = plan;
   const operations = plan.operations.filter(isProfileOperation).map(({ resource, ...op }) => {
     if (resource !== 'profile-patch') {
       return op;
@@ -353,15 +429,20 @@ export function planJson(plan: EnvironmentPlan): Record<string, unknown> {
     return { profile, alias: PROFILE_PATCHES_ALIAS, package: PROFILE_PATCHES_ALIAS, ...rest };
   });
   const skillOperations = plan.operations.flatMap((op) => (op.resource === 'skill' ? [{ kind: op.kind, name: op.name, reason: op.reason }] : []));
+  const homePatchOperations = plan.operations.flatMap((op) => (op.resource === 'home-patch' ? [{ kind: op.kind, reason: op.reason }] : []));
   return {
     hasChanges,
     operations,
     unmanaged,
     unverified,
     unmanagedPatches,
+    homePatchOperations,
+    unmanagedHomePatches: unmanagedHomePatches ?? [],
+    shadowedPatches: shadowedPatches ?? [],
     skillOperations,
     unmanagedSkills,
-    ...(pinnedPresets ? { pinnedPresets } : {})
+    ...(pinnedPresets ? { pinnedPresets } : {}),
+    ...(retiredBundles ? { retiredBundles } : {})
   };
 }
 

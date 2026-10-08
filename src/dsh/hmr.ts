@@ -69,7 +69,8 @@ export async function probeProfileHmr(profile: string, options: ProbeHmrOptions)
   return dump.ok ? parseHmrFromDump(dump.yaml) : { state: 'unknown', reason: dump.reason };
 }
 
-export type DumpConfigResult = { ok: true; yaml: string } | { ok: false; reason: string };
+// stderr carries DSH's diagnostics: patch entries that matched nothing, bundles it skipped.
+export type DumpConfigResult = { ok: true; yaml: string; stderr: string } | { ok: false; reason: string };
 
 // The profile tree `dsh --dump-config` composes: bundle layers, the user's patch file, and cordis `!!js` values.
 export async function dumpProfileConfig(profile: string, options: ProbeHmrOptions): Promise<DumpConfigResult> {
@@ -103,5 +104,5 @@ export async function dumpProfileConfig(profile: string, options: ProbeHmrOption
     }
     return { ok: false, reason: `dsh --dump-config exited with code ${String(result.exitCode)}` };
   }
-  return { ok: true, yaml: String(result.stdout) };
+  return { ok: true, yaml: String(result.stdout), stderr: String(result.stderr ?? '') };
 }

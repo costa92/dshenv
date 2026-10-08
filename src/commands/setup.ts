@@ -6,6 +6,7 @@ import { adoptEnvironment, type AdoptDetail } from '../import/adopt.js';
 import { parseYamlStrict, serializeCaptureDocument } from '../manifest/files.js';
 import { CaptureDocumentSchema } from '../manifest/schema.js';
 import { writeAtomic } from '../io/atomic-file.js';
+import { withEnvironmentLock } from '../io/lock.js';
 import { ValidationError } from '../errors.js';
 import type { CaptureDocument } from '../domain.js';
 import { assertNotRemoteOwned } from '../remote/ownership.js';
@@ -34,10 +35,12 @@ export function registerSetupCommands(ctx: CommandContext): void {
     .action(async () => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
-      if (fs.existsSync(paths.manifestFile)) {
-        throw new ValidationError(`dshenv is already initialized at ${paths.managerDir}; see dshenv status or dshenv plan`);
-      }
-      await initEnvironment(paths);
+      await withEnvironmentLock(paths, async () => {
+        if (fs.existsSync(paths.manifestFile)) {
+          throw new ValidationError(`dshenv is already initialized at ${paths.managerDir}; see dshenv status or dshenv plan`);
+        }
+        await initEnvironment(paths);
+      });
       if (opts.json) {
         writeOut(JSON.stringify({ status: 'initialized', paths }, null, 2) + '\n');
       } else {

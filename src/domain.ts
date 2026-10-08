@@ -60,6 +60,8 @@ export interface EnvironmentManifest {
       patches?: ProfilePatch[];
     }
   >;
+  // $DSH_HOME/cordis.patch.yml: DSH applies it to every profile, after the profile's own patches.
+  patches?: ProfilePatch[];
 }
 
 export type NpmLockSource = {
@@ -183,4 +185,5 @@ export interface EnvironmentOverlay {
   apiVersion: 'dshenv-overlay/v1';
   environment?: EnvironmentManifest['environment'];
   profiles?: Record<string, { plugins?: Record<string, OverlayPluginEntry>; patches?: ProfilePatch[] }>;
+  patches?: ProfilePatch[];
 }

@@ -9,6 +9,13 @@ import { flowArrayAsBlock, jsTags as customTags, splicePluginBlocks, stringifyWi
 // A profile's own entries share the plugin block markers under an alias no plugin may take.
 export const PROFILE_PATCHES_ALIAS = '@profile';
 
+// $DSH_HOME/cordis.patch.yml goes through the profile patch code as one more target; no profile name starts with @.
+export const HOME_PATCH_TARGET = '@home';
+
+export function describePatchTarget(target: string): string {
+  return target === HOME_PATCH_TARGET ? 'the global cordis.patch.yml' : `profile '${target}'`;
+}
+
 
 const BLOCK = /# dshenv:begin profile=([^\s]+) plugin=([^\s]+)(?: digest=([^\s]+))?\n([\s\S]*?)# dshenv:end profile=\1 plugin=\2\n?/g;
 
@@ -139,12 +146,25 @@ export function mergeDshPatches(block: ProfilePatch[], unmanaged: ProfilePatch[]
 }
 
 export function containsLocalPath(value: unknown): boolean {
+  const insert = value !== null && typeof value === 'object' ? (value as { insert?: unknown }).insert : undefined;
+  return (Array.isArray(insert) && insert.some(insertsRelativeModule)) || containsAbsolutePath(value);
+}
+
+function containsAbsolutePath(value: unknown): boolean {
   if (typeof value === 'string') {
     return path.isAbsolute(value) || path.win32.isAbsolute(value) || /^~[\\/]/.test(value);
   }
-  if (Array.isArray(value)) return value.some(containsLocalPath);
-  if (value !== null && typeof value === 'object') return Object.values(value).some(containsLocalPath);
+  if (Array.isArray(value)) return value.some(containsAbsolutePath);
+  if (value !== null && typeof value === 'object') return Object.values(value).some(containsAbsolutePath);
   return false;
+}
+
+// DSH resolves an inserted row's `./` or `../` name beside the patch file, so it names a module on this machine.
+function insertsRelativeModule(row: unknown): boolean {
+  if (row === null || typeof row !== 'object') return false;
+  const { name, group, config } = row as { name?: unknown; group?: unknown; config?: unknown };
+  if (typeof name === 'string' && (name.startsWith('./') || name.startsWith('../'))) return true;
+  return Boolean(group) && Array.isArray(config) && config.some(insertsRelativeModule);
 }
 
 // Entries with machine-local paths, plus every later entry targeting an id one of them inserts: overlay entries merge

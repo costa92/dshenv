@@ -16,18 +16,9 @@ import type {
   OwnedResources
 } from '../domain.js';
 
-export function hasInterpolation(content: string): boolean {
-  return /\$\{[^}]+\}/.test(content);
-}
-
 export function parseYamlStrict(content: string): unknown {
   if (typeof content !== 'string') {
     throw new ValidationError('Expected string content for YAML parsing');
-  }
-
-  // Check for prohibited dynamic interpolations
-  if (hasInterpolation(content)) {
-    throw new ValidationError('Dynamic variable interpolations ${...} are not allowed in manifest');
   }
 
   const doc = YAML.parseDocument(content, {

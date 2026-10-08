@@ -1,5 +1,5 @@
 import { isProfileOperation, type EnvironmentPlan, type ProfileOperation } from '../planner/plan.js';
-import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
+import { HOME_PATCH_TARGET, PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 import type { HmrStatus } from '../dsh/hmr.js';
 
 export type RestartReason = 'hmr-on' | 'package-update' | 'hmr-off' | 'hmr-unknown';
@@ -24,9 +24,18 @@ function isRestartKind(kind: string): kind is RestartOperationKind {
   return RESTART_KINDS.has(kind);
 }
 
-// Profiles whose operations need an HMR verdict, in plan order.
-export function profilesToProbe(plan: EnvironmentPlan): string[] {
-  return [...new Set(plan.operations.filter(isProfileOperation).filter((op) => isRestartKind(op.kind)).map((op) => op.profile))];
+function changesHomePatches(plan: EnvironmentPlan): boolean {
+  return plan.operations.some((op) => op.resource === 'home-patch' && op.kind === 'configure');
+}
+
+// Profiles whose operations need an HMR verdict, in plan order; a global patch change reaches every existing profile.
+export function profilesToProbe(plan: EnvironmentPlan, existingProfiles: string[] = []): string[] {
+  return [
+    ...new Set([
+      ...plan.operations.filter(isProfileOperation).filter((op) => isRestartKind(op.kind)).map((op) => op.profile),
+      ...(changesHomePatches(plan) ? existingProfiles : [])
+    ])
+  ];
 }
 
 // Restart items name profile patches by their block alias.
@@ -55,16 +64,23 @@ export function restartItemFor(operation: ProfileOperation, hmr: HmrStatus): Res
 
 export function buildRestartSummary(
   plan: EnvironmentPlan,
-  hmrByProfile: ReadonlyMap<string, HmrStatus>
+  hmrByProfile: ReadonlyMap<string, HmrStatus>,
+  existingProfiles: string[] = []
 ): RestartSummary {
   const summary: RestartSummary = { notRequired: [], required: [] };
+  const verdict = (profile: string): HmrStatus => hmrByProfile.get(profile) ?? { state: 'unknown', reason: 'hot reload was not probed' };
+  const push = (item: RestartItem | null) => {
+    if (item) (item.reason === 'hmr-on' ? summary.notRequired : summary.required).push(item);
+  };
   for (const operation of plan.operations.filter(isProfileOperation)) {
-    const hmr = hmrByProfile.get(operation.profile) ?? { state: 'unknown', reason: 'hot reload was not probed' };
-    const item = restartItemFor(operation, hmr);
-    if (!item) {
-      continue;
+    push(restartItemFor(operation, verdict(operation.profile)));
+  }
+  if (changesHomePatches(plan)) {
+    for (const profile of existingProfiles) {
+      const hmr = verdict(profile);
+      const base = { profile, package: HOME_PATCH_TARGET, kind: 'configure' as const };
+      push(hmr.state === 'unknown' ? { ...base, reason: 'hmr-unknown', detail: hmr.reason } : { ...base, reason: hmr.state === 'on' ? 'hmr-on' : 'hmr-off' });
     }
-    (item.reason === 'hmr-on' ? summary.notRequired : summary.required).push(item);
   }
   return summary;
 }
