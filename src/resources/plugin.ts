@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { dshCreatesProfile, missingProfileReason } from '../dsh/templates.js';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
@@ -334,9 +335,9 @@ export function planPlugins(
       }
     }
 
-    // DSH creates a profile only when it installs a plugin into it; without one, in-box plugins have nowhere to go.
-    if (!profInv && !operations.some((op) => op.profile === profName && op.kind === 'install')) {
-      const reason = `Profile '${profName}' does not exist yet; start DSH with --profile ${profName} once, or declare a plugin to install in it`;
+    // DSH creates a profile when it installs a plugin into it, or from its template; otherwise in-box plugins have nowhere to go.
+    if (!profInv && !dshCreatesProfile(profName) && !operations.some((op) => op.profile === profName && op.kind === 'install')) {
+      const reason = missingProfileReason(profName);
       for (const [index, op] of operations.entries()) {
         if (op.profile === profName && op.kind !== 'blocked') {
           operations[index] = { ...op, kind: 'blocked', reason, blockedReason: reason };
@@ -469,6 +470,9 @@ function packageSpec(
 }
 
 export function planNeedsDshCli(plan: EnvironmentPlan, inventory: EnvironmentInventory): boolean {
+  if ((plan.createdProfiles ?? []).length > 0) {
+    return true;
+  }
   return plan.operations.some((operation) => {
     if (operation.resource !== 'plugin') {
       return false;

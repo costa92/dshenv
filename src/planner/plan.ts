@@ -1,4 +1,5 @@
 import type { EnvironmentManifest, EnvironmentLock, EnvironmentState } from '../domain.js';
+import { dshCreatesProfile } from '../dsh/templates.js';
 import type { EnvironmentInventory } from '../inventory/profile-reader.js';
 import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 import { planPlugins } from '../resources/plugin.js';
@@ -121,6 +122,8 @@ export interface EnvironmentPlan {
   pinnedPresets?: Array<{ profile: string; id: string }>;
   // Enabled plugins of the manifest that are retired bundles: DSH 0.2.1 keeps undoing the enable.
   retiredBundles?: RetiredBundle[];
+  // Missing template profiles apply has DSH create first, as no install in them would.
+  createdProfiles?: string[];
 }
 
 export type StableStatus =
@@ -249,6 +252,11 @@ export function buildPlan(
       .map(([alias, plugin]) => ({ profile, alias, package: plugin.package, reason: RETIRED_BUNDLES[plugin.package] }))
   );
 
+  const createdProfiles = [...new Set(operations.map((op) => op.profile))].filter(
+    (profile) => !inventory.profiles[profile] && dshCreatesProfile(profile) &&
+      !operations.some((op) => op.profile === profile && (op.kind === 'install' || op.kind === 'blocked'))
+  );
+
   return {
     hasChanges: operations.length > 0 || home.operations.length > 0 || skills.operations.length > 0,
     operations: [...operations, ...home.operations, ...skills.operations],
@@ -259,7 +267,8 @@ export function buildPlan(
     ...(home.shadowed.length > 0 ? { shadowedPatches: home.shadowed } : {}),
     unmanagedSkills: skills.unmanaged,
     ...(pinnedPresets.length > 0 ? { pinnedPresets } : {}),
-    ...(retiredBundles.length > 0 ? { retiredBundles } : {})
+    ...(retiredBundles.length > 0 ? { retiredBundles } : {}),
+    ...(createdProfiles.length > 0 ? { createdProfiles } : {})
   };
 }
 
@@ -420,7 +429,7 @@ function collectPluginStatuses(
 
 // The --json shape: profile patches under the '@profile' alias, skills in skillOperations.
 export function planJson(plan: EnvironmentPlan): Record<string, unknown> {
-  const { hasChanges, unmanaged, unverified, unmanagedPatches, unmanagedHomePatches, shadowedPatches, unmanagedSkills, pinnedPresets, retiredBundles } = plan;
+  const { hasChanges, unmanaged, unverified, unmanagedPatches, unmanagedHomePatches, shadowedPatches, unmanagedSkills, pinnedPresets, retiredBundles, createdProfiles } = plan;
   const operations = plan.operations.filter(isProfileOperation).map(({ resource, ...op }) => {
     if (resource !== 'profile-patch') {
       return op;
@@ -442,7 +451,8 @@ export function planJson(plan: EnvironmentPlan): Record<string, unknown> {
     skillOperations,
     unmanagedSkills,
     ...(pinnedPresets ? { pinnedPresets } : {}),
-    ...(retiredBundles ? { retiredBundles } : {})
+    ...(retiredBundles ? { retiredBundles } : {}),
+    ...(createdProfiles ? { createdProfiles } : {})
   };
 }
 

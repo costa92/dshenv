@@ -11,6 +11,8 @@
 
 ### 新增
 
+- `dshenv plugins official` 列出已安装的 DSH 自带的官方 bundle（默认关闭、在 Profile 里选中才加载的那些，随 DSH 版本变化），标出清单在哪些 Profile 声明了它们，并给出 `install in-box:` 命令；`--json` 输出 `dshVersion` 与 `bundles`。
+- Profile 还不存在、名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先让 DSH 按自己的模板创建它（`dsh --profile <名字> --dump-config`），再写 bundle 与补丁。此前只声明官方 bundle 或补丁的新 Profile 一律 `blocked`，因为只有安装 npm 插件才会创建 Profile。预览在 `Profiles DSH creates from its own template first` 下列出，`plan --json` 新增 `createdProfiles`。
 - `doctor` 注明数据目录来自 `--envctl-dir`、`DSHENV_HOME` 还是默认位置，`--json` 新增 `paths.managerDirSource`。
 - 管理全局补丁 `$DSH_HOME/cordis.patch.yml`：清单与 overlay 新增顶层 `patches:`，`apply` 写进该文件的受管块，`pull`（不带 `--profile` 时）收回手写的条目，`plan` 列出未纳管的全局条目，并提示被全局条目覆盖、实际不生效的 Profile 条目。`--profile` 不涉及全局文件，但仍提示全局条目对该 Profile 的覆盖；覆盖按字段比较，全局条目写了 `disabled` 的 id 单独注明（DSH 插件页启停不了它）；`plan --json` 新增 `homePatchOperations`、`unmanagedHomePatches`、`shadowedPatches`（项里的 `disabled` 列出这类 id）。
 - dshenv 数据目录可以放在 DSH 主目录之外：`--envctl-dir <path>` 或环境变量 `DSHENV_HOME` 指定，默认仍是 `<DSH 主目录>/envctl`。DSH 不读这个目录，无需改动 DSH。
@@ -36,7 +38,8 @@
 
 - 清单与 overlay 允许 `${...}`：DSH 不做插值，按原文读取。此前一律拒绝，含 `${` 的配置（如提示词模板）所在的整个 Profile 都无法用 `pull` 收回，`config set` 也不会抄 DSH 组合出的配置。
 
-- 版本门禁放行 DSH `0.2.0` 版本族（npm `0.2.0-rc.2` 冒烟全部通过），`0.1.7` 照常放行；`0.2.1-alpha.1` 等其他版本仍需 `--allow-untested-dsh`。`dshenv new` 生成的插件 peer 范围改为 `>=0.1.7-0 <0.2.0-0 || >=0.2.0-0 <0.3.0-0`，可以装进 DSH 0.2（按 npm 的预发布版规则，每个 minor 单写一段，`0.2.0-rc.2` 才能匹配）。兼容性冒烟的默认插件改为 `@nanmicoder/dsh-agent-teams@0.1.22`。
+- 版本门禁放行 DSH `0.2.1` 版本族：冒烟（`scripts/smoke-dsh.sh`）默认改用 DSH 官方 bundle `@deepseek-ai/dsh-experimental-agent-team-profile`，它的版本跟随 DSH，0.1.7-rc.2、0.2.0-rc.2、0.2.1-alpha.1 都不带豁免 13 步全部通过；compat 矩阵把 `0.2.1-alpha.1` 列为必须通过。第三方插件是否支持 0.2.1 仍看它自己的 peer 范围（如 `@nanmicoder/dsh-agent-teams@0.1.22` 只到 0.2.0-rc.2，DSH 会拒装）。`dshenv new` 生成的 peer 范围加上 `>=0.2.1-0 <0.3.0-0`，否则按 npm 默认语义 `0.2.1-alpha.1` 不匹配。
+- 版本门禁放行 DSH `0.2.0` 版本族（npm `0.2.0-rc.2` 冒烟全部通过），`0.1.7` 照常放行。`dshenv new` 生成的插件 peer 范围改为 `>=0.1.7-0 <0.2.0-0 || >=0.2.0-0 <0.3.0-0`，可以装进 DSH 0.2（按 npm 的预发布版规则，每个 minor 单写一段，`0.2.0-rc.2` 才能匹配）。兼容性冒烟的默认插件改为 `@nanmicoder/dsh-agent-teams@0.1.22`。
 - 数据目录本身或其中任何顶层条目（文件或目录）是软链接时，命令以退出码 3 拒绝，并提示改用 `DSHENV_HOME` 与 `migrate`。此前用软链接把它们放到别处的环境，升级后先运行 `dshenv migrate --to <新位置> --yes`，再把 `export DSHENV_HOME=<新位置>` 写进 shell 配置、CI 与容器环境；输出里有 `rewrote` 时再 `dshenv apply --yes`，让 DSH 按新路径重装本地插件。
 
 ### 修复

@@ -34,7 +34,7 @@ export function parseDshVersion(value: string): DshVersion | null {
 }
 
 // Families whose npm release passed the smoke test, prereleases included (docs/DSH版本升级.md).
-const VERIFIED_FAMILIES = ['0.1.7', '0.2.0'] as const;
+const VERIFIED_FAMILIES = ['0.1.7', '0.2.0', '0.2.1'] as const;
 export type DshFamily = (typeof VERIFIED_FAMILIES)[number];
 
 export function knownDshFamily(value: string): DshFamily | null {

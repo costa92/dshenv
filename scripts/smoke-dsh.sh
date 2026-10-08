@@ -6,7 +6,11 @@ set -uo pipefail
 
 version="${1:?usage: scripts/smoke-dsh.sh <dsh-version> [work-dir]}"
 work="${2:-$(mktemp -d)}"
-plugin="${SMOKE_PLUGIN:-@nanmicoder/dsh-agent-teams@0.1.22}"
+# An official bundle by default: it ships with every DSH from 0.1.7 on, so a DSH upgrade never waits on a third party.
+plugin="${SMOKE_PLUGIN:-in-box:@deepseek-ai/dsh-experimental-agent-team-profile}"
+package="${plugin#in-box:}"
+# Drop a version, but not the @ of a scope.
+case "$package" in @*@* | [!@]*@*) package="${package%@*}" ;; esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dshenv=(node "$root/bin/dshenv.js")
 failed=0
@@ -71,7 +75,7 @@ step "init" 0 "${run[@]}" init
 step "declare $plugin" 0 "${run[@]}" install "$plugin" --profile web --as smoke
 step "apply install" 0 apply_granting_exemption
 step "plan clean after install" 0 "${run[@]}" plan
-step "dsh loads the plugin layer" 0 bash -c '"$DSH_CLI" --profile web --dump-config | grep -q "${1%@*}"' _ "$plugin"
+step "dsh loads the plugin layer" 0 bash -c '"$DSH_CLI" --profile web --dump-config | grep -qF "$1"' _ "$package"
 step "declare disable" 0 "${run[@]}" disable smoke --profile web
 step "apply disable" 0 "${run[@]}" apply --yes
 step "plan clean after disable" 0 "${run[@]}" plan

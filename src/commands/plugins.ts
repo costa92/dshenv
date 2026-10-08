@@ -8,7 +8,7 @@ import { loadLock, loadManifest, loadState, serializeLock } from '../manifest/fi
 import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
-import { ValidationError } from '../errors.js';
+import { CapabilityError, ValidationError } from '../errors.js';
 import { ExactVersionRegex, GitCommitRegex, PackageNameRegex } from '../manifest/schema.js';
 import type { EnvironmentManifest, OverlayPatchEntry, OverlayPluginEntry, PatchEntry, PluginManifestEntry, PluginSource, ProfilePatch } from '../domain.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
@@ -35,7 +35,7 @@ import { dumpProfileConfig } from '../dsh/hmr.js';
 import { parseComposedProfile, pluginConfigKeys, pluginRow } from '../tools/catalog.js';
 import { readProfilePatchFile } from '../apply/patches.js';
 import { extractPluginBlocks } from '../patch/patch.js';
-import { dshInstallAnchor, inBoxBundleStatus } from '../dsh/in-box.js';
+import { dshInstallAnchor, inBoxBundleStatus, listOfficialBundles } from '../dsh/in-box.js';
 import { supportedDshCommand } from './web.js';
 import { containsLocalPath } from '../profile-patches/entries.js';
 import { withEnvironmentLock } from '../io/lock.js';
@@ -638,6 +638,45 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       });
   }
 
+  pluginsCmd
+    .command('official')
+    .description('List the official bundles the installed DSH ships, off until a profile selects them, and where the manifest enables them')
+    .addOption(filterProfile())
+    .action(async (cmdOpts: { profile?: string }) => {
+      const opts = program.opts();
+      const paths = resolveCliPaths(opts);
+      const selection = resolveCliOverlay(opts, paths);
+      const manifest = fs.existsSync(paths.manifestFile) ? loadEffectiveManifest(paths, selection).manifest : null;
+      const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest?.environment?.harness?.sourceDir });
+      const anchor = command ? dshInstallAnchor(command) : null;
+      if (!anchor) {
+        throw new CapabilityError('Cannot find where DSH is installed, so its official bundles are unknown; configure DSH_CLI or --harness-source');
+      }
+      const { dshVersion, bundles } = listOfficialBundles(anchor);
+      const profiles = Object.entries(manifest?.profiles ?? {})
+        .filter(([name]) => cmdOpts.profile === undefined || name === cmdOpts.profile)
+        .sort(([a], [b]) => a.localeCompare(b));
+      const rows = bundles.map((bundle) => ({
+        ...bundle,
+        declared: profiles.flatMap(([profile, entry]) =>
+          Object.entries(entry.plugins)
+            .filter(([, plugin]) => plugin.package === bundle.package)
+            .map(([alias, plugin]) => ({ profile, alias, enabled: plugin.enabled !== false })))
+      }));
+      if (opts.json) {
+        writeOut(`${JSON.stringify({ ...(dshVersion ? { dshVersion } : {}), bundles: rows }, null, 2)}\n`);
+        return;
+      }
+      const lines = [`Official bundles shipped with DSH ${dshVersion ?? '(unknown version)'}; DSH loads them only in a profile that selects them:`];
+      for (const row of rows) {
+        const where = row.declared.map((item) => `${item.profile}: ${item.alias}${item.enabled ? '' : ' (disabled)'}`).join('; ');
+        lines.push(`  ${row.package}${row.description ? `  ${row.description}` : ''}  [${where || 'not declared'}]`);
+      }
+      if (rows.length === 0) lines.push('  (none)');
+      lines.push('', `Select one with: dshenv install in-box:<package> -p ${cmdOpts.profile ?? '<profile>'}, then dshenv apply --yes`);
+      writeOut(`${lines.join('\n')}\n`);
+    });
+
   // The rows DSH composes for a profile, or why DSH cannot tell.
   async function composedRows(
     paths: EnvironmentPaths,
@@ -963,7 +1002,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       });
   }
 
-  const order = ['install', 'update', 'remove', 'enable', 'disable', 'list', 'config'];
+  const order = ['install', 'update', 'remove', 'enable', 'disable', 'list', 'official', 'config'];
   (pluginsCmd.commands as Command[]).sort((a, b) => order.indexOf(a.name()) - order.indexOf(b.name()));
 
   return { installPlugin };

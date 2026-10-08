@@ -44,6 +44,8 @@ const compat = readWorkflow('.github/workflows/compat.yml');
 const VERIFIED_DSH = '0.1.7-rc.2';
 // Smoke-verified only: the e2e chain's third-party plugins do not declare DSH 0.2 yet.
 const VERIFIED_DSH_NEXT = '0.2.0-rc.2';
+// Smoke-verified with an official bundle, which needs no third-party peer range.
+const VERIFIED_DSH_ALPHA = '0.2.1-alpha.1';
 const packageJson = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8')) as {
   version: string;
   packageManager: string;
@@ -370,6 +372,7 @@ describe('real DSH workflows', () => {
     expect(smoke.strategy?.matrix?.include).toEqual([
       { dsh: VERIFIED_DSH, informational: false },
       { dsh: VERIFIED_DSH_NEXT, informational: false },
+      { dsh: VERIFIED_DSH_ALPHA, informational: false },
       { dsh: 'latest', informational: true },
       { dsh: 'next', informational: true }
     ]);
@@ -384,6 +387,7 @@ describe('real DSH workflows', () => {
     const { knownDshFamily } = await import('../src/dsh/version.js');
     expect(knownDshFamily(VERIFIED_DSH)).toBe('0.1.7');
     expect(knownDshFamily(VERIFIED_DSH_NEXT)).toBe('0.2.0');
+    expect(knownDshFamily(VERIFIED_DSH_ALPHA)).toBe('0.2.1');
   });
 
   it.skipIf(process.platform === 'win32').each(['scripts/e2e-dsh.sh', 'scripts/smoke-dsh.sh'])('keeps %s executable', (script) => {

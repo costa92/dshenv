@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { isBundlePackage } from '../patch/mount.js';
 import type { CommandSpec } from './command.js';
+import { DSH_TEMPLATE_BUNDLES } from './templates.js';
 
 function readJson(file: string): Record<string, unknown> | null {
   try {
@@ -58,4 +59,32 @@ export function inBoxBundleStatus(anchor: string, packageName: string): boolean 
     if (pkg) return isBundlePackage(pkg);
   }
   return undefined;
+}
+
+export interface OfficialBundle {
+  package: string;
+  version?: string;
+  description?: string;
+}
+
+// The bundles DSH ships beyond its templates, off until a profile selects them; the set changes between DSH versions.
+export function listOfficialBundles(anchor: string): { dshVersion?: string; bundles: OfficialBundle[] } {
+  const app = readJson(anchor);
+  const require = createRequire(anchor);
+  const bundles: OfficialBundle[] = [];
+  for (const name of Object.keys((app?.dependencies as Record<string, unknown> | undefined) ?? {})) {
+    if (DSH_TEMPLATE_BUNDLES.has(name)) continue;
+    let pkg: Record<string, unknown> | null = null;
+    for (const searchPath of require.resolve.paths(name) ?? []) {
+      pkg = readJson(path.join(searchPath, name, 'package.json'));
+      if (pkg) break;
+    }
+    if (!pkg || !isBundlePackage(pkg)) continue;
+    bundles.push({
+      package: name,
+      ...(typeof pkg.version === 'string' ? { version: pkg.version } : {}),
+      ...(typeof pkg.description === 'string' ? { description: pkg.description } : {})
+    });
+  }
+  return { ...(typeof app?.version === 'string' ? { dshVersion: app.version } : {}), bundles };
 }

@@ -16,7 +16,8 @@
 
 ### Phase 2A：只读能力基础设施（已验证）
 - [x] 精确识别已验证的 DSH `0.1.7` 版本族，拒绝 `0.1.70` 等相似版本
-- [x] 放行 DSH `0.2.0` 版本族（2026-10-08）：npm `0.2.0-rc.2` 冒烟 13 步全部通过；`0.2.1-alpha.1` 只在插件豁免下通过，暂不放行；模板 peer 范围放宽到 `<0.3.0-0`
+- [x] 放行 DSH `0.2.0` 版本族（2026-10-08）：npm `0.2.0-rc.2` 冒烟 13 步全部通过；模板 peer 范围放宽到 `<0.3.0-0`
+- [x] 放行 DSH `0.2.1` 版本族（2026-10-08）：冒烟改用 DSH 官方 bundle 后，`0.2.1-alpha.1` 不带豁免 13 步全部通过；模板 peer 范围加上 `>=0.2.1-0` 一段，`0.2.1-alpha.1` 这类预发布版也能匹配
 - [x] 只读探测官方 operations export 的声明与目标文件，不执行插件管理器代码
 - [x] 建立细粒度能力矩阵与单向收紧的证据评估
 - [x] `doctor` 增加能力状态，并保留原有 JSON 字段与 `mutations=false`
@@ -201,7 +202,8 @@
 - [x] 门禁放行 DSH 0.2.0 版本族，模板 peer 范围与 compat 矩阵同步
 - [x] `insert` 行的相对插件名算作本机路径
 - [x] 退役 bundle：`plan` 警告并给出 `remove` 命令
-- [ ] 放行 DSH 0.2.1：等第三方插件的 peer 范围覆盖 0.2.1（`@nanmicoder/dsh-agent-teams@0.1.22` 只声明到 0.2.0-rc.2，不靠豁免的冒烟装不上）
+- [x] 放行 DSH 0.2.1：冒烟改用官方 bundle，不再等第三方插件的 peer 范围
+- [x] DSH 官方 bundle：`plugins official` 列出当前 DSH 自带的官方 bundle；模板 Profile 不存在时 `apply` 让 DSH 按模板创建，`in-box` bundle 不再被挡
 - [x] 应用前用 `dsh --dump-config` 在临时 DSH 主目录副本里校验补丁 id；新增 id 匹配不到时 `apply --yes` 中止
 - [x] 报告 DSH 跳过的 bundle（`status` / `doctor`）；全局补丁改动的重启提示；`status` 展示 `compatibility.json` 的版本豁免
 - [x] 放宽 `${...}` 限制（DSH 不做插值）

@@ -67,8 +67,17 @@ describe('buildPlan with profile patches', () => {
     const plan = buildPlan(manifest([locale], plugins), null, empty);
     expect(plan.operations.map((op) => [op.resource, op.kind])).toEqual([['plugin', 'install'], ['profile-patch', 'configure']]);
 
-    const blocked = buildPlan(manifest([locale]), null, empty);
+    // web is a template profile, which DSH creates itself; a name it has no template for has nowhere to go.
+    const created = buildPlan(manifest([locale]), null, empty);
+    expect(created.operations).toMatchObject([{ kind: 'configure', resource: 'profile-patch' }]);
+    expect(created.createdProfiles).toEqual(['web']);
+    expect(plan.createdProfiles).toBeUndefined();
+
+    const mine = manifest([locale]);
+    mine.profiles = { mine: mine.profiles.web };
+    const blocked = buildPlan(mine, null, empty);
     expect(blocked.operations).toMatchObject([{ kind: 'blocked', resource: 'profile-patch' }]);
+    expect(blocked.createdProfiles).toBeUndefined();
   });
 
   it('renders the profile block operation without a package name', () => {
