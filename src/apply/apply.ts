@@ -27,7 +27,7 @@ import { DshError, ValidationError, DegradedError, CapabilityError, missingManif
 import { probeDsh, resolveDshCommand, type CommandSpec } from '../dsh/command.js';
 import { unsupportedDshVersionMessage } from '../dsh/version.js';
 import { capabilitiesFor } from '../dsh/capabilities.js';
-import { probeProfileHmr, type HmrStatus } from '../dsh/hmr.js';
+import { dumpProfileConfig, probeProfileHmr, type HmrStatus } from '../dsh/hmr.js';
 import { readRemoteConfig } from '../remote/schema.js';
 import { lockEntryId } from '../remote/lock-entries.js';
 import { applySkillOperation, ownedSkillDigests, skillOwnership } from '../resources/skill.js';
@@ -129,6 +129,19 @@ async function executeWithDsh(
     commandTimeoutMs: options?.dshCommandTimeoutMs ?? DSH_COMMAND_TIMEOUT_MS,
     hmrSettleMs: options?.hmrSettleMs ?? HMR_SETTLE_MS
   };
+  // dsh --dump-config creates a missing template profile, as DSH does on its first start in it.
+  for (const profile of plan.createdProfiles ?? []) {
+    assertNotInterrupted(signal);
+    const dir = path.join(paths.profilesDir, profile);
+    const created = await dumpProfileConfig(profile, { command, dshHome: paths.home });
+    if (fs.existsSync(path.join(dir, 'package.json'))) {
+      rollback.undo.push(async () => fs.rmSync(dir, { recursive: true, force: true }));
+    }
+    if (!created.ok || !fs.existsSync(path.join(dir, 'package.json'))) {
+      return { success: false, error: created.ok ? 'DSH did not create it' : created.reason, failedAt: `create profile ${profile}` };
+    }
+  }
+
   // Skills are home-wide and written after every profile has converged.
   const steps = plan.operations.filter(isProfileOperation);
   for (const [index, operation] of steps.entries()) {

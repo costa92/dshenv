@@ -1,4 +1,5 @@
 import type { EnvironmentManifest, ProfilePatch } from '../domain.js';
+import { dshCreatesProfile, missingProfileReason } from '../dsh/templates.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import type { EnvironmentInventory } from '../inventory/profile-reader.js';
 import type { HomePatchOperation, PluginOperation, ProfilePatchOperation, ShadowedPatches, UnmanagedPatches } from '../planner/plan.js';
@@ -69,11 +70,11 @@ function planProfileBlock(
     if (expected.length === 0) {
       return null;
     }
-    // DSH creates the profile when it installs a plugin into it; without one there is nowhere to write.
-    if (pluginOperations.some((op) => op.profile === profile && op.kind === 'install')) {
+    // DSH creates the profile when it installs a plugin into it, or from its template; otherwise there is nowhere to write.
+    if (dshCreatesProfile(profile) || pluginOperations.some((op) => op.profile === profile && op.kind === 'install')) {
       return { ...base, kind: 'configure', reason: 'Profile patches are not written yet' };
     }
-    const reason = `Profile '${profile}' does not exist yet; start DSH with --profile ${profile} once, or declare a plugin in it`;
+    const reason = missingProfileReason(profile);
     return { ...base, kind: 'blocked', reason, blockedReason: reason };
   }
   const block = profInv.profilePatches?.block ?? null;

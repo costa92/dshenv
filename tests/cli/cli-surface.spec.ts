@@ -216,7 +216,7 @@ describe('CLI surface', () => {
 
     it('runs the plugin commands under plugins too, and keeps the old top-level names', async () => {
       const plugins = (await run(['plugins', '--help'], false)).stdout;
-      expect(plugins.match(/^ {2}[a-z]+/gm)!.map((name) => name.trim())).toEqual(['install', 'update', 'remove', 'enable', 'disable', 'list', 'config', 'help']);
+      expect(plugins.match(/^ {2}[a-z]+/gm)!.map((name) => name.trim())).toEqual(['install', 'update', 'remove', 'enable', 'disable', 'list', 'official', 'config', 'help']);
       expect((await run(['plugins', 'list', '--help'], false)).stdout).toMatch(/Usage: dshenv plugins list/);
 
       expect((await run(['plugins', 'install', `${PKG}@0.1.21`, '-p', 'web'])).code).toBe(0);

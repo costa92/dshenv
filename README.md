@@ -8,7 +8,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/costa92/dshenv.svg)](https://github.com/costa92/dshenv/releases/latest)
 [![Node.js](https://img.shields.io/node/v/@costa92/dshenv.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/github/package-json/dependency-version/costa92/dshenv/dev/typescript.svg)](https://www.typescriptlang.org/)
-[![DSH](https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0-blue.svg)](docs/DSH版本升级.md)
+[![DSH](https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0%20%7C%200.2.1-blue.svg)](docs/DSH版本升级.md)
 [![Last commit](https://img.shields.io/github/last-commit/costa92/dshenv.svg)](https://github.com/costa92/dshenv/commits/master)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -584,11 +584,19 @@ dshenv install @nanmicoder/dsh-agent-teams@0.1.21 -p web        # npm 包，必�
 dshenv source clone https://github.com/ex/dsh-plugin-demo.git -p web   # Git 来源：克隆并在 lock 中固定 commit（见第 14 节）
 dshenv install ./my-plugin -p web                               # 本地目录（./、../、绝对路径或 file:），登记为 local-link
 dshenv install in-box:@deepseek-ai/dsh-acp-app -p acp           # 随 DSH 发布的 bundle，不装依赖，只在 Profile 中选中
+dshenv plugins official                                         # 列出当前 DSH 自带的官方 bundle
+dshenv install in-box:@deepseek-ai/dsh-experimental-agent-team-profile -p web   # 启用其中一个
 dshenv disable agent-teams -p web                               # enable 反之
 dshenv remove agent-teams -p web
 ```
 
-`install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
+`install in-box:<包>` 能从 DSH 的安装位置找到这个包时检查它是否 bundle（`package.json` 有 `dsh.bundle`），不是时以退出码 3 拒绝（DSH 会在每次启动时跳过它）；找不到时不检查。
+
+DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.profile.bundles` 里选中才加载（DSH Web 插件页"官方"一组里的开关就是这个）：
+
+- `dshenv plugins official` 从 DSH 的安装位置读出这些 bundle（DSH 自带、不属于 Profile 模板的 bundle），并标出清单在哪些 Profile 里声明了它们；`-p` 只看一个 Profile，`--json` 输出 `dshVersion` 与 `bundles`。列表随 DSH 版本变化：0.2.1-alpha.1 有 agent-team-profile、voice-input-bundle、auto-review、inspector-profile 四个，0.2.0-rc.2 用 schedule-bundle 代替 inspector-profile。找不到 DSH 的安装位置时以退出码 4 报错。
+- 用 `install in-box:<包> -p <profile>` 声明，`apply` 只把它加进 `dsh.profile.bundles`，不写 `dependencies`、不跑 npm；版本总是跟随已安装的 DSH，所以不受第三方插件的 peer 范围限制。`disable` / `remove` 把它从列表里去掉。
+- Profile 还不存在、而名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先运行一次 `dsh --profile <名字> --dump-config`，让 DSH 按自己的模板创建它（预览在 `Profiles DSH creates from its own template first` 下列出，`--json` 为 `createdProfiles`），再写 bundle 与补丁；apply 失败回滚时删掉这个新建的 Profile。其他名字 DSH 不会自己创建，仍为 `blocked`，要先装一个 npm 插件进去。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
 
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 

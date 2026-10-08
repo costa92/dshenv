@@ -1,6 +1,6 @@
 # DSH 新版本兼容验证
 
-dshenv 只放行已验证的 DSH 版本族（当前为 `0.1.7` 与 `0.2.0`，含其预发布版）。DSH 发布新版本后，按以下步骤验证并放宽门禁。
+dshenv 只放行已验证的 DSH 版本族（当前为 `0.1.7`、`0.2.0` 与 `0.2.1`，含其预发布版）。DSH 发布新版本后，按以下步骤验证并放宽门禁。
 
 ## 1. 冒烟
 
@@ -11,7 +11,7 @@ make smoke-dsh DSH_VERSION=<新版本>
 脚本 `scripts/smoke-dsh.sh` 把 `@deepseek-ai/dsh@<新版本>` 装到临时目录，并在隔离的 `DSH_HOME` 中依次执行：
 
 1. `doctor --json`：门禁放行则为 `PASS`；门禁拒绝（退出码 4）时打印 `WARN`，后续步骤带 `--allow-untested-dsh` 继续。
-2. `init` → `install`（默认 `@nanmicoder/dsh-agent-teams@0.1.22`，它同时声明了 0.1.7-rc.2 与 0.2.0-rc.2；可用 `SMOKE_PLUGIN` 覆盖）→ `apply --yes` → `plan` 无漂移 → `dsh --dump-config` 能看到插件。
+2. `init` → `install`（默认 DSH 的官方 bundle `in-box:@deepseek-ai/dsh-experimental-agent-team-profile`：0.1.7 起每个版本都自带，版本跟随 DSH，所以 DSH 升级不必等第三方插件更新 peer 范围；可用 `SMOKE_PLUGIN` 换成 npm 插件，如 `@nanmicoder/dsh-agent-teams@0.1.22`）→ `apply --yes`（`web` 不存在时由 DSH 按模板创建）→ `plan` 无漂移 → `dsh --dump-config` 能看到插件。
 3. `disable` 和 `remove` 各自 `apply --yes`，之后 `plan` 均无漂移。
 
 全部 `PASS` 时退出码为 0；失败的步骤会附带输出。第二个参数可以指定工作目录，便于事后查看 `doctor.json` 与日志。
@@ -43,7 +43,7 @@ DSH 0.2 起，安装和启动时会检查插件声明的 peer 范围：插件没
 | `0.1.7-rc.2` | 放行 | 13 步全部通过 | 2026-09-27 |
 | `0.1.6-alpha.2` | 拒绝 | 带 `--allow-untested-dsh` 全部通过；`dshenv new` 模板仍需要 0.1.7+ | 2026-09-27 |
 | `0.2.0-rc.2`（`latest`） | 放行 | `@nanmicoder/dsh-agent-teams@0.1.22` 直接装上，13 步全部通过。`make e2e-dsh` 142/150：8 步失败全部因为第三方插件 `@dsh-external/dsh-session-search@0.1.0` 的 peer 只声明到 0.1.x，被 DSH 拒绝安装；因此 e2e 与容器示例仍固定 `0.1.7-rc.2` | 2026-10-08 |
-| `0.2.1-alpha.1`（`alpha`） | 拒绝 | 带 `--allow-untested-dsh`，并对 `@nanmicoder/dsh-agent-teams@0.1.22` 授予精确版本豁免后 13 步全部通过。e2e 的失败同样都来自插件被拒；还没有插件声明这个版本，所以暂不放行 | 2026-10-08 |
+| `0.2.1-alpha.1`（`alpha`） | 放行（2026-10-08 起） | 冒烟改用官方 bundle 后，不带豁免 13 步全部通过（0.1.7-rc.2、0.2.0-rc.2 同样 13/13）。第三方插件 `@nanmicoder/dsh-agent-teams@0.1.22` 仍只声明到 0.2.0-rc.2，在 0.2.1 上会被 DSH 自己的 peer 检查拒绝，要等插件更新或用 `allow-version` 豁免；e2e 依赖第三方插件，仍固定 `0.1.7-rc.2`。此前（只用第三方插件冒烟时）要对它授予精确版本豁免才能通过，所以当时暂不放行 | 2026-10-08 |
 | `0.2.0-rc.1`（`next`） | 拒绝（当时；2026-10-08 起放行 `0.2.0` 版本族） | 带 `--allow-untested-dsh`，并对 `@nanmicoder/dsh-agent-teams@0.1.21` 授予精确版本豁免后 13 步全部通过；不豁免时 DSH 拒绝安装它（插件 peerDependencies 只声明到 0.1.7-rc.2） | 2026-09-29 |
 
 **升级到 DSH 0.2.0-rc.1 前**：`@nanmicoder/dsh-agent-teams@0.1.21` 会被拒绝安装，已装的 Profile 启动时也会被拦下。（此段是 0.2.0-rc.1 时的记录。`@nanmicoder/dsh-agent-teams@0.1.22` 已声明 `0.2.0-rc.2`，升级到 0.2.0 版本族时改用它即可。）当时建议等插件发布声明了 0.2 的新版本；如果确实要先升级，需要逐个 Profile 明确接受风险：

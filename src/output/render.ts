@@ -48,6 +48,9 @@ export function renderPlan(plan: EnvironmentPlan, restart?: RestartSummary, head
 
   const profileOperations = plan.operations.filter(isProfileOperation);
   const skillOperations = plan.operations.filter((op) => op.resource === 'skill');
+  if ((plan.createdProfiles ?? []).length > 0) {
+    lines.push('Profiles DSH creates from its own template first:', ...plan.createdProfiles!.map((profile) => `  + ${profile}`), '');
+  }
   if (profileOperations.length > 0) {
     lines.push(heading);
     for (const op of profileOperations) {
