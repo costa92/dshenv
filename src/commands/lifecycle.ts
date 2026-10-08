@@ -4,7 +4,7 @@ import { rollbackEnvironment } from '../rollback/rollback.js';
 import { gcEnvironment } from '../gc/gc.js';
 import { purgePlugin } from '../purge/purge.js';
 import { markRestarted } from '../restart/restart.js';
-import { renderPlan, renderRestartSummary, renderRuntimeReport } from '../output/render.js';
+import { renderPatchTargets, renderPlan, renderRestartSummary, renderRuntimeReport } from '../output/render.js';
 import { ValidationError } from '../errors.js';
 import { isProfileOperation, planExitCode, planJson } from '../planner/plan.js';
 import { loadEffectiveManifest, overlaySwitchWarning } from '../overlay/effective.js';
@@ -71,6 +71,9 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
         }
         if (res.dryRun) {
           writeOut(renderPlan(res.plan, res.restart, '[DRY-RUN] Planned operations:'));
+          if (res.patchTargets) {
+            writeOut(renderPatchTargets(res.patchTargets));
+          }
         } else if (res.applied) {
           writeOut(`Successfully applied changes (Operation ID: ${res.operationId})\n`);
           writeOut(renderPlan(res.plan, undefined, 'Applied operations:'));

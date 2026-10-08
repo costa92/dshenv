@@ -48,6 +48,26 @@ exit 0
     fs.rmSync(fakeBinDir, { recursive: true, force: true });
   });
 
+  it('warns about plaintext credentials in the manifest without failing', async () => {
+    const oldDshCli = process.env.DSH_CLI;
+    process.env.DSH_CLI = fakeDsh;
+    let stderr = '';
+    try {
+      fs.mkdirSync(path.join(tempHome, 'envctl'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempHome, 'envctl', 'manifest.yaml'),
+        'apiVersion: dshenv/v1\nprofiles:\n  web:\n    patches:\n      - id: llm\n        config: { token: abc }\n'
+      );
+      const code = await runCli(['doctor', '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+      expect(code).toBe(0);
+      expect(stderr).toContain("plaintext credentials (profile 'web' / llm / config.token)");
+      expect(stderr).not.toContain('abc');
+    } finally {
+      if (oldDshCli) process.env.DSH_CLI = oldDshCli;
+      else delete process.env.DSH_CLI;
+    }
+  });
+
   it('should pass doctor with supported DSH runtime', async () => {
     const oldDshCli = process.env.DSH_CLI;
     process.env.DSH_CLI = fakeDsh;
@@ -95,7 +115,7 @@ exit 0
       expect(code).toBe(4);
       expect(stdout).toBe('');
       expect(stderr).toBe(
-        'Unsupported DSH version 0.0.1: dshenv supports DSH 0.1.7 (e.g. 0.1.7-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.\n'
+        'Unsupported DSH version 0.0.1: dshenv supports DSH 0.1.7, 0.2.0 (e.g. 0.2.0-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.\n'
       );
     } finally {
       if (oldDshCli) process.env.DSH_CLI = oldDshCli;
@@ -421,7 +441,7 @@ exit 0
         expect(stdout).toBe('');
         // Only the numeric part of an unsupported version is shown; its prerelease tag could echo a secret.
         const message = exitCode === 4
-          ? 'Unsupported DSH version 0.1.70 (a prerelease): dshenv supports DSH 0.1.7 (e.g. 0.1.7-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.'
+          ? 'Unsupported DSH version 0.1.70 (a prerelease): dshenv supports DSH 0.1.7, 0.2.0 (e.g. 0.2.0-rc.2). Point DSH_CLI at a supported DSH, or pass --allow-untested-dsh to use this one anyway.'
           : 'Unable to parse DSH runtime version';
         expect(jsonArgs.length ? JSON.parse(stderr).error.message : stderr).toBe(jsonArgs.length ? message : `${message}\n`);
         expect(stderr).not.toContain('doctor-secret');

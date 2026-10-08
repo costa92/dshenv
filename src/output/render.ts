@@ -4,7 +4,9 @@ import type { LockEntryDrift } from '../remote/lock-entries.js';
 import { describeRemoteDrift, type RemoteFileDrift } from '../remote/ownership.js';
 import { describeRestartReason, restartPackage, type RestartItem, type RestartSummary } from '../apply/restart-plan.js';
 import type { RuntimeCheckItem } from '../runtime/compare.js';
-import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
+import type { PatchTargetReport } from '../apply/patch-targets.js';
+import { describeUnmatched } from '../dsh/dump-check.js';
+import { HOME_PATCH_TARGET, PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 
 function restartAnnotation(op: ProfileOperation, restart: RestartSummary): string {
   const matches = (item: RestartItem): boolean =>
@@ -22,12 +24,23 @@ export function renderPlan(plan: EnvironmentPlan, restart?: RestartSummary, head
   const pinned = (plan.pinnedPresets ?? []).length > 0
     ? ['', 'Pinned agent presets (DSH upgrades to them no longer apply; remove the patch to follow DSH again):', ...plan.pinnedPresets!.map((p) => `  ! [${p.profile}] ${p.id}`)]
     : [];
+  // A warning in sync too: the profile entry is applied, then the global one replaces its fields.
+  if ((plan.shadowedPatches ?? []).length > 0) {
+    pinned.push('', "Profile patches the global cordis.patch.yml overrides (DSH takes the global entry's fields for these ids; change them in the manifest's top-level patches, not in DSH's UI):");
+    pinned.push(...plan.shadowedPatches!.map((item) =>
+      `  ! [${item.profile}] ${item.ids.join(', ')}${item.disabled ? ` (the global file sets disabled for ${item.disabled.join(', ')}, so DSH's plugin page cannot toggle it in this profile)` : ''}`));
+  }
+  if ((plan.retiredBundles ?? []).length > 0) {
+    pinned.push('', 'Retired bundles (DSH 0.2.1 drops them from the profile on every load, so they stay drift; remove them from the manifest):');
+    pinned.push(...plan.retiredBundles!.map((item) => `  ! [${item.profile}] ${item.alias} (${item.package}): ${item.reason}. Run: dshenv remove ${item.alias} -p ${item.profile}${item.layer === 'overlay' ? ' --layer overlay' : ''}`));
+  }
 
   if (
     !plan.hasChanges &&
     plan.unmanaged.length === 0 &&
     plan.unverified.length === 0 &&
     plan.unmanagedPatches.length === 0 &&
+    (plan.unmanagedHomePatches ?? []).length === 0 &&
     plan.unmanagedSkills.length === 0
   ) {
     return ['Environment is in sync with manifest. No changes planned.', ...pinned].join('\n') + '\n';
@@ -61,8 +74,19 @@ export function renderPlan(plan: EnvironmentPlan, restart?: RestartSummary, head
     }
   }
 
-  if (skillOperations.length > 0) {
+  const homeOperations = plan.operations.filter((op) => op.resource === 'home-patch');
+  if (homeOperations.length > 0) {
     if (profileOperations.length > 0) lines.push('');
+    lines.push('Planned global patch changes ($DSH_HOME/cordis.patch.yml, every profile):');
+    for (const op of homeOperations) {
+      const details = op.kind === 'blocked' ? ` [BLOCKED: ${op.blockedReason ?? op.reason}]` : '';
+      lines.push(`  ${getOpSymbol(op.kind)} [global] patches${details}`);
+      lines.push(`      Reason: ${op.reason}`);
+    }
+  }
+
+  if (skillOperations.length > 0) {
+    if (profileOperations.length > 0 || homeOperations.length > 0) lines.push('');
     lines.push('Planned skill changes:');
     for (const op of skillOperations) {
       lines.push(`  ${getOpSymbol(op.kind)} [skills] ${op.name}`);
@@ -84,6 +108,13 @@ export function renderPlan(plan: EnvironmentPlan, restart?: RestartSummary, head
     for (const u of plan.unmanagedPatches) {
       lines.push(`  ? [${u.profile}] ${u.entries.join(', ')}`);
     }
+  }
+  if ((plan.unmanagedHomePatches ?? []).length > 0) {
+    if (plan.unmanagedPatches.length === 0) {
+      lines.push('');
+      lines.push("Patch entries not in the manifest (run 'dshenv pull --yes' to manage them):");
+    }
+    lines.push(`  ? [global] ${plan.unmanagedHomePatches!.join(', ')}`);
   }
 
   if (plan.unmanagedSkills.length > 0) {
@@ -107,7 +138,23 @@ export function renderPlan(plan: EnvironmentPlan, restart?: RestartSummary, head
 }
 
 function restartTarget(item: RestartItem): string {
+  if (item.package === HOME_PATCH_TARGET) return 'global patches';
   return item.package === PROFILE_PATCHES_ALIAS ? 'profile patches' : item.package;
+}
+
+export function renderPatchTargets(report: PatchTargetReport): string {
+  const lines: string[] = [];
+  if (report.unmatched.length > 0) {
+    lines.push('Patch entries DSH would skip, as no row has their id:');
+    for (const item of report.unmatched) {
+      const added = report.added.some((other) => other.profile === item.profile && other.layer === item.layer && other.id === item.id);
+      lines.push(`  ! ${describeUnmatched(item)}${added ? ' (new: apply --yes stops on it)' : ''}`);
+    }
+  }
+  if (report.unchecked.length > 0) {
+    lines.push(`Patch ids not checked: ${report.unchecked.join('; ')}`);
+  }
+  return lines.length > 0 ? lines.join('\n') + '\n' : '';
 }
 
 export function renderRestartSummary(restart: RestartSummary): string {
@@ -166,6 +213,18 @@ export function renderStatus(status: EnvironmentStatusSummary): string {
 
   if (status.unmanagedCount > 0) {
     lines.push(`Unmanaged plugins: ${status.unmanagedCount}`);
+  }
+  if ((status.skippedBundles ?? []).length > 0) {
+    lines.push('Bundles DSH skips when it loads the profile:');
+    lines.push(...status.skippedBundles!.map((item) => `  ! [${item.profile}] ${item.package}: ${item.reason}`));
+  }
+  if ((status.retiredBundles ?? []).length > 0) {
+    lines.push('Retired bundles the manifest still enables (see dshenv plan):');
+    lines.push(...status.retiredBundles!.map((item) => `  ! [${item.profile}] ${item.alias} (${item.package})`));
+  }
+  if ((status.versionExemptions ?? []).length > 0) {
+    lines.push('Version exemptions (compatibility.json; they name exact DSH versions and are not in the manifest):');
+    lines.push(...status.versionExemptions!.map((item) => `  [${item.profile}] ${item.package} -> ${item.dshVersions.join(', ') || 'no DSH version'}`));
   }
 
   const table = status.plugins.length > 0
@@ -232,6 +291,8 @@ export interface DoctorReport {
     lockExists: boolean;
     stateExists: boolean;
   };
+  // Bundles DSH skips in each profile it has, and the profiles it could not compose.
+  bundles?: { skipped: Array<{ profile: string; package: string; reason: string }>; unchecked: string[] };
   remote?: {
     url: string;
     branch: string;
@@ -269,6 +330,13 @@ export function renderDoctor(report: DoctorReport): string {
   lines.push(`  Manifest: ${report.paths.manifestExists ? 'Found' : 'Not created'}`);
   lines.push(`  Lockfile: ${report.paths.lockExists ? 'Found' : 'Not created'}`);
   lines.push(`  State: ${report.paths.stateExists ? 'Found' : 'Not created'}`);
+
+  if (report.bundles && (report.bundles.skipped.length > 0 || report.bundles.unchecked.length > 0)) {
+    lines.push('');
+    lines.push('Profile bundles:');
+    lines.push(...report.bundles.skipped.map((item) => `  ! [${item.profile}] ${item.package} is skipped: ${item.reason}`));
+    lines.push(...report.bundles.unchecked.map((item) => `  Not checked: ${item}`));
+  }
 
   if (report.remote) {
     const changes = describeRemoteDrift(report.remote.drift, report.remote.lockDrift).join(', ');

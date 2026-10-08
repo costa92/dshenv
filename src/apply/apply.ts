@@ -10,9 +10,9 @@ import type {
   PluginOwnership
 } from '../domain.js';
 import { readEnvironmentInventory, type EnvironmentInventory } from '../inventory/profile-reader.js';
-import { buildPlan, isProfileOperation, onlyProfile, type EnvironmentPlan, type LocalSourceDigests, type PluginOperation } from '../planner/plan.js';
+import { addProfileShadows, buildPlan, isProfileOperation, onlyProfile, type EnvironmentPlan, type LocalSourceDigests, type PluginOperation } from '../planner/plan.js';
 import { applyPluginOperation, dropUninstalledOwnership, planNeedsDshCli, pluginOwnershipRecord, type PluginStepContext } from '../resources/plugin.js';
-import { applyProfilePatchOperation } from '../resources/profile-patch.js';
+import { applyHomePatchOperation, applyProfilePatchOperation } from '../resources/profile-patch.js';
 import { loadLock, loadManifest, loadState, parseOverlay, serializeState, serializeLock, withResources } from '../manifest/files.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
 import type { OverlaySelection } from '../overlay/selection.js';
@@ -32,6 +32,8 @@ import { readRemoteConfig } from '../remote/schema.js';
 import { lockEntryId } from '../remote/lock-entries.js';
 import { applySkillOperation, ownedSkillDigests, skillOwnership } from '../resources/skill.js';
 import { buildRestartSummary, profilesToProbe, type RestartSummary } from './restart-plan.js';
+import { checkPatchTargets, type PatchTargetReport } from './patch-targets.js';
+import { describeUnmatched } from '../dsh/dump-check.js';
 
 // Longer than the ~2 s awaitWriteFinish window of DSH's HMR watcher, so it unloads the plugin before its files go.
 export const HMR_SETTLE_MS = 3000;
@@ -59,6 +61,7 @@ export interface ApplyResult {
   message?: string;
   snapshotId?: string;
   restart?: RestartSummary;
+  patchTargets?: PatchTargetReport;
 }
 
 export interface ProfileRollback {
@@ -360,7 +363,7 @@ function defaultHmrProbe(
 }
 
 function assertSupportedPlan(plan: EnvironmentPlan): void {
-  const blocked = plan.operations.filter(isProfileOperation).find((operation) => operation.kind === 'blocked');
+  const blocked = plan.operations.flatMap((operation) => (operation.kind === 'blocked' ? [operation] : []))[0];
   if (blocked) {
     throw new DegradedError(
       `Apply is blocked: ${blocked.blockedReason ?? blocked.reason}`
@@ -448,7 +451,8 @@ async function planAndApply(
   }
 
   // Loaded after the environment lock is held (see applyEnvironment), so the overlay cannot change mid-apply.
-  const manifest = onlyProfile(loadEffectiveManifest(paths, options?.overlay ?? null).manifest, options?.profile);
+  const effective = loadEffectiveManifest(paths, options?.overlay ?? null).manifest;
+  const manifest = onlyProfile(effective, options?.profile);
   const lock = fs.existsSync(paths.lockFile)
     ? loadLock(fs.readFileSync(paths.lockFile, 'utf8'))
     : null;
@@ -456,9 +460,10 @@ async function planAndApply(
     ? loadState(fs.readFileSync(paths.stateFile, 'utf8'))
     : null;
 
-  const inventory = onlyProfile(await readEnvironmentInventory(paths), options?.profile);
+  const fullInventory = await readEnvironmentInventory(paths);
+  const inventory = onlyProfile(fullInventory, options?.profile);
   const localDigests = await readLocalSourceDigests(manifest);
-  const plan = buildPlan(manifest, lock, inventory, state, localDigests);
+  const plan = addProfileShadows(buildPlan(manifest, lock, inventory, state, localDigests), effective, fullInventory, options?.profile);
 
   if (!plan.hasChanges) {
     // Record the overlay and skill baselines even without operations, otherwise the switch warning never clears
@@ -498,10 +503,15 @@ async function planAndApply(
   }
 
   const probe = options?.probeHmr ?? defaultHmrProbe(paths, manifest, options);
-  const profiles = profilesToProbe(plan);
+  // DSH applies the global file to every profile, but only those already created run anything.
+  const existingProfiles = Object.keys(inventory.profiles).sort();
+  const profiles = profilesToProbe(plan, existingProfiles);
   const statuses = await Promise.all(profiles.map((profile) => probe(profile)));
   const hmrByProfile = new Map<string, HmrStatus>(profiles.map((profile, index) => [profile, statuses[index]]));
-  const restart = buildRestartSummary(plan, hmrByProfile);
+  const restart = buildRestartSummary(plan, hmrByProfile, existingProfiles);
+  const patchTargets = options?.executor
+    ? undefined
+    : await checkPatchTargets(paths, manifest, plan, dshCommandFor(manifest, options));
 
   if (options?.dryRun) {
     // A preview refuses an unsupported DSH like the real apply would; a DSH it cannot ask still gets the plan shown.
@@ -514,7 +524,8 @@ async function planAndApply(
       dryRun: true,
       plan,
       message: 'Dry run completed. Planned operations ready.',
-      restart
+      restart,
+      ...(patchTargets ? { patchTargets } : {})
     };
   }
 
@@ -526,6 +537,13 @@ async function planAndApply(
   }
   if (command) {
     await assertSupportedDsh(command, manifest, options);
+  }
+  // Ids DSH already skips are left to the preview: a row moved into a preset or missing from one profile is normal.
+  if (patchTargets && patchTargets.added.length > 0) {
+    throw new ValidationError(
+      `Apply stopped before changing anything: DSH would skip these patch entries, as no row has their id: ${patchTargets.added.map(describeUnmatched).join(', ')}; ` +
+        'check the ids against dsh --profile <name> --dump-config'
+    );
   }
 
   const operationId = `apply-${crypto.randomBytes(6).toString('hex')}`;
@@ -613,8 +631,11 @@ async function planAndApply(
     // Replaced and removed skills go to trash rather than away, since DSH may hold edits nobody pulled.
     assertNotInterrupted(signal);
     const trashRoot = path.join(paths.trashDir, operationId);
+    // Global patches follow the profiles too, as their entries may target rows a profile install just added.
     for (const operation of plan.operations) {
-      if (operation.resource === 'skill') {
+      if (operation.resource === 'home-patch') {
+        rollback.undo.push(await applyHomePatchOperation(paths, manifest));
+      } else if (operation.resource === 'skill') {
         rollback.undo.push(await applySkillOperation(paths, operation, trashRoot));
       }
     }

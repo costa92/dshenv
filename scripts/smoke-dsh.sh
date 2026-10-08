@@ -6,7 +6,7 @@ set -uo pipefail
 
 version="${1:?usage: scripts/smoke-dsh.sh <dsh-version> [work-dir]}"
 work="${2:-$(mktemp -d)}"
-plugin="${SMOKE_PLUGIN:-@nanmicoder/dsh-agent-teams@0.1.21}"
+plugin="${SMOKE_PLUGIN:-@nanmicoder/dsh-agent-teams@0.1.22}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dshenv=(node "$root/bin/dshenv.js")
 failed=0

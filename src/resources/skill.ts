@@ -107,6 +107,17 @@ export async function copySkillDir(from: string, to: string): Promise<void> {
   });
 }
 
+// envctl may sit on another filesystem than DSH_HOME (DSHENV_HOME), where moving between them fails with EXDEV.
+async function moveDir(from: string, to: string): Promise<void> {
+  try {
+    await retryWhileBusy(() => fs.promises.rename(from, to));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
+    await fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true });
+    await retryWhileBusy(() => fs.promises.rm(from, { recursive: true }));
+  }
+}
+
 // Replaces `target` with a copy of `source` (or removes it when source is null), keeping the old one under `trash`.
 // Returns how to undo it.
 export async function replaceSkillDir(source: string | null, target: string, trash: string): Promise<() => Promise<void>> {
@@ -119,7 +130,7 @@ export async function replaceSkillDir(source: string | null, target: string, tra
     }
     if (hadTarget) {
       await fs.promises.mkdir(path.dirname(trash), { recursive: true });
-      await retryWhileBusy(() => fs.promises.rename(target, trash));
+      await moveDir(target, trash);
     }
     if (staging) {
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
@@ -127,7 +138,7 @@ export async function replaceSkillDir(source: string | null, target: string, tra
         await retryWhileBusy(() => fs.promises.rename(staging, target));
       } catch (err) {
         if (hadTarget) {
-          await retryWhileBusy(() => fs.promises.rename(trash, target));
+          await moveDir(trash, target);
         }
         throw err;
       }
@@ -141,7 +152,7 @@ export async function replaceSkillDir(source: string | null, target: string, tra
   return async () => {
     await fs.promises.rm(target, { recursive: true, force: true });
     if (hadTarget) {
-      await retryWhileBusy(() => fs.promises.rename(trash, target));
+      await moveDir(trash, target);
     }
   };
 }

@@ -1,17 +1,37 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { loadLock, loadManifest, loadState } from '../manifest/files.js';
-import { buildPlan, buildStatus, onlyProfile, planExitCode, planJson } from '../planner/plan.js';
+import { addProfileShadows, buildPlan, buildStatus, onlyProfile, planExitCode, planJson } from '../planner/plan.js';
 import { renderPlan, renderStatus, renderDoctor, type DoctorReport } from '../output/render.js';
-import { resolveDshCommand, probeDsh, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, displayDshVersion, type RuntimeCapabilityEvidence } from '../dsh/index.js';
+import { resolveDshCommand, probeDsh, isCompatibleDshVersion, capabilitiesFor, evaluateCapabilities, probeOfficialSurfaces, unsupportedDshVersionMessage, displayDshVersion, type RuntimeCapabilityEvidence } from '../dsh/index.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { ValidationError, CapabilityError, missingManifestError } from '../errors.js';
+import { isValidProfileName } from '../manifest/schema.js';
 import type { EnvironmentLock, EnvironmentManifest, EnvironmentState } from '../domain.js';
 import { loadEffectiveManifest, overlaySwitchWarning, readOverlay } from '../overlay/effective.js';
 import { mergeManifest } from '../overlay/merge.js';
 import { resolveCliPaths, resolveCliOverlay, overlayBanner, filterProfile, type CommandContext } from './context.js';
 import { readRemoteConfig } from '../remote/schema.js';
 import { findLocalDrift, findRemoteLockDrift } from '../remote/ownership.js';
+import { ENV_KEY_ADVICE, documentSecrets } from '../security/secrets.js';
+import { readSkippedBundles } from '../dsh/dump-check.js';
+import { readVersionExemptions } from '../inventory/compatibility.js';
+import type { EnvironmentPaths } from '../environment/paths.js';
+import type { EnvironmentInventory } from '../inventory/profile-reader.js';
+
+// A dump creates a missing profile, so only the ones DSH already has are asked.
+function existingProfiles(paths: EnvironmentPaths, inventory: EnvironmentInventory): string[] {
+  return Object.keys(inventory.profiles).filter((profile) => fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))).sort();
+}
+
+// A warning only: the credential is already in a shared file, and refusing to read it would not take it out.
+function warnPlaintextSecrets(writeErr: (chunk: string) => void, manifest: EnvironmentManifest | null | undefined): void {
+  const found = manifest ? documentSecrets(manifest) : [];
+  if (found.length > 0) {
+    writeErr(`Warning: the manifest or overlay holds plaintext credentials (${found.map((secret) => secret.location).join(', ')}); ${ENV_KEY_ADVICE}\n`);
+  }
+}
 
 export function registerInspectCommands(ctx: CommandContext): void {
   const { program, writeOut, writeErr, setExitCode } = ctx;
@@ -25,7 +45,8 @@ export function registerInspectCommands(ctx: CommandContext): void {
       const paths = resolveCliPaths(opts);
 
       const selection = resolveCliOverlay(opts, paths);
-      const manifest = onlyProfile(loadEffectiveManifest(paths, selection).manifest, cmdOpts.profile);
+      const effective = loadEffectiveManifest(paths, selection).manifest;
+      const manifest = onlyProfile(effective, cmdOpts.profile);
       let lock: EnvironmentLock | null = null;
 
       if (fs.existsSync(paths.lockFile)) {
@@ -38,13 +59,26 @@ export function registerInspectCommands(ctx: CommandContext): void {
         planState = loadState(fs.readFileSync(paths.stateFile, 'utf8'));
       }
 
-      const inventory = onlyProfile(await readEnvironmentInventory(paths), cmdOpts.profile);
-      const plan = buildPlan(manifest, lock, inventory, planState, await readLocalSourceDigests(manifest));
+      const fullInventory = await readEnvironmentInventory(paths);
+      const inventory = onlyProfile(fullInventory, cmdOpts.profile);
+      const plan = addProfileShadows(
+        buildPlan(manifest, lock, inventory, planState, await readLocalSourceDigests(manifest)),
+        effective,
+        fullInventory,
+        cmdOpts.profile
+      );
+      if (selection && plan.retiredBundles && fs.existsSync(paths.manifestFile)) {
+        const base = loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
+        for (const item of plan.retiredBundles) {
+          if (!base.profiles[item.profile]?.plugins[item.alias]) item.layer = 'overlay';
+        }
+      }
 
       const warning = overlaySwitchWarning(planState, selection);
       if (warning) {
         writeErr(`${warning}\n`);
       }
+      warnPlaintextSecrets(writeErr, manifest);
 
       if (opts.json) {
         writeOut(JSON.stringify(selection ? { ...planJson(plan), overlay: selection } : planJson(plan), null, 2) + '\n');
@@ -78,7 +112,8 @@ export function registerInspectCommands(ctx: CommandContext): void {
       if (!fs.existsSync(paths.manifestFile)) {
         throw missingManifestError(paths.manifestFile);
       }
-      const manifest = onlyProfile(loadEffectiveManifest(paths, selection).manifest, cmdOpts.profile);
+      const effective = loadEffectiveManifest(paths, selection).manifest;
+      const manifest = onlyProfile(effective, cmdOpts.profile);
       if (fs.existsSync(paths.lockFile)) {
         const content = fs.readFileSync(paths.lockFile, 'utf8');
         lock = loadLock(content);
@@ -88,9 +123,16 @@ export function registerInspectCommands(ctx: CommandContext): void {
         state = loadState(content);
       }
 
-      const inventory = onlyProfile(await readEnvironmentInventory(paths), cmdOpts.profile);
-      const plan = buildPlan(manifest, lock, inventory, state, await readLocalSourceDigests(manifest));
+      const fullInventory = await readEnvironmentInventory(paths);
+      const inventory = onlyProfile(fullInventory, cmdOpts.profile);
+      const plan = addProfileShadows(
+        buildPlan(manifest, lock, inventory, state, await readLocalSourceDigests(manifest)),
+        effective,
+        fullInventory,
+        cmdOpts.profile
+      );
       const summary = buildStatus(manifest, state, inventory, plan);
+      warnPlaintextSecrets(writeErr, manifest);
       if (plugin) {
         summary.plugins = summary.plugins.filter(
           (entry) =>
@@ -101,6 +143,33 @@ export function registerInspectCommands(ctx: CommandContext): void {
         if (summary.plugins.length === 0) {
           throw new ValidationError(`Plugin not found in status: ${plugin}`);
         }
+      }
+      // With a plugin given, only what concerns it.
+      const shown = (profile: string, pkg: string) => !plugin || summary.plugins.some((entry) => entry.profile === profile && entry.package === pkg);
+
+      const command = resolveDshCommand({ cliHarnessSource: opts.harnessSource, manifestHarnessSource: manifest?.environment?.harness?.sourceDir });
+      // Only a DSH the version gate takes is asked: another may word these lines differently, or not be DSH at all.
+      const allowUntested = Boolean(opts.allowUntestedDsh || manifest?.environment?.harness?.allowUntestedVersion);
+      const version = command ? (await probeDsh(command).catch(() => null))?.version : undefined;
+      const { skippedBundles } = command && version && isCompatibleDshVersion(version, { allowUntested }).compatible
+        ? await readSkippedBundles(existingProfiles(paths, inventory), { command, home: paths.home, profilesDir: paths.profilesDir })
+        : { skippedBundles: [] };
+      const skipped = skippedBundles.filter((item) => shown(item.profile, item.package));
+      if (skipped.length > 0) {
+        summary.skippedBundles = skipped;
+        summary.status = 'degraded';
+      }
+      const { exemptions, warnings: exemptionWarnings } = readVersionExemptions(paths.profilesDir, existingProfiles(paths, inventory));
+      const exempted = exemptions.filter((item) => shown(item.profile, item.package.slice(0, item.package.lastIndexOf('@'))));
+      if (exempted.length > 0) {
+        summary.versionExemptions = exempted;
+      }
+      for (const warning of exemptionWarnings) {
+        writeErr(`Warning: ${warning}\n`);
+      }
+      const retired = (plan.retiredBundles ?? []).filter((item) => shown(item.profile, item.package));
+      if (retired.length > 0) {
+        summary.retiredBundles = retired;
       }
 
       if (opts.json) {
@@ -155,6 +224,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
           writeErr(`Warning: the lock ${paths.lockFile} is invalid (${reason}); plan and apply refuse it\n`);
         }
       }
+      warnPlaintextSecrets(writeErr, manifest);
       const manifestHarnessSource = manifest?.environment?.harness?.sourceDir;
       const manifestAllowUntested = manifest?.environment?.harness?.allowUntestedVersion;
 
@@ -189,6 +259,10 @@ export function registerInspectCommands(ctx: CommandContext): void {
           diagnostics: ['HARNESS_SOURCE_UNAVAILABLE']
         };
       const evaluatedCaps = evaluateCapabilities(probeResult.version, evidence, compatOpts);
+      const profiles = (fs.existsSync(paths.profilesDir) ? fs.readdirSync(paths.profilesDir) : [])
+        .filter((profile) => isValidProfileName(profile) && fs.existsSync(path.join(paths.profilesDir, profile, 'package.json')))
+        .sort();
+      const bundles = await readSkippedBundles(profiles, { command: dshCmd, home: paths.home, profilesDir: paths.profilesDir });
 
       const report: DoctorReport = {
         runtime: {
@@ -205,6 +279,9 @@ export function registerInspectCommands(ctx: CommandContext): void {
           lockExists: fs.existsSync(paths.lockFile),
           stateExists: fs.existsSync(paths.stateFile)
         },
+        ...(bundles.skippedBundles.length > 0 || bundles.unchecked.length > 0
+          ? { bundles: { skipped: bundles.skippedBundles, unchecked: bundles.unchecked } }
+          : {}),
         ...(remote
           ? {
               remote: {

@@ -116,3 +116,29 @@ describe('describeRestartReason', () => {
     ).toBe('hot reload state of profile cli is unknown: DSH CLI was not found');
   });
 });
+
+describe('global patch changes', () => {
+  const plan = (operations: EnvironmentPlan['operations']): EnvironmentPlan => ({
+    hasChanges: true,
+    operations,
+    unmanaged: [],
+    unverified: [],
+    unmanagedPatches: [],
+    unmanagedSkills: []
+  });
+  const home = { resource: 'home-patch' as const, kind: 'configure' as const, reason: 'Global patches changed in the manifest' };
+
+  it('probe every existing profile and need a restart where hot reload is off', () => {
+    const changed = plan([op('install', 'web'), home]);
+    expect(profilesToProbe(changed, ['headless', 'web'])).toEqual(['web', 'headless']);
+    const summary = buildRestartSummary(changed, new Map<string, HmrStatus>([['web', on], ['headless', off]]), ['headless', 'web']);
+    expect(summary.required).toEqual([{ profile: 'headless', package: '@home', kind: 'configure', reason: 'hmr-off' }]);
+    expect(summary.notRequired).toContainEqual({ profile: 'web', package: '@home', kind: 'configure', reason: 'hmr-on' });
+  });
+
+  it('leave the profiles alone when the global patches do not change or cannot be written', () => {
+    const blocked = plan([{ ...home, kind: 'blocked', blockedReason: 'x' }]);
+    expect(profilesToProbe(blocked, ['web'])).toEqual([]);
+    expect(buildRestartSummary(blocked, new Map<string, HmrStatus>([['web', off]]), ['web'])).toEqual({ notRequired: [], required: [] });
+  });
+});
