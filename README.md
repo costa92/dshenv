@@ -267,6 +267,9 @@ dshenv 改写 Profile `package.json`（启用、停用、卸载前移出 bundle�
 - 等 Profile 锁超时后 apply 会回滚，但回滚本身写 bundle 与 `cordis.patch.yml` 时也可能要等这把锁；回滚未能完成时运行 `dshenv plan` 查看现状。DSH Web 安装插件时整个安装过程都持锁，可能超过 dshenv 的 30 秒等待，等安装结束后再重试。
 
 ### 7. `dshenv rollback`
+
+新快照按实际内容保存单个软链接 skill 目录；恢复时在 `envctl/skills` 下创建独立目录副本，不改写原来的外部目标，skill 内部的软链接保留。旧快照若仅保存了链接，无法恢复当时未备份的目标内容。
+
 从 `envctl/backups/` 恢复最近一次（或指定 operation id 的）管理文件快照（rollback 自己也会先存一份 `pre-rollback-*` 快照，所以连续执行不带 id 的 `rollback` 会在两个状态之间来回切换；要再往前退须指定 id）：`manifest.yaml` / `lock.json` / `state.json`、`envctl/skills`、`remote.json`，以及快照时保存的 overlay（团队 overlay、`pull`/`sync` 改写的本机 overlay、`apply` 时生效的 overlay）。不带 id 时跳过失败的 `apply` 留下的快照（它们已经自己恢复了 `lock.json` 与 `state.json`，恢复它们等于什么都不做），输出会写明跳过了哪些；`apply` 的快照保存的正是它所应用的清单与 overlay，所以回到某次成功的 apply 就是回到它应用的清单。不撤销已经发生的 DSH 包安装；由 `apply` 安装、仍装在 Profile 里的插件保留所有权记录，之后从清单删除时照常卸载。`DSH_HOME/skills` 里仍与 dshenv 上次同步时一致的 skill 同样保留基线，恢复后的清单不再声明它时，下一次 `apply` 把它移进 trash。恢复前会把当前这些文件另存为一份新快照（输出中给出其 id，可再 rollback 回去）；快照里没有的文件会被删除。
 
 ```bash

@@ -116,6 +116,27 @@ describe('snapshots with a remote subscription', () => {
     expect(read(path.join(target, 'demo', 'SKILL.md'))).toBe('v1');
   });
 
+  it.skipIf(process.platform === 'win32').each(['edited', 'deleted'])('saves an individual linked skill independently of its %s target', async (change) => {
+    const target = path.join(home, 'dotfiles', 'demo');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'SKILL.md'), 'v1');
+    fs.symlinkSync('SKILL.md', path.join(target, 'README.md'));
+    fs.mkdirSync(paths.skillsDir, { recursive: true });
+    const skill = path.join(paths.skillsDir, 'demo');
+    fs.symlinkSync(path.relative(paths.skillsDir, target), skill);
+    const snapshot = await createEnvironmentSnapshot(paths, 'op-linked-skill');
+    if (change === 'edited') fs.writeFileSync(path.join(target, 'SKILL.md'), 'v2');
+    else fs.rmSync(target, { recursive: true });
+
+    expect(read(path.join(snapshot.snapshotDir, 'skills', 'demo', 'SKILL.md'))).toBe('v1');
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    expect(fs.lstatSync(skill).isSymbolicLink()).toBe(false);
+    expect(read(path.join(skill, 'SKILL.md'))).toBe('v1');
+    expect(fs.readlinkSync(path.join(skill, 'README.md'))).toBe('SKILL.md');
+    if (change === 'edited') expect(read(path.join(target, 'SKILL.md'))).toBe('v2');
+    else expect(fs.existsSync(target)).toBe(false);
+  });
+
   it.skipIf(process.platform === 'win32')('removes only the link, never its target, when the snapshot predates a linked envctl/skills', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     const snapshot = await createEnvironmentSnapshot(paths, 'op-no-skills');
