@@ -99,14 +99,14 @@ export function registerOverlayCommands(ctx: CommandContext): void {
       const paths = resolveCliPaths(opts);
       const file = overlayFilePath(paths, name);
       await withEnvironmentLock(paths, async () => {
-        if (fs.existsSync(file)) {
-          throw new ValidationError(`Overlay '${name}' already exists: ${file}`);
-        }
-        // On a case-insensitive file system 'Work' and 'work' would be one file.
+        // On a case-insensitive file system 'Work' and 'work' would be one file, which existsSync would also report.
         const existing = fs.existsSync(paths.overlaysDir) ? fs.readdirSync(paths.overlaysDir) : [];
         const sameFolded = existing.find((entry) => entry.toLowerCase() === path.basename(file).toLowerCase());
-        if (sameFolded !== undefined) {
+        if (sameFolded !== undefined && sameFolded !== path.basename(file)) {
           throw new ValidationError(`Overlay '${sameFolded.slice(0, -'.yaml'.length)}' already exists and differs from '${name}' only in case`);
+        }
+        if (fs.existsSync(file)) {
+          throw new ValidationError(`Overlay '${name}' already exists: ${file}`);
         }
         assertNotRemoteOwned(paths, file);
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
