@@ -37,7 +37,7 @@ jobs:
           CONFIG_HOME: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          $DSHENV --dsh-home "$CONFIG_HOME" list --no-overlay
+          $DSHENV --dsh-home "$CONFIG_HOME" plugins list --no-overlay
           shopt -s nullglob
           for file in "$CONFIG_HOME"/envctl/overlays/*.yaml; do
             name="$(basename "$file" .yaml)"
