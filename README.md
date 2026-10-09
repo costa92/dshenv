@@ -141,7 +141,7 @@ DSH 发布新版本时，用 `make smoke-dsh DSH_VERSION=<版本>` 验证兼容�
 - 按 Profile 过滤的命令（`plugins list`、`plugins official`、`plan`、`apply`、`status`、`pull`、`capture`、`overlay show`、`mark-restarted`、`web list`）：不写 `-p` 表示全部 Profile，`DSHENV_PROFILE` 对它们不生效；`-p` 写了清单没声明、DSH 也没创建的名字时以退出码 3 拒绝，不会把拼错的名字报成“已同步”。
 - `source`、`new` 的 `-p` 表示把克隆或新建的包登记到该 Profile，不写就不登记。
 
-- 写入命令（`install`、`new -p`、`source clone -p`）指定一个清单没声明、DSH 也没创建的 Profile 时，默认按拼写错误拒绝并给出相近的名字；确实要新建时加 `--new-profile`。
+- 写入命令（`install`、`new -p`、`source clone -p`）指定一个清单没声明、DSH 也没创建的 Profile 时，默认按拼写错误拒绝并给出相近的名字；确实要新建时加 `--new-profile`。环境里还没有任何 Profile（清单与 DSH 都没有）时不做这项检查，DSH 的模板 Profile 名（`acp`、`web` 等）也不例外。
 - 写入类命令用了 `DSHENV_PROFILE` 时，会在 stderr 提示 `Using profile 'web' from DSHENV_PROFILE`（`--json` 时不提示）；只读命令（`plugins config get`、`tools list`、`verify`、`web start` 等）不提示。
 
 ```bash
@@ -154,7 +154,7 @@ dshenv disable agent-teams     # 等同于 dshenv disable agent-teams -p web
 哪些命令要加 `--yes`，只看一条规则：
 
 - **只改 envctl 声明（清单、overlay、lock）的命令直接写入**：`install`、`update`、`remove`、`enable`、`disable`、`plugins config set|unset`、`tools enable|disable|config set|unset|reset`、`overlay create|use`、`new -p`、`source clone -p`。它们不碰 DSH profile，改错了再改回来即可，DSH 要等 `apply --yes` 才变。
-- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`migrate`、`remote add|sync|remove`、`source sync`（它会移动 Git 检出并改写 lock，与 `remote sync` 一致）。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并在 stderr 提示加 `--yes` 重跑，所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。`self-update` 只替换 dshenv 自己，不碰 DSH 与 envctl，所以不需要 `--yes`，直接执行。
+- **会改 DSH、批量接管或覆盖文件的命令要 `--yes`**：`apply`、`adopt`、`pull`、`rollback`、`gc`、`purge`、`migrate`、`remote add|sync|remove`、`source sync`（它会移动 Git 检出并改写 lock，与 `remote sync` 一致）。不加 `--yes` 时只预览、什么都不写；有待执行的内容时退出码为 2，并提示加 `--yes` 重跑（`remote add`、`remote sync` 写在 stdout，其余写在 stderr），所以 CI 里可以直接用不带 `--yes` 的命令检查漂移。这些命令都接受 `--dry-run`：即使同时写了 `--yes` 也只预览（`self-update` 的 `--dry-run` 同 `--check`）。`self-update` 只替换 dshenv 自己，不碰 DSH 与 envctl，所以不需要 `--yes`，直接执行。
 - **`overlay use --none` 与 `--no-overlay` 不同**：前者清除保存的 overlay 选择，之后的命令都不再用它；后者只让这一条命令不用 overlay。
 
 `remove` 仍接受 `-y`（旧脚本兼容），但它只改清单，加不加都一样。
@@ -355,7 +355,7 @@ dshenv plugins config unset agent-teams taskPlanning --profile web     # 删掉�
 - `config unset` 在该插件声明的所有 patch 里找这个键；删完后什么都不设的 patch 会一并删掉，不留下 `config: {}`。
 
 ### 13. `dshenv status`
-显示当前环境状态摘要与操作统计；给出插件别名或包名时只显示该插件。有待执行的变更时退出码 2，环境已同步时为 0；环境降级（`degraded`）或 DSH 不兼容（`incompatible`）时为 5。
+显示当前环境状态摘要与操作统计；给出插件别名或包名时只显示该插件。有待执行的变更时退出码 2，环境已同步时为 0，计划中有 `blocked` 操作时为 5；环境降级（`degraded`）或 DSH 不兼容（`incompatible`）时为 5。
 
 - 能找到 DSH、且版本通过门禁时，对每个已创建的 Profile 运行一次 `dsh --dump-config`（DSH 每次都会重写 Profile 的 `cordis.yml`，0.2.1 还会从 `package.json` 删掉退役 bundle），列出 DSH 加载时跳过的 bundle（`Bundles DSH skips when it loads the profile`）。这类 bundle 声明了、装上了，却没有运行，`plan` 看不出来，所以 `status` 记为 `degraded`。`doctor` 在 `Profile bundles` 下给出同样的列表。
 - 列出各 Profile `compatibility.json` 里的版本豁免（`dsh plugin allow-version` 写入的 `包@版本 -> DSH 版本`）。只列 DSH 认可的记录（精确的 `包名@版本` 映射到精确的 DSH 版本），其余记录和读不了的文件在 stderr 警告。豁免绑定精确的 DSH 版本，换机器或升级 DSH 后就失效，所以不进清单。
@@ -416,7 +416,7 @@ profiles:
         remove: true              # 本机不装 base 中的这个插件
 ```
 
-选择优先级：`--overlay` 或 `--no-overlay`（两者同时使用时报错，退出码 3）> `DSHENV_OVERLAY` > 本机选择文件。选中的 overlay 不存在或无效时报错，不会退回只用 base。overlay 里对 base 已不再声明的插件写的 `remove: true` 或字段覆盖（不带 `package`）不起作用、也不报错，例如团队 `sync` 删掉了本机 overlay 停用或改了来源的插件；带 `package` 的条目仍按新增插件处理，必须写 `source`。有生效 overlay 时，改清单的命令（`install`、`update`、`enable`、`disable`、`remove`、`plugins config set/unset`、`tools enable/disable/config/reset`、`source clone --profile`、`new -p`）必须带 `--layer base` 或 `--layer overlay`；也可以设环境变量 `DSHENV_LAYER` 作为默认值，它只在有生效 overlay 时起作用，使用时会在 stderr 提示。`adopt` 不需要 `--layer`：共享的插件写 base，本地来源的插件进 overlay。
+选择优先级：`--overlay` 或 `--no-overlay`（两者同时使用时报错，退出码 3）> `DSHENV_OVERLAY` > 本机选择文件。选中的 overlay 不存在或无效时报错，不会退回只用 base。overlay 里对 base 已不再声明的插件写的 `remove: true` 或字段覆盖（不带 `package`）不起作用、也不报错，例如团队 `sync` 删掉了本机 overlay 停用或改了来源的插件；带 `package` 的条目仍按新增插件处理，必须写 `source`。有生效 overlay 时，改清单的命令（`install`、`update`、`enable`、`disable`、`remove`、`plugins config set/unset`、`tools enable/disable/config/reset`、`source clone --profile`、`new -p`）必须带 `--layer base` 或 `--layer overlay`；也可以设环境变量 `DSHENV_LAYER` 作为默认值，使用时会在 stderr 提示。没有生效 overlay 时 `DSHENV_LAYER=base` 不起作用，`DSHENV_LAYER=overlay` 则与 `--layer overlay` 一样以退出码 3 拒绝。`adopt` 不需要 `--layer`：共享的插件写 base，本地来源的插件进 overlay。
 
 ### 16. `dshenv mark-restarted`
 `apply` 输出 `Restart DSH to load:` 分组时，其中插件的状态标为 `restart-required`（升级了已装插件，或该 Profile 的热加载关闭、无法判断）。热加载开启时的安装、启用、停用、配置与卸载当场生效，不需要本命令。重启 DSH 后运行本命令确认，清除该状态（已卸载插件的条目一并删除）。dshenv 无法自行判断 DSH 是否已重启。
@@ -582,7 +582,7 @@ dshenv web stop -p web             # 停止它以及它启动的子进程（如 
 dshenv install @nanmicoder/dsh-agent-teams@0.1.21 -p web        # npm 包，必须是精确版本
 dshenv source clone https://github.com/ex/dsh-plugin-demo.git -p web   # Git 来源：克隆并在 lock 中固定 commit（见第 14 节）
 dshenv install ./my-plugin -p web                               # 本地目录（./、../、绝对路径或 file:），登记为 local-link
-dshenv install in-box:@deepseek-ai/dsh-acp-app -p acp           # 随 DSH 发布的 bundle，不装依赖，只在 Profile 中选中
+dshenv install in-box:@deepseek-ai/dsh-acp-app -p acp --new-profile   # 随 DSH 发布的 bundle，不装依赖，只在 Profile 中选中；acp 还不存在，所以加 --new-profile
 dshenv plugins official                                         # 列出当前 DSH 自带的官方 bundle
 dshenv install in-box:@deepseek-ai/dsh-experimental-agent-team-profile -p web   # 启用其中一个
 dshenv disable agent-teams -p web                               # enable 反之
@@ -597,13 +597,13 @@ DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.
 
 - `dshenv plugins official` 从 DSH 的安装位置读出这些 bundle（DSH 自带、不属于 Profile 模板的 bundle），并标出清单在哪些 Profile 里声明了它们；`-p` 只看一个 Profile，`--json` 输出 `dshVersion` 与 `bundles`。列表随 DSH 版本变化：0.2.1-alpha.1 有 agent-team-profile、voice-input-bundle、auto-review、inspector-profile 四个，0.2.0-rc.2 用 schedule-bundle 代替 inspector-profile。找不到 DSH 的安装位置时以退出码 4 报错。
 - 用 `install in-box:<包> -p <profile>` 声明，默认别名去掉 `dsh-experimental-` 前缀和 `-profile`、`-bundle` 后缀（如 `agent-team`、`voice-input`、`auto-review`、`inspector`；`capture` 也这样命名），`apply` 只把它加进 `dsh.profile.bundles`，不写 `dependencies`、不跑 npm；版本总是跟随已安装的 DSH，所以不受第三方插件的 peer 范围限制。`disable` / `remove` 把它从列表里去掉。
-- Profile 还不存在、而名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先运行一次 `dsh --profile <名字> --dump-config`，让 DSH 按自己的模板创建它（预览在 `Profiles DSH creates from its own template first` 下列出，`--json` 为 `createdProfiles`），再写 bundle 与补丁；apply 失败回滚时删掉这个新建的 Profile。其他名字 DSH 不会自己创建，仍为 `blocked`，要先装一个 npm 插件进去。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
+- Profile 还不存在、而名字是 DSH 的模板 Profile（`acp`、`headless`、`sdk`、`sdk-minimal`、`web`）时，`apply` 先运行一次 `dsh --profile <名字> --dump-config`，让 DSH 按自己的模板创建它（预览在 `Profiles DSH creates from its own template first` 下列出，`--json` 为 `createdProfiles`），再写 bundle 与补丁；apply 失败回滚时删掉这个新建的 Profile。`install` 声明时它还不存在，所以照常要加 `--new-profile`（见[选择 Profile](#选择-profile-p)）。其他名字 DSH 不会自己创建，仍为 `blocked`，要先装一个 npm 插件进去。插件别名不能是 `@profile`，也不能以 `@mount:` 开头（这是 dshenv 自己的补丁块名）。
 
 `install <git 地址>[#<commit|分支|tag>]` 只在清单里声明 Git 来源（`#` 后是 commit 时记为 `commit`，否则记为 `ref`）；Git 插件要在 `lock.json` 有固定的 commit 才能 apply，所以之后仍需 `source clone --profile` 或 `source sync --profile` 锁定，否则 `plan` 显示 `blocked`。
 
 - 本地来源（`local-link`、`local-file`）由 `apply` 记录源目录摘要，目录内容变了 `plan` 才会提示更新。`package.json` 有 `files` 时只算 npm 会发布的文件（`package.json`、README、LICENSE、`main` 与 `files` 列出的内容，支持通配与 `!` 排除），改文档、测试等不算更新；没有 `files` 时算整个目录（跳过 `node_modules`、`.git`）。skill 总是算整个目录，不看 `files`。目录里的软链接按它指向的路径计入，不读取指向的内容；skill 在 `envctl/skills` 与 `DSH_HOME/skills` 之间复制时软链接原样保留，整个 skill 目录本身是软链接时复制其内容。
 - 本地来源的目录必须存在（也可写成 `file://` 地址），且不能带 `#<ref>`；要按 Git 仓库安装本机仓库，写 `git+file://<路径>#<commit>`。
-- 别名默认取包名（去掉作用域与 `dsh-plugin-`、`dsh-` 前缀），`--as` 指定。本地来源的包名默认读其 `package.json` 的 `name`（读不到时用目录名），Git 来源默认用仓库名，与实际包名不同时用 `--package` 指定（`source clone --profile` 会读仓库的 `package.json`）；`--package` 只对 Git 与本地来源有效。
+- 别名默认取自来源并去掉 `dsh-plugin-`、`dsh-` 前缀：npm 与 in-box 来源取包名（去掉作用域），本地来源取目录名，Git 来源取仓库名；`--as` 指定。本地来源的包名默认读其 `package.json` 的 `name`（读不到时用目录名），Git 来源默认用仓库名，与实际包名不同时用 `--package` 指定（`source clone --profile` 会读仓库的 `package.json`）；`--package` 只对 Git 与本地来源有效。
 - 同一别名重新 `install` 同一个包只改来源，保留 `patches` 与启用状态；输出会说明从哪个版本（来源）改成了哪个。别名已经指向另一个包时拒绝（退出码 3），用 `--as` 换一个别名，或先 `remove` 原来的。
 - npm 来源（`install` 与 `update --to`）先用 `npm view` 核对：包在而版本不存在时以退出码 3 报错并给出最新版本。npm 看不到这个包（可能是需要凭据的私有包）、拒绝凭据，或查询不了（离线、超过约 5 秒）时只警告，照常写入清单。加 `--no-npm-check` 或设 `DSHENV_NPM_CHECK=off` 跳过核对；`--json` 输出的 `npmCheck` 是 `verified`、`unverified`、`unreachable` 或 `skipped`。包名不合法（例如以 `-` 开头）时直接拒绝，不会交给 npm。
 - `enable`、`disable`、`remove`、`update`、`plugins config` 也接受包名；别名写错时报错会给出相近的别名。
@@ -622,7 +622,7 @@ DSH 的官方 bundle 随 DSH 一起安装，默认关闭，在 Profile 的 `dsh.
 | `2` | 存在有效变更计划（Drifted，`plan`/`status`/`apply --dry-run`）；不带 `--yes` 的 `apply`、`pull`、`rollback`、`gc`、`purge`、`adopt`、`migrate`、`remote add`、`remote remove`、`remote sync`、`source sync` 预览有待执行的内容；`verify` 有插件仍在加载；`self-update --check` 有可安装的版本 |
 | `3` | 用法错误（缺参数、未知选项或命令）或输入、清单格式校验失败（ValidationError）；`--json` 时以 `{"error": {...}}` 输出 |
 | `4` | DSH 运行时能力不支持或未找到（CapabilityError） |
-| `5` | 环境降级或运行时响应异常（DegradedError） |
+| `5` | 环境降级或运行时响应异常（DegradedError）；`plan`/`status`/`apply` 的计划中有 `blocked` 操作；`verify` 有与清单不符的插件 |
 | `6` | `pull --prefer skip` 跳过了两边都改过的补丁目标或 skill；预览时也优先于 `2`，待收的改动看 `--json` 的 `changes` |
 
 ---
