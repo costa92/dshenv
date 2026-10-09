@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -175,6 +175,31 @@ profiles:
 
     await rollbackEnvironment(paths, { operationId: result.backupSnapshotId });
     expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(handEdited);
+  });
+
+  it('names the snapshot that undoes a rollback which failed halfway', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.mkdirSync(path.join(paths.skillsDir, 'alpha'), { recursive: true });
+    const snapshot = await createEnvironmentSnapshot(paths, 'apply-3');
+    const cp = fs.promises.cp;
+    const spy = vi.spyOn(fs.promises, 'cp').mockImplementation(async (src, dest, options) => {
+      if (String(src).startsWith(snapshot.snapshotDir)) {
+        throw new Error('disk full');
+      }
+      return cp(src, dest, options);
+    });
+    let message = '';
+    try {
+      await rollbackEnvironment(paths, { operationId: 'apply-3' }).catch((err: Error) => {
+        message = err.message;
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    const backup = message.match(/dshenv rollback (\S+) --yes/)?.[1];
+    expect(message).toContain('disk full');
+    expect(backup).toMatch(/pre-rollback-/);
+    expect(fs.existsSync(path.join(paths.backupsDir, backup!))).toBe(true);
   });
 
   it('removes files that did not exist when the snapshot was taken', async () => {

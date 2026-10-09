@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { assertEnvctlClearOfDsh, type EnvironmentPaths } from './paths.js';
 import { DshError, ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
@@ -167,6 +168,50 @@ function realpathOfExisting(target: string): string {
   return path.join(fs.realpathSync(dir), ...rest);
 }
 
+// The listing the copy has once its paths are rewritten: only the rewritten files change, and only in size.
+async function expectedListing(source: string, prefixes: string[], target: string): Promise<string> {
+  const sizes = new Map(planRewrites(source, prefixes, target).rewrites.map((rewrite) => [rewrite.file.split(path.sep).join('/'), Buffer.byteLength(rewrite.content)]));
+  return (await treeListing(source))
+    .map((line) => {
+      const file = line.match(/^f (.+) \d+$/)?.[1];
+      return file !== undefined && sizes.has(file) ? `f ${file} ${String(sizes.get(file))}` : line;
+    })
+    .join('\n');
+}
+
+// True when the target already holds this envctl, as a migrate killed before marking the old location leaves it.
+// Otherwise it must be empty, or hold only the marker of an envctl moved away from it, which can be moved back.
+async function targetHoldsCopy(target: string, source: string, prefixes: string[]): Promise<boolean> {
+  const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (!stat || (stat.isDirectory() && fs.readdirSync(target).every((name) => name === MOVED_FILE))) {
+    return false;
+  }
+  if (stat.isDirectory() && (await treeListing(target)).join('\n') === (await expectedListing(source, prefixes, target))) {
+    return true;
+  }
+  throw new ValidationError(
+    `Target ${target} already exists and is not an empty directory; if an interrupted dshenv migrate left it there, delete it and migrate again`
+  );
+}
+
+// Only an empty directory is replaced, never one with content: another envctl that landed there meanwhile stays, and
+// this migrate fails instead.
+async function moveIntoPlace(staging: string, target: string): Promise<void> {
+  try {
+    if (fs.lstatSync(target, { throwIfNoEntry: false })) {
+      await fs.promises.rm(path.join(target, MOVED_FILE), { force: true });
+      await fs.promises.rmdir(target);
+    }
+    await fs.promises.rename(staging, target);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+      throw new ValidationError(`Target ${target} is no longer empty, something else was moved there meanwhile; nothing was moved`);
+    }
+    throw err;
+  }
+}
+
 export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options: { dryRun?: boolean } = {}): Promise<MigrateResult> {
   const from = paths.managerDir;
   const fromStat = fs.lstatSync(from, { throwIfNoEntry: false });
@@ -188,13 +233,6 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   }
   assertEnvctlClearOfDsh(target, path.resolve(paths.home), 'Target');
   assertEnvctlClearOfDsh(realTarget, realpathOfExisting(path.resolve(paths.home)), 'Target');
-  const targetStat = fs.lstatSync(target, { throwIfNoEntry: false });
-  // An envctl moved away from the target left only its marker there, so it can be moved back.
-  const targetEntries = targetStat?.isDirectory() ? fs.readdirSync(target).filter((name) => name !== MOVED_FILE) : [];
-  if (targetStat && (!targetStat.isDirectory() || targetEntries.length > 0)) {
-    throw new ValidationError(`Target ${target} already exists and is not an empty directory`);
-  }
-
   const links = linkedEntries(source);
   const dangling = links.find((name) => !fs.existsSync(path.join(source, name)));
   if (dangling !== undefined) {
@@ -203,43 +241,50 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   const linked = [...(fromStat.isSymbolicLink() ? [from] : []), ...links.map((name) => path.join(from, name))];
   // Longest first, so a link inside the real directory is not cut at a shorter prefix.
   const prefixes = [...new Set([path.normalize(from), source])].sort((a, b) => b.length - a.length);
+  await targetHoldsCopy(target, source, prefixes);
   if (options.dryRun) {
     const { rewrites, skipped } = planRewrites(source, prefixes, target);
     return { dryRun: true, from, to: target, linked, rewritten: rewrites.flatMap((rewrite) => rewrite.changes), skipped };
   }
 
-  const staging = `${target}.dshenv-migrate-${process.pid}`;
+  const staging = `${target}.dshenv-migrate-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   const rewritten: string[] = [];
   const skipped: string[] = [];
   await withEnvironmentLock(paths, async () => {
-    try {
-      await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.cp(source, staging, {
-        recursive: true,
-        verbatimSymlinks: true,
-        filter: (entry) => !(path.dirname(entry) === source && isLockEntry(path.basename(entry)))
-      });
-      // A linked entry is moved by its content, so the new envctl holds no link.
-      for (const name of links) {
-        await fs.promises.rm(path.join(staging, name));
-        await fs.promises.cp(fs.realpathSync(path.join(source, name)), path.join(staging, name), { recursive: true, verbatimSymlinks: true });
-      }
-      const expected = (await treeListing(source)).join('\n');
-      if ((await treeListing(staging)).join('\n') !== expected) {
-        throw new DshError(`Copy of ${from} does not match it; nothing was moved`);
-      }
-      // In the copy, so a file that fails to load leaves the old envctl as it was.
-      const plan = planRewrites(staging, prefixes, target);
-      for (const rewrite of plan.rewrites) {
-        await fs.promises.writeFile(path.join(staging, rewrite.file), rewrite.content);
-        rewritten.push(...rewrite.changes);
-      }
+    // Checked again under the lock; it guards only the old location, so another envctl may be moving here as well.
+    if (await targetHoldsCopy(target, source, prefixes)) {
+      const plan = planRewrites(source, prefixes, target);
+      rewritten.push(...plan.rewrites.flatMap((rewrite) => rewrite.changes));
       skipped.push(...plan.skipped);
-      if (targetStat) await fs.promises.rm(target, { recursive: true });
-      await fs.promises.rename(staging, target);
-    } catch (err) {
-      await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
-      throw err;
+    } else {
+      try {
+        await fs.promises.mkdir(path.dirname(target), { recursive: true });
+        await fs.promises.cp(source, staging, {
+          recursive: true,
+          verbatimSymlinks: true,
+          filter: (entry) => !(path.dirname(entry) === source && isLockEntry(path.basename(entry)))
+        });
+        // A linked entry is moved by its content, so the new envctl holds no link.
+        for (const name of links) {
+          await fs.promises.rm(path.join(staging, name));
+          await fs.promises.cp(fs.realpathSync(path.join(source, name)), path.join(staging, name), { recursive: true, verbatimSymlinks: true });
+        }
+        const expected = (await treeListing(source)).join('\n');
+        if ((await treeListing(staging)).join('\n') !== expected) {
+          throw new DshError(`Copy of ${from} does not match it; nothing was moved`);
+        }
+        // In the copy, so a file that fails to load leaves the old envctl as it was.
+        const plan = planRewrites(staging, prefixes, target);
+        for (const rewrite of plan.rewrites) {
+          await fs.promises.writeFile(path.join(staging, rewrite.file), rewrite.content);
+          rewritten.push(...rewrite.changes);
+        }
+        skipped.push(...plan.skipped);
+        await moveIntoPlace(staging, target);
+      } catch (err) {
+        await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
+        throw err;
+      }
     }
     // Marked first, while still locked: from then on no command uses the old location, even one that gets the lock
     // next or one that runs after a cleanup that failed halfway. A symlinked envctl keeps its link and its target, which
@@ -248,7 +293,7 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
       await fs.promises.writeFile(path.join(from, MOVED_FILE), `${target}\n`);
     } catch (err) {
       throw new DshError(
-        `envctl was copied to ${target}, but ${from} could not be marked as moved: ${err instanceof Error ? err.message : String(err)}; nothing was removed from it, remove it by hand`
+        `envctl was copied to ${target}, but ${from} could not be marked as moved: ${err instanceof Error ? err.message : String(err)}; nothing was removed from it, run the same migrate again to finish`
       );
     }
     if (fromStat.isSymbolicLink()) return;

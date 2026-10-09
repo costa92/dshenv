@@ -32,14 +32,14 @@ describe('snapshots with a remote subscription', () => {
     fs.writeFileSync(paths.manifestFile, EMPTY_MANIFEST);
     fs.writeFileSync(overlayFile('mine'), LOCAL_OVERLAY);
     const snapshot = await createEnvironmentSnapshot(paths, 'op-plain');
-    expect(fs.readdirSync(snapshot.snapshotDir).sort()).toEqual(['existing-overlays', 'manifest.yaml', 'skills-saved']);
+    expect(fs.readdirSync(snapshot.snapshotDir).sort()).toEqual(['existing-overlays', 'manifest.yaml', 'sequence', 'skills-saved']);
     expect(fs.readdirSync(path.join(snapshot.snapshotDir, 'existing-overlays'))).toEqual(['mine.yaml']);
   });
 
   it('saves remote.json and owned overlays but not local overlays', async () => {
     await writeRemoteOwnedFixture(home);
     const snapshot = await createEnvironmentSnapshot(paths, 'op-remote');
-    expect(fs.readdirSync(snapshot.snapshotDir).sort()).toEqual(['existing-overlays', 'lock.json', 'manifest.yaml', 'overlays', 'remote.json', 'skills-saved']);
+    expect(fs.readdirSync(snapshot.snapshotDir).sort()).toEqual(['existing-overlays', 'lock.json', 'manifest.yaml', 'overlays', 'remote.json', 'sequence', 'skills-saved']);
     expect(fs.readdirSync(path.join(snapshot.snapshotDir, 'overlays'))).toEqual(['team.yaml']);
   });
 

@@ -46,6 +46,17 @@ async function assertSafeManagedPath(target: string, allowedRoot: string): Promi
   }
 }
 
+// A link on the way to the clone (envctl/sources, sources/<profile>) would hand a directory outside envctl to the trash.
+async function assertNoLinkOutOfRoot(target: string, allowedRoot: string): Promise<void> {
+  const root = await fs.promises.realpath(allowedRoot);
+  for (const dir of [path.dirname(path.resolve(target)), path.resolve(target)]) {
+    const real = await fs.promises.realpath(dir);
+    if (!isPathInside(root, real)) {
+      throw new ValidationError(`Refusing to purge path outside allowed root: ${target} leads to ${real}`);
+    }
+  }
+}
+
 interface PurgeTarget {
   alias: string;
   packageName: string;
@@ -141,6 +152,7 @@ async function purgeDecided(
   }
   if (hasClone) {
     await assertSafeManagedPath(cloneDir, paths.managerDir);
+    await assertNoLinkOutOfRoot(cloneDir, paths.managerDir);
   }
 
   if (options?.dryRun) {
