@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { findOnPath } from '../../src/dsh/command.js';
-import { CapabilityError } from '../../src/errors.js';
+import { CapabilityError, ValidationError } from '../../src/errors.js';
 import {
   resolveDshCommand,
   probeDsh,
@@ -71,6 +71,11 @@ describe('resolveDshCommand', () => {
       file: 'node',
       args: ['/path/to/dsh.js', '--verbose']
     });
+  });
+
+  it.each(['["node","x.js",]', '[]', '[""]', '["node",""]', '[1]', '['])('refuses a DSH_CLI that starts as a JSON array but is not one of non-empty strings: %s', (value) => {
+    expect(() => resolveDshCommand({ envDshCli: value })).toThrow(ValidationError);
+    expect(() => resolveDshCommand({ envDshCli: value })).toThrow('DSH_CLI is not a valid JSON array of non-empty strings');
   });
 
   it('should treat malicious shell string in DSH_CLI as literal file and never shell', () => {

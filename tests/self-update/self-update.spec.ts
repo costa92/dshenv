@@ -234,6 +234,17 @@ describe('self-update', () => {
     expect(calls.some((call) => call.startsWith('pnpm add'))).toBe(false);
   });
 
+  it('leaves a token in the query or userinfo of the pnpm install source out of the message', async () => {
+    fs.writeFileSync(
+      path.join(path.dirname(pnpmRoot), 'package.json'),
+      JSON.stringify({ dependencies: { '@costa92/dshenv': 'https://user:pw@npm.example.com/dshenv.tgz?token=SECRET123' } })
+    );
+    const { run } = fakeRunner({ ...roots(), 'npm view @costa92/dshenv@latest version --prefer-online': ok('0.2.1') });
+    const err = await selfUpdate({ currentVersion: '0.2.0', packageRoot: path.join(pnpmRoot, '@costa92', 'dshenv'), run }).catch((e: Error) => e);
+    expect((err as Error).message).toContain('installed with pnpm from https://npm.example.com/dshenv.tgz, not');
+    expect((err as Error).message).not.toMatch(/SECRET123|pw/);
+  });
+
   it('detects the real pnpm 10 layout, where the package resolves into .pnpm beside node_modules', async () => {
     const store = path.join(path.dirname(pnpmRoot), '.pnpm', '@costa92+dshenv@0.2.0', 'node_modules', '@costa92', 'dshenv');
     fs.mkdirSync(store, { recursive: true });

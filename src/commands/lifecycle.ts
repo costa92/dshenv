@@ -25,14 +25,21 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
     .option('-y, --yes', 'apply; without it apply only previews, like --dry-run')
     .option('--verify', 'then ask the running dsh web of each changed profile whether its plugins are loaded; exit code as verify')
     .option('--verify-timeout <seconds>', 'how long --verify waits for DSH to hot-reload a plugin', '30')
+    .option('--allow-remote', 'let --verify send the dsh web token to a non-loopback https host')
     .action(async (cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
       await assertNoUnfinishedOperations(paths, { warn: writeErr });
       const allowUntested = Boolean(opts.allowUntestedDsh);
       const preview = Boolean(cmdOpts.dryRun) || !cmdOpts.yes;
+      if (cmdOpts.verify && cmdOpts.dryRun) {
+        throw new ValidationError('--verify cannot be used with --dry-run; it checks what apply --yes changed');
+      }
       if (cmdOpts.verify && preview) {
         throw new ValidationError('--verify checks what apply --yes changed; add --yes, or run dshenv verify to check without applying');
+      }
+      if (cmdOpts.allowRemote && !cmdOpts.verify) {
+        throw new ValidationError('--allow-remote applies only with --verify');
       }
       if (!/^\d+(\.\d+)?$/.test(cmdOpts.verifyTimeout)) {
         throw new ValidationError(`Invalid --verify-timeout value: ${cmdOpts.verifyTimeout}`);
@@ -60,7 +67,10 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
         const profiles = [...new Set(res.plan.operations.filter(isProfileOperation).map((operation) => operation.profile))];
         for (const profile of profiles) {
           verify.push(
-            await verifyProfileRuntime(paths, manifest, profile, Number(cmdOpts.verifyTimeout) * 1000, { severalProfiles: profiles.length > 1 })
+            await verifyProfileRuntime(paths, manifest, profile, Number(cmdOpts.verifyTimeout) * 1000, {
+              severalProfiles: profiles.length > 1,
+              allowRemote: Boolean(cmdOpts.allowRemote)
+            })
           );
         }
       }

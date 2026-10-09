@@ -158,7 +158,8 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
   let exitCodeToReturn = 0;
   // Errors thrown before parsing leave program.opts() empty, so read argv (up to `--`) as well.
   const endOfOptions = argv.indexOf('--');
-  const jsonRequested = (endOfOptions === -1 ? argv : argv.slice(0, endOfOptions)).includes('--json');
+  const optionArgs = endOfOptions === -1 ? argv : argv.slice(0, endOfOptions);
+  const jsonRequested = optionArgs.includes('--json');
 
   // commander's own stderr (usage errors, help it shows for a command run without a subcommand) is held until
   // commander is done, so that help can go to stdout instead.
@@ -233,7 +234,7 @@ export async function runCli(argv: string[], io?: CliIO): Promise<number> {
       return 0;
     }
     // commander keeps only the last of the two flags, so a conflict must be detected on argv.
-    if (argv.includes('--no-overlay') && argv.some((arg) => arg === '--overlay' || arg.startsWith('--overlay='))) {
+    if (optionArgs.includes('--no-overlay') && optionArgs.some((arg) => arg === '--overlay' || arg.startsWith('--overlay='))) {
       throw new ValidationError('--overlay and --no-overlay cannot be used together');
     }
     await program.parseAsync(withoutHelpForUnknownCommand(program, argv), { from: 'user' });

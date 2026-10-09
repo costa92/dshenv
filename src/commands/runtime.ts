@@ -211,7 +211,7 @@ export async function verifyProfileRuntime(
   manifest: EnvironmentManifest,
   profile: string,
   timeoutMs: number,
-  options: { severalProfiles?: boolean } = {}
+  options: { severalProfiles?: boolean; allowRemote?: boolean } = {}
 ): Promise<ProfileVerification> {
   const url = options.severalProfiles ? (await runningWebRecord(paths, profile))?.url : await dshWebUrlFor(paths, profile);
   if (url === undefined) {
@@ -224,7 +224,7 @@ export async function verifyProfileRuntime(
     return { profile, skipped: `no dsh web is running for profile ${profile}; run dshenv web start -p ${profile}, or set ${DSH_URL_ENV}` };
   }
   try {
-    const target = parseDshWebUrl(url);
+    const target = parseDshWebUrl(url, { allowRemote: options.allowRemote });
     return { profile, endpoint: target.endpoint, results: await pollProfileRuntime(paths, manifest, profile, target, timeoutMs) };
   } catch (err) {
     if (err instanceof DshError) {

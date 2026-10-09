@@ -97,6 +97,11 @@ function describeSource(source: PluginSource): string {
 }
 
 // Windows paths (C:\src, \\server\share, .\src) are local there; npm and git specs never parse as absolute paths.
+// Own entries only: a name such as toString or __proto__ would otherwise find an inherited member.
+function own<T>(record: Record<string, T> | undefined, key: string): T | undefined {
+  return record !== undefined && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 export function isLocalPathSpec(spec: string, pathApi: path.PlatformPath = path): boolean {
   const relative = pathApi === path.win32 ? /^\.\.?[\\/]/ : /^\.\.?\//;
   return spec.startsWith('file:') || pathApi.isAbsolute(spec) || relative.test(spec);
@@ -110,7 +115,20 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     if (alias === '') {
       throw new ValidationError(`Cannot derive an alias from '${from}'; pass --as <alias>`);
     }
-    return alias;
+    // A repository or directory name need not make a valid alias; hold it to the rules --as is held to.
+    try {
+      return aliasOption(alias);
+    } catch (err) {
+      throw new ValidationError(`Cannot use '${alias}' from '${from}' as the alias (${err instanceof Error ? err.message : String(err)}); pass --as <alias>`);
+    }
+  }
+
+  // npm installs a version without its build metadata, so a declared '+build' would never match what is installed.
+  function assertNoBuildMetadata(version: string, what: string): void {
+    const plus = version.indexOf('+');
+    if (plus !== -1) {
+      throw new ValidationError(`${what} must not carry build metadata, which npm drops when it installs: use ${version.slice(0, plus)}`);
+    }
   }
 
   function parsePluginSpec(spec: string, optsAlias?: string, optsPackage?: string): { alias: string; packageName: string; source: PluginSource } {
@@ -124,8 +142,11 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
       if (urlParts.length > 2) {
         throw new ValidationError(`'${spec}': a git spec takes at most one #<ref>`);
       }
+      if (urlParts[1] === '') {
+        throw new ValidationError(`'${spec}': the #<ref> is empty; give a ref after '#' or leave the '#' out`);
+      }
       const repoUrl = normalizeGitUrl(urlParts[0]);
-      const commitOrRef = urlParts[1] || undefined;
+      const commitOrRef = urlParts[1];
       const baseName = path.basename(repoUrl.split('?')[0], '.git');
       const alias = optsAlias ?? deriveAlias(baseName, repoUrl);
       return {
@@ -208,6 +229,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     if (!version || !ExactVersionRegex.test(version)) {
       throw new ValidationError(`npm plugin needs an exact version: ${packageName}@<x.y.z>`);
     }
+    assertNoBuildMetadata(version, `The version of ${packageName}`);
 
     const simpleName = packageName.startsWith('@') ? packageName.split('/')[1] : packageName;
     const alias = optsAlias ?? deriveAlias(simpleName, packageName);
@@ -223,7 +245,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
   }
 
   function requirePlugin(manifest: EnvironmentManifest, profile: string, alias: string): PluginManifestEntry {
-    const plugin = manifest.profiles[profile]?.plugins[alias];
+    const plugin = own(own(manifest.profiles, profile)?.plugins, alias);
     if (!plugin) {
       throw new ValidationError(`Plugin '${alias}' not found in profile '${profile}'`);
     }
@@ -283,26 +305,26 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     // A base write names a base entry, which the overlay may have removed from the effective manifest.
     const baseWrite = Boolean(write && !write.overlay && selection && fs.existsSync(paths.manifestFile));
     const base = baseWrite ? loadManifest(fs.readFileSync(paths.manifestFile, 'utf8')) : null;
-    if (base && !base.profiles[profile]?.plugins[name] && effective.profiles[profile]?.plugins[name]) {
+    if (base && !own(own(base.profiles, profile)?.plugins, name) && own(own(effective.profiles, profile)?.plugins, name)) {
       throw new ValidationError(`Plugin '${name}' is declared in overlay '${selection!.name}', not in the base manifest; use --layer overlay`);
     }
-    const manifest = base?.profiles[profile] ? base : effective;
+    const manifest = base && own(base.profiles, profile) ? base : effective;
     const declaredProfiles = Object.keys(manifest.profiles).sort();
-    if (!manifest.profiles[profile]) {
+    const plugins = own(manifest.profiles, profile)?.plugins;
+    if (!plugins) {
       throw new ValidationError(
         `Profile '${profile}' is not declared in the manifest${didYouMean(profile, declaredProfiles)}${declaredProfiles.length > 0 ? ` (declared: ${declaredProfiles.join(', ')})` : ''}`
       );
     }
-    const plugins = manifest.profiles[profile].plugins;
     const byPackage = Object.entries(plugins).filter(([, plugin]) => plugin.package === name).map(([alias]) => alias);
-    const alias = name in plugins ? name : byPackage.length === 1 ? byPackage[0] : undefined;
+    const alias = Object.hasOwn(plugins, name) ? name : byPackage.length === 1 ? byPackage[0] : undefined;
     if (alias === undefined) {
       const aliases = Object.keys(plugins).sort();
       // A close alias is the better hint; package names only when no alias is close.
       const hint = didYouMean(name, aliases) || didYouMean(name, Object.values(plugins).map((plugin) => plugin.package));
       throw new ValidationError(`Plugin '${name}' not found in profile '${profile}'${hint}${aliases.length > 0 ? ` (aliases: ${aliases.join(', ')})` : ''}`);
     }
-    if (base && !base.profiles[profile]?.plugins[alias]) {
+    if (base && !own(own(base.profiles, profile)?.plugins, alias)) {
       throw new ValidationError(`Plugin '${alias}' is declared in overlay '${selection!.name}', not in the base manifest; use --layer overlay`);
     }
     return alias;
@@ -331,7 +353,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         return;
       }
       const lock = loadLock(fs.readFileSync(paths.lockFile, 'utf8'));
-      const lockPlugin = lock.profiles[profile]?.plugins[alias];
+      const lockPlugin = own(own(lock.profiles, profile)?.plugins, alias);
       if (lockPlugin?.source.type === 'npm') {
         assertLockEntryNotRemoteOwned(paths, profile, alias);
         lockPlugin.source = { ...lockPlugin.source, resolvedVersion: version };
@@ -351,7 +373,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     if (!fs.existsSync(paths.lockFile)) {
       return false;
     }
-    return loadLock(fs.readFileSync(paths.lockFile, 'utf8')).profiles[profile]?.plugins[alias]?.source.type === 'npm';
+    const lock = loadLock(fs.readFileSync(paths.lockFile, 'utf8'));
+    return own(own(lock.profiles, profile)?.plugins, alias)?.source.type === 'npm';
   }
 
   // DSH skips a profile bundle whose package.json has no dsh.bundle, at every start, while plan reports it in sync.
@@ -425,11 +448,11 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           return next;
         })
       : await writeBase(paths, selection, (manifest) => {
-          if (!manifest.profiles[profile]) {
+          if (!Object.hasOwn(manifest.profiles, profile)) {
             manifest.profiles[profile] = { plugins: {} };
           }
           const next = parsePluginSpec(request.spec, request.alias, request.packageName);
-          const current = manifest.profiles[profile].plugins[next.alias];
+          const current = own(manifest.profiles[profile].plugins, next.alias);
           if (current && current.package !== next.packageName) {
             throw aliasTaken(next.alias, current.package, profile, next.packageName);
           }
@@ -545,6 +568,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         if (!ExactVersionRegex.test(cmdOpts.to)) {
           throw new ValidationError('--to must be an exact version such as 1.2.3');
         }
+        assertNoBuildMetadata(cmdOpts.to, '--to');
         const profile: string = cmdOpts.profile;
         const version: string = cmdOpts.to;
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
@@ -1018,8 +1042,8 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const profile: string = cmdOpts.profile;
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         // An overlay entry for an alias the base no longer declares is in no effective manifest, but it is the overlay's to drop.
-        const leftover = overlay !== null && Boolean(readOverlay(paths, overlay.name).profiles?.[profile]?.plugins?.[name]) &&
-          !loadEffectiveManifest(paths, overlay).manifest.profiles[profile]?.plugins[name];
+        const leftover = overlay !== null && Boolean(own(own(readOverlay(paths, overlay.name).profiles, profile)?.plugins, name)) &&
+          !own(own(loadEffectiveManifest(paths, overlay).manifest.profiles, profile)?.plugins, name);
         const alias = leftover ? name : resolveAlias(paths, selection, profile, name, { overlay });
 
         if (overlay) {

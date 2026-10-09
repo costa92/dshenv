@@ -30,6 +30,10 @@ function validate(options: ScaffoldOptions): void {
   if (!ComponentNameRegex.test(options.name)) {
     throw new ValidationError(`Component name '${options.name}' must be kebab-case (lowercase letters, digits and single hyphens)`);
   }
+  // path.resolve would read an empty --dir as the working directory, which nobody meant.
+  if (options.dir !== undefined && options.dir.trim() === '') {
+    throw new ValidationError('--dir must not be empty');
+  }
   if (options.packageName !== undefined && !PackageNameRegex.test(options.packageName)) {
     throw new ValidationError(`Invalid package name '${options.packageName}'`);
   }

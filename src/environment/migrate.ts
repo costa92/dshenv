@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { assertEnvctlClearOfDsh, type EnvironmentPaths } from './paths.js';
+import { ENVCTL_ENTRIES, ENVIRONMENT_FILES, assertEnvctlClearOfDsh, envctlHoldsDsh, realpathOfExisting, type EnvironmentPaths } from './paths.js';
 import { DshError, ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { MOVED_FILE, assertEnvctlNotMoved } from './moved.js';
@@ -22,8 +22,12 @@ export interface MigrateResult {
 const LOCK_FILE = 'dshenv.lock';
 // The lock and the .wanted/.reclaim files of commands waiting for it come and go while migrate runs.
 const isLockEntry = (name: string): boolean => name.startsWith(LOCK_FILE);
-// Every environment has one of these; without them the directory is not envctl, and migrate will not delete it.
-const ENVIRONMENT_FILES = ['manifest.yaml', 'lock.json', 'state.json'];
+// The top-level entries of envctl that migrate moves.
+type Moves = (name: string) => boolean;
+const movesAll: Moves = (name) => !isLockEntry(name);
+// An envctl above the DSH home shares its directory with the DSH home and whatever else lives there.
+const movesOwn: Moves = (name) => ENVCTL_ENTRIES.includes(name);
+const topEntry = (root: string, candidate: string): string => path.relative(root, candidate).split(path.sep)[0];
 
 function isPathInside(root: string, candidate: string): boolean {
   const resolvedRoot = path.resolve(root);
@@ -32,20 +36,20 @@ function isPathInside(root: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function linkedEntries(dir: string): string[] {
+function linkedEntries(dir: string, moves: Moves): string[] {
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isSymbolicLink())
+    .filter((entry) => entry.isSymbolicLink() && moves(entry.name))
     .map((entry) => entry.name)
     .sort();
 }
 
 // Every entry with its type and size; top-level links are listed as what they point to, as they are copied by content,
 // and deeper links by their text, as they are copied verbatim.
-async function treeListing(dir: string, top = true, prefix = ''): Promise<string[]> {
+async function treeListing(dir: string, moves: Moves = movesAll, top = true, prefix = ''): Promise<string[]> {
   const lines: string[] = [];
   for (const entry of (await fs.promises.readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (top && isLockEntry(entry.name)) continue;
+    if (top && !moves(entry.name)) continue;
     const full = path.join(dir, entry.name);
     const relative = prefix + entry.name;
     const stat = await fs.promises.lstat(full);
@@ -54,7 +58,7 @@ async function treeListing(dir: string, top = true, prefix = ''): Promise<string
       lines.push(`l ${relative} ${await fs.promises.readlink(full)}`);
     } else if (followed.isDirectory()) {
       lines.push(`d ${relative}`);
-      lines.push(...(await treeListing(full, false, `${relative}/`)));
+      lines.push(...(await treeListing(full, moves, false, `${relative}/`)));
     } else {
       lines.push(`f ${relative} ${followed.size}`);
     }
@@ -113,7 +117,7 @@ function environmentFiles(dir: string, prefix: string, overlayDirs: string[]): [
 // with envctl. DSH keeps the old path in the profile until apply reinstalls the plugin, which plan then lists.
 // Snapshots hold the same files (overlays under existing-overlays), and a rollback to one taken before the move would
 // bring the old paths back; one that does not load, say from an older dshenv, is left alone rather than block the move.
-function planRewrites(dir: string, prefixes: string[], target: string): { rewrites: Rewrite[]; skipped: string[] } {
+function planRewrites(dir: string, prefixes: string[], target: string, moves: Moves): { rewrites: Rewrite[]; skipped: string[] } {
   const files = environmentFiles(dir, '', ['overlays']).map(([file, rewriter]) => ({ file, rewriter, snapshot: false }));
   const backupsDir = path.join(dir, 'backups');
   if (fs.existsSync(backupsDir)) {
@@ -139,7 +143,7 @@ function planRewrites(dir: string, prefixes: string[], target: string): { rewrit
       content = rewriter(fs.readFileSync(full, 'utf8'), full, (value) => {
         if (!path.isAbsolute(value)) return value;
         const moved = rewritePath(path.normalize(value), prefixes, target);
-        if (moved === path.normalize(value)) return value;
+        if (moved === path.normalize(value) || !moves(topEntry(target, moved))) return value;
         changes.push(`${file}: ${value} -> ${moved}`);
         return moved;
       });
@@ -155,23 +159,10 @@ function planRewrites(dir: string, prefixes: string[], target: string): { rewrit
   return { rewrites, skipped };
 }
 
-// The target may not exist yet, so resolve its nearest existing ancestor: on macOS /var is a link to /private/var.
-function realpathOfExisting(target: string): string {
-  let dir = target;
-  const rest: string[] = [];
-  while (!fs.existsSync(dir)) {
-    const parent = path.dirname(dir);
-    if (parent === dir) return target;
-    rest.unshift(path.basename(dir));
-    dir = parent;
-  }
-  return path.join(fs.realpathSync(dir), ...rest);
-}
-
 // The listing the copy has once its paths are rewritten: only the rewritten files change, and only in size.
-async function expectedListing(source: string, prefixes: string[], target: string): Promise<string> {
-  const sizes = new Map(planRewrites(source, prefixes, target).rewrites.map((rewrite) => [rewrite.file.split(path.sep).join('/'), Buffer.byteLength(rewrite.content)]));
-  return (await treeListing(source))
+async function expectedListing(source: string, prefixes: string[], target: string, moves: Moves): Promise<string> {
+  const sizes = new Map(planRewrites(source, prefixes, target, moves).rewrites.map((rewrite) => [rewrite.file.split(path.sep).join('/'), Buffer.byteLength(rewrite.content)]));
+  return (await treeListing(source, moves))
     .map((line) => {
       const file = line.match(/^f (.+) \d+$/)?.[1];
       return file !== undefined && sizes.has(file) ? `f ${file} ${String(sizes.get(file))}` : line;
@@ -181,12 +172,12 @@ async function expectedListing(source: string, prefixes: string[], target: strin
 
 // True when the target already holds this envctl, as a migrate killed before marking the old location leaves it.
 // Otherwise it must be empty, or hold only the marker of an envctl moved away from it, which can be moved back.
-async function targetHoldsCopy(target: string, source: string, prefixes: string[]): Promise<boolean> {
+async function targetHoldsCopy(target: string, source: string, prefixes: string[], moves: Moves): Promise<boolean> {
   const stat = fs.lstatSync(target, { throwIfNoEntry: false });
   if (!stat || (stat.isDirectory() && fs.readdirSync(target).every((name) => name === MOVED_FILE))) {
     return false;
   }
-  if (stat.isDirectory() && (await treeListing(target)).join('\n') === (await expectedListing(source, prefixes, target))) {
+  if (stat.isDirectory() && (await treeListing(target)).join('\n') === (await expectedListing(source, prefixes, target, moves))) {
     return true;
   }
   throw new ValidationError(
@@ -226,14 +217,20 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   if (!ENVIRONMENT_FILES.some((name) => fs.existsSync(path.join(source, name)))) {
     throw new ValidationError(`${from} is not a dshenv data directory (it has no ${ENVIRONMENT_FILES.join(', ')}); nothing was moved`);
   }
+  const home = path.resolve(paths.home);
+  const moves = envctlHoldsDsh(from, home) ? movesOwn : movesAll;
+  // Only what moves is in the way: with movesOwn the target may sit beside the DSH home, but not in what moves.
+  const holds = (root: string, candidate: string) => isPathInside(root, candidate) && (moves === movesAll || moves(topEntry(root, candidate)));
+  if ([[from, home], [source, realpathOfExisting(home)]].some(([root, dshHome]) => moves === movesOwn && holds(root, dshHome))) {
+    throw new ValidationError(`The DSH home ${home} is inside dshenv's own entries in ${from}; move it out first`);
+  }
   const target = path.resolve(to);
   const realTarget = realpathOfExisting(target);
-  if ([target, realTarget].some((t) => isPathInside(source, t) || isPathInside(t, source) || isPathInside(from, t) || isPathInside(t, from))) {
+  if ([target, realTarget].some((t) => holds(source, t) || isPathInside(t, source) || holds(from, t) || isPathInside(t, from))) {
     throw new ValidationError(`Cannot migrate ${from} to ${target}: one contains the other`);
   }
-  assertEnvctlClearOfDsh(target, path.resolve(paths.home), 'Target');
-  assertEnvctlClearOfDsh(realTarget, realpathOfExisting(path.resolve(paths.home)), 'Target');
-  const links = linkedEntries(source);
+  assertEnvctlClearOfDsh(target, home, 'Target');
+  const links = linkedEntries(source, moves);
   const dangling = links.find((name) => !fs.existsSync(path.join(source, name)));
   if (dangling !== undefined) {
     throw new ValidationError(`${path.join(from, dangling)} is a symlink to nothing; remove it or point it at its content, then migrate`);
@@ -241,9 +238,9 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   const linked = [...(fromStat.isSymbolicLink() ? [from] : []), ...links.map((name) => path.join(from, name))];
   // Longest first, so a link inside the real directory is not cut at a shorter prefix.
   const prefixes = [...new Set([path.normalize(from), source])].sort((a, b) => b.length - a.length);
-  await targetHoldsCopy(target, source, prefixes);
+  await targetHoldsCopy(target, source, prefixes, moves);
   if (options.dryRun) {
-    const { rewrites, skipped } = planRewrites(source, prefixes, target);
+    const { rewrites, skipped } = planRewrites(source, prefixes, target, moves);
     return { dryRun: true, from, to: target, linked, rewritten: rewrites.flatMap((rewrite) => rewrite.changes), skipped };
   }
 
@@ -252,29 +249,28 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   const skipped: string[] = [];
   await withEnvironmentLock(paths, async () => {
     // Checked again under the lock; it guards only the old location, so another envctl may be moving here as well.
-    if (await targetHoldsCopy(target, source, prefixes)) {
-      const plan = planRewrites(source, prefixes, target);
+    if (await targetHoldsCopy(target, source, prefixes, moves)) {
+      const plan = planRewrites(source, prefixes, target, moves);
       rewritten.push(...plan.rewrites.flatMap((rewrite) => rewrite.changes));
       skipped.push(...plan.skipped);
     } else {
       try {
-        await fs.promises.mkdir(path.dirname(target), { recursive: true });
-        await fs.promises.cp(source, staging, {
-          recursive: true,
-          verbatimSymlinks: true,
-          filter: (entry) => !(path.dirname(entry) === source && isLockEntry(path.basename(entry)))
-        });
+        await fs.promises.mkdir(staging, { recursive: true });
+        // Entry by entry, as with movesOwn the target may be inside the source.
+        for (const name of fs.readdirSync(source).filter(moves)) {
+          await fs.promises.cp(path.join(source, name), path.join(staging, name), { recursive: true, verbatimSymlinks: true });
+        }
         // A linked entry is moved by its content, so the new envctl holds no link.
         for (const name of links) {
           await fs.promises.rm(path.join(staging, name));
           await fs.promises.cp(fs.realpathSync(path.join(source, name)), path.join(staging, name), { recursive: true, verbatimSymlinks: true });
         }
-        const expected = (await treeListing(source)).join('\n');
+        const expected = (await treeListing(source, moves)).join('\n');
         if ((await treeListing(staging)).join('\n') !== expected) {
           throw new DshError(`Copy of ${from} does not match it; nothing was moved`);
         }
         // In the copy, so a file that fails to load leaves the old envctl as it was.
-        const plan = planRewrites(staging, prefixes, target);
+        const plan = planRewrites(staging, prefixes, target, moves);
         for (const rewrite of plan.rewrites) {
           await fs.promises.writeFile(path.join(staging, rewrite.file), rewrite.content);
           rewritten.push(...rewrite.changes);
@@ -300,7 +296,7 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
     // The environment files go first, so what a failed cleanup leaves does not read as an environment either.
     // rm removes a link itself (a junction too), never what it points to.
     try {
-      const names = fs.readdirSync(from).filter((entry) => !isLockEntry(entry) && entry !== MOVED_FILE);
+      const names = fs.readdirSync(from).filter((entry) => moves(entry) && entry !== MOVED_FILE);
       for (const name of [...ENVIRONMENT_FILES.filter((file) => names.includes(file)), ...names.filter((n) => !ENVIRONMENT_FILES.includes(n))]) {
         await fs.promises.rm(path.join(from, name), { recursive: true });
       }

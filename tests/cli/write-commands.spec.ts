@@ -664,10 +664,12 @@ describe('CLI manifest write commands', () => {
       expect((await run(['disable', 'agent-teams', '-p', 'web', '--layer', 'base'])).stderr).not.toMatch(/DSHENV_LAYER/);
     });
 
-    it('refuses an invalid value while an overlay is active, and says where it came from', async () => {
+    it('refuses an invalid value, with or without an active overlay, and says where it came from', async () => {
       process.env.DSHENV_LAYER = 'top';
-      // Without an overlay the variable has no effect, so it cannot break a write.
-      expect((await run(['disable', 'agent-teams', '-p', 'web'])).code).toBe(0);
+      // As --layer top would be, rather than going unnoticed until an overlay is selected.
+      const bare = await run(['disable', 'agent-teams', '-p', 'web']);
+      expect(bare.code).toBe(3);
+      expect(bare.stderr).toBe("Invalid --layer 'top'; expected base or overlay (from DSHENV_LAYER)\n");
       useOverlay('laptop');
       const out = await run(['disable', 'agent-teams', '-p', 'web']);
       expect(out.code).toBe(3);

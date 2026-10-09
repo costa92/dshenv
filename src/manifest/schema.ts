@@ -49,9 +49,10 @@ export function isTransportHelperUrl(url: string): boolean {
   return /^(?:git\+)?[a-z][a-z0-9+.-]*::/i.test(url);
 }
 
-// What git check-ref-format refuses: whitespace and control characters, '..', any of ~^:?*[\, '@{', and a trailing
-// '/' or '.lock'. ':' and '*' would also change the meaning of a fetch refspec, and a leading '-' reads as an option.
-const InvalidGitRefRegex = /[\x00-\x20\x7f:*?[\\^~]|\.\.|@\{|\/$|\.lock$/;
+// What git check-ref-format refuses: whitespace and control characters, '..', any of ~^:?*[\, '@{', '//', a component
+// starting with '.', a leading '/' and a trailing '/', '.' or '.lock'. ':' and '*' would also change the meaning of a
+// fetch refspec, and a leading '-' reads as an option.
+const InvalidGitRefRegex = /[\x00-\x20\x7f:*?[\\^~]|\.\.|@\{|\/\/|(?:^|\/)\.|^\/|[/.]$|\.lock$/;
 
 export function isValidGitRef(ref: string): boolean {
   return ref.length > 0 && !ref.startsWith('-') && !InvalidGitRefRegex.test(ref);
@@ -118,8 +119,10 @@ export const PluginSourceSchema = z.discriminatedUnion('type', [
 // Profiles and aliases are object keys; these would resolve to inherited properties instead of entries.
 const ReservedKeys = new Set(['__proto__', 'constructor', 'prototype']);
 
+// The CLI also refuses any Object.prototype member (toString, valueOf...): much code still looks entries up by plain
+// indexing, where such a name finds the inherited member.
 export function assertNotReservedKey(kind: string, name: string): string {
-  if (ReservedKeys.has(name)) {
+  if (ReservedKeys.has(name) || name in Object.prototype) {
     throw new ValidationError(`${kind} '${name}' is reserved`);
   }
   return name;
@@ -128,10 +131,11 @@ export function assertNotReservedKey(kind: string, name: string): string {
 const notReserved = (name: string) => !ReservedKeys.has(name);
 
 // A profile name becomes a directory under profiles/ and a file name under envctl/, and DSH takes it as an option value.
+// Windows drops a trailing '.' from a file name, so 'web.' would share the directory of 'web'.
 const ProfileNameRegex = /^[A-Za-z0-9._][-A-Za-z0-9._]*$/;
 
 export function isValidProfileName(name: string): boolean {
-  return ProfileNameRegex.test(name) && name.length <= 100 && name !== '.' && name !== '..';
+  return ProfileNameRegex.test(name) && name.length <= 100 && !name.endsWith('.');
 }
 
 export function assertProfileName(name: string): string {
@@ -144,7 +148,20 @@ export function assertProfileName(name: string): string {
 export const ProfileNameKeySchema = z
   .string()
   .refine(notReserved, { message: 'Profile name is reserved' })
-  .refine(isValidProfileName, { message: "Invalid profile name (allowed: letters, digits, '.', '_', '-', at most 100 characters; not '.' or '..')" });
+  .refine(isValidProfileName, { message: "Invalid profile name (allowed: letters, digits, '.', '_', '-', at most 100 characters; not ending in '.')" });
+
+// On a case-insensitive file system 'WEB' and 'web' would share one profile directory.
+export function caseFoldedDuplicate(names: string[]): [string, string] | undefined {
+  const seen = new Map<string, string>();
+  for (const name of names) {
+    const other = seen.get(name.toLowerCase());
+    if (other !== undefined) {
+      return [other, name];
+    }
+    seen.set(name.toLowerCase(), name);
+  }
+  return undefined;
+}
 
 // Aliases appear in single-line patch markers, so whitespace would break or inject into them.
 const LockAliasSchema = z
@@ -219,7 +236,15 @@ export const ManifestSchema = z
   .object({
     apiVersion: z.literal('dshenv/v1'),
     environment: EnvironmentConfigSchema.optional(),
-    profiles: z.record(ProfileNameKeySchema, ProfileManifestEntrySchema).default({}),
+    profiles: z
+      .record(ProfileNameKeySchema, ProfileManifestEntrySchema)
+      .default({})
+      .superRefine((profiles, ctx) => {
+        const duplicate = caseFoldedDuplicate(Object.keys(profiles));
+        if (duplicate) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Profiles '${duplicate[0]}' and '${duplicate[1]}' differ only in case` });
+        }
+      }),
     patches: z.array(ProfilePatchSchema).optional()
   })
   .strict();

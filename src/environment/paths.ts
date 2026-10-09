@@ -1,6 +1,8 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { ValidationError } from '../errors.js';
+import { MOVED_FILE } from './moved.js';
 
 export interface EnvironmentPaths {
   home: string;
@@ -51,14 +53,73 @@ function isSameOrInside(root: string, candidate: string): boolean {
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
-// envctl may sit in the DSH home (its default is <home>/envctl), but not on top of what DSH itself reads: its skills would hide DSH's loose skills.
-export function assertEnvctlClearOfDsh(managerDir: string, home: string, label: string): void {
-  if (path.relative(home, managerDir) === '') {
-    throw new ValidationError(`${label} ${managerDir} is the DSH home; use ${path.join(home, 'envctl')} or a directory outside it`);
+// Every environment has one of these; without them the directory is not envctl, and migrate will not delete it.
+export const ENVIRONMENT_FILES = ['manifest.yaml', 'lock.json', 'state.json'];
+// All dshenv itself keeps in envctl, besides its lock files and MOVED_FILE.
+export const ENVCTL_ENTRIES = [
+  ...ENVIRONMENT_FILES,
+  'backups',
+  'logs',
+  'run',
+  'trash',
+  'overlays',
+  'overlay-selection.json',
+  'remote.json',
+  'remote',
+  'skills',
+  'sources'
+];
+
+// The path may not exist yet, so resolve its nearest existing ancestor: on macOS /var is a link to /private/var.
+export function realpathOfExisting(target: string): string {
+  let dir = target;
+  const rest: string[] = [];
+  while (!fs.existsSync(dir)) {
+    const parent = path.dirname(dir);
+    if (parent === dir) return target;
+    rest.unshift(path.basename(dir));
+    dir = parent;
   }
-  const owned = [path.join(home, 'profiles'), path.join(home, 'skills')].find((dir) => isSameOrInside(dir, managerDir));
-  if (owned !== undefined) {
-    throw new ValidationError(`${label} ${managerDir} overlaps DSH's ${owned}; use ${path.join(home, 'envctl')} or a directory outside it`);
+  return path.join(fs.realpathSync(dir), ...rest);
+}
+
+// Compared as written and resolved: through a symlinked parent, envctl can land in the DSH home under another name.
+function bothSpellings(managerDir: string, home: string): [string, string][] {
+  return [
+    [managerDir, home],
+    [realpathOfExisting(managerDir), realpathOfExisting(home)]
+  ];
+}
+
+// Only left from before dshenv refused such an envctl; migrate moves dshenv's own entries out of it.
+export function envctlHoldsDsh(managerDir: string, home: string): boolean {
+  return bothSpellings(managerDir, home).some(([dir, dshHome]) => path.relative(dir, dshHome) !== '' && isSameOrInside(dir, dshHome));
+}
+
+// envctl may sit in the DSH home (its default is <home>/envctl), but not on top of what DSH itself reads: its skills would hide DSH's loose skills.
+// Nor above it, as envctl's content is taken to be dshenv's: migrate would move the DSH home and all else there with it.
+export function assertEnvctlClearOfDsh(managerDir: string, home: string, label: string, allowAbove = false): void {
+  for (const [dir, dshHome] of bothSpellings(managerDir, home)) {
+    if (path.relative(dshHome, dir) === '') {
+      throw new ValidationError(`${label} ${managerDir} is the DSH home; use ${path.join(home, 'envctl')} or a directory outside it`);
+    }
+    const owned = ['profiles', 'skills'].find((name) => isSameOrInside(path.join(dshHome, name), dir));
+    if (owned !== undefined) {
+      throw new ValidationError(`${label} ${managerDir} overlaps DSH's ${path.join(home, owned)}; use ${path.join(home, 'envctl')} or a directory outside it`);
+    }
+    if (!allowAbove && isSameOrInside(dir, dshHome)) {
+      throw new ValidationError(`${label} ${managerDir} contains the DSH home ${home}; use ${path.join(home, 'envctl')} or a directory of its own`);
+    }
+  }
+}
+
+// For every command but migrate, which is how such an envctl is left.
+export function assertEnvctlNotAboveDsh(paths: EnvironmentPaths): void {
+  if (envctlHoldsDsh(paths.managerDir, paths.home)) {
+    throw new ValidationError(
+      `envctl ${paths.managerDir} contains the DSH home ${paths.home}, which dshenv no longer supports; ` +
+        `move dshenv's files out of it with dshenv migrate --to <dir> --yes, then point DSHENV_HOME or --envctl-dir at <dir>`
+    );
   }
 }
 
@@ -85,7 +146,9 @@ export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentP
         ? resolveHomePath(input!.envEnvctlDir!, 'DSHENV_HOME environment variable', cwd, userHome)
         : path.join(home, 'envctl');
   if (managerDirSource !== 'default') {
-    assertEnvctlClearOfDsh(managerDir, home, managerDirSource === 'flag' ? 'CLI envctl-dir' : 'DSHENV_HOME environment variable');
+    // One that already holds dshenv's files is let through, so migrate can move them out.
+    const existing = [...ENVIRONMENT_FILES, MOVED_FILE].some((name) => fs.existsSync(path.join(managerDir, name)));
+    assertEnvctlClearOfDsh(managerDir, home, managerDirSource === 'flag' ? 'CLI envctl-dir' : 'DSHENV_HOME environment variable', existing);
   }
 
   return {

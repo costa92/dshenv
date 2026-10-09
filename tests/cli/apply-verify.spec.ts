@@ -186,4 +186,19 @@ process.exit(1);
     expect(out.code).toBe(3);
     expect(out.stderr).toContain('--verify checks what apply --yes changed');
   });
+
+  it('refuses --verify with --dry-run even when --yes is given', async () => {
+    const out = await run(['apply', '--dry-run', '--yes', '--verify']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain('--verify cannot be used with --dry-run');
+  });
+
+  it('passes --allow-remote on to the check of a non-loopback dsh web', async () => {
+    process.env.DSHENV_DSH_URL = 'http://10.0.0.5:3080/?token=SECRET-TOKEN-123';
+    // Allowed, the plain-http check comes next, before anything is sent.
+    const allowed = await run(['--json', 'apply', '--yes', '--verify', '--allow-remote']);
+    expect(allowed.stdout).toContain('over plain http');
+    expect(`${allowed.stdout}${allowed.stderr}`).not.toContain('SECRET-TOKEN-123');
+    expect((await run(['apply', '--yes', '--allow-remote'])).stderr).toContain('--allow-remote applies only with --verify');
+  });
 });

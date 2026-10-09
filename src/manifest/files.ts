@@ -55,12 +55,13 @@ function describeIssues(error: z.ZodError): string {
     .join(', ');
 }
 
-export function loadManifest(content: string): EnvironmentManifest {
+// `writingTo`: the file a command is about to write this content to, so the file on disk is not the one at fault.
+export function loadManifest(content: string, writingTo?: string): EnvironmentManifest {
   const raw = parseYamlStrict(content);
   const res = ManifestSchema.safeParse(raw);
   if (!res.success) {
     const issues = describeIssues(res.error);
-    throw new ValidationError(`Invalid manifest schema: ${issues}`);
+    throw new ValidationError(writingTo !== undefined ? `Refusing to write ${writingTo}: ${issues}` : `Invalid manifest schema: ${issues}`);
   }
   return res.data as EnvironmentManifest;
 }

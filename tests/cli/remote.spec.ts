@@ -66,6 +66,54 @@ describe('CLI remote', () => {
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
   });
 
+  it('repeats --path and --branch in the accept hint and names them in the preview heading', async () => {
+    const other = 'apiVersion: dshenv/v1\nprofiles: {}\n';
+    await commitTeamFiles(team, { 'cfg/manifest.yaml': other }, 'second config');
+    const head = await teamHead(team);
+    await commitTeamSideBranch(team, 'stable', {}, 'same files on another branch');
+    const preview = await run(['remote', 'add', team.url, '--path', 'cfg']);
+    expect(preview.code).toBe(2);
+    expect(preview.stdout).toContain(`Remote ${team.url} at ${head.slice(0, 12)} (branch main, path cfg)`);
+    expect(preview.stdout).toContain(`Re-run with --expect ${head} --path cfg --yes`);
+    const onBranch = await run(['remote', 'add', team.url, '--branch', 'stable']);
+    expect(onBranch.stdout).toContain('(branch stable, path envctl)');
+    expect(onBranch.stdout).toMatch(/Re-run with --expect [0-9a-f]{40} --branch stable --yes/);
+    expect(onBranch.stdout).not.toContain('--path');
+
+    expect((await run(['remote', 'add', team.url, '--expect', head, '--path', 'cfg', '--yes'])).code).toBe(0);
+    expect(readRemoteConfig(paths)?.path).toBe('cfg');
+    expect(read(paths.manifestFile)).toBe(other);
+  });
+
+  it('accepts a SHA-256 repository commit given to --expect', async () => {
+    const bare = path.join(root, 'sha256.git');
+    const work = path.join(root, 'sha256-work');
+    await execa('git', ['init', '--quiet', '--bare', '--object-format=sha256', '--initial-branch=main', bare]);
+    await execa('git', ['clone', '--quiet', `file://${bare}`, work]);
+    fs.mkdirSync(path.join(work, 'envctl'));
+    fs.writeFileSync(path.join(work, 'envctl', 'manifest.yaml'), TEAM_MANIFEST);
+    const git = (args: string[]) => execa('git', ['-c', 'user.name=Tester', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: work });
+    await git(['add', '-A']);
+    await git(['commit', '--quiet', '-m', 'initial']);
+    await git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main']);
+    const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
+    expect(head).toMatch(/^[0-9a-f]{64}$/);
+
+    const preview = await run(['remote', 'add', `file://${bare}`]);
+    expect(preview.stdout).toContain(`--expect ${head} --yes`);
+    expect((await run(['remote', 'add', `file://${bare}`, '--ref', head])).code).toBe(2);
+    const accepted = await run(['remote', 'add', `file://${bare}`, '--expect', head, '--yes']);
+    expect(accepted.stderr).toBe('');
+    expect(accepted.code).toBe(0);
+    expect(readRemoteConfig(paths)?.commit).toBe(head);
+  });
+
+  it.each(['', '   '])('refuses an empty URL %j before running git', async (url) => {
+    const { code, stderr } = await run(['remote', 'add', url]);
+    expect(code).toBe(3);
+    expect(stderr).toContain('Git URL must not be empty');
+  });
+
   it('ignores a GIT_WORK_TREE inherited from a hook or CI step', async () => {
     const other = path.join(root, 'other');
     fs.mkdirSync(other, { recursive: true });

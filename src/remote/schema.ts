@@ -11,7 +11,8 @@ import { isValidOverlayName } from '../overlay/selection.js';
 export const REMOTE_API_VERSION = 'dshenv-remote/v1';
 export const DEFAULT_REMOTE_PATH = 'envctl';
 
-const CommitShaRegex = /^[0-9a-f]{40}$/;
+// SHA-1 or, for a repository created with --object-format=sha256, SHA-256.
+const CommitShaRegex = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const Sha256Regex = /^[0-9a-f]{64}$/;
 // The branch ends up in a git refspec; a leading '-' could be read as an option.
 const BranchRegex = /^(?!-)[A-Za-z0-9._/-]+$/;
@@ -73,7 +74,7 @@ export const RemoteConfigSchema = z
       .refine((url) => !isTransportHelperUrl(url), { message: TRANSPORT_HELPER_MESSAGE }),
     branch: z.string().refine(isValidBranchName, { message: 'Invalid branch name' }),
     path: z.string().refine(isValidRemotePath, { message: "Path must be '.' or a relative directory without '.' or '..' segments" }),
-    commit: z.string().regex(CommitShaRegex, { message: 'Commit must be a 40-character lowercase hex SHA-1' }),
+    commit: z.string().regex(CommitShaRegex, { message: 'Commit must be a 40- or 64-character lowercase hex commit id' }),
     files: z
       .record(
         z.string().refine(isRemoteFileKey, { message: 'File must be manifest.yaml or overlays/<name>.yaml' }),

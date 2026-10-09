@@ -2,6 +2,36 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 升级须知
+
+- envctl 不能再是 DSH home 的上级目录（如 `DSHENV_HOME=~` 配默认的 `~/.dsh`）：新建时以退出码 3 拒绝；已是这种布局时，除 `migrate` 外的命令都以退出码 3 拒绝，并提示 `dshenv migrate --to <dir> --yes`。这时 `migrate` 只搬走 dshenv 自己的文件，DSH home 和其他文件原地不动。
+- envctl 与 DSH home 的重叠检查也看符号链接解析后的路径：经符号链接落进 DSH 的 `skills/` 或 `profiles/` 的 envctl 以退出码 3 拒绝。
+- manifest 里只差大小写的两个 Profile（如 `WEB` 与 `web`），以及以 `.` 结尾的 Profile 名或 overlay 名，加载时报错；overlay 名限 100 个字符。
+- `DSHENV_LAYER` 取值非法时总是以退出码 3 拒绝，不再在没有激活 overlay 时忽略。
+- 以 `[` 开头的 `DSH_CLI` 必须是由非空字符串组成的非空 JSON 数组，否则以退出码 3 报错，不再当作可执行文件路径。
+
+### 新增
+
+- `apply --verify --allow-remote`：`DSHENV_DSH_URL` 指向其他主机时，与 `verify --allow-remote` 一样放行。
+- `remote add`/`remote sync` 的预览标题显示分支和路径；`remote add` 的重跑提示带上显式给出的 `--branch` 和非默认的 `--path`。
+- 支持 SHA-256 仓库：`remote.json`、`--ref`、`--expect` 接受 64 位提交号。
+
+### 修复
+
+- 名为 `toString`、`hasOwnProperty`、`__proto__` 等的插件或 Profile 不再被当作已存在：`remove`、`disable`、`config set`、`update`、`overlay show` 报找不到，不再假装成功或崩溃；命令行不能新建这类名字。
+- `install`、`update --to` 拒绝带构建元数据的版本（如 `7.6.0+build.1`），npm 安装时会丢掉它，计划会一直报版本不符。
+- 从 git 仓库名或目录名推出的别名按 `--as` 的规则校验，不合法时提示加 `--as`，不再出现 `-x`、`.hid` 这样的别名。
+- 别名拒绝控制字符和零宽等不可见字符；`x.git#` 这样的空 ref、`new --dir ""` 被拒绝。
+- git ref 校验补上以 `.` 开头的段、`//`、以 `.` 结尾和以 `/` 开头，不再等到 clone 之后才由 git 报错。`remote add` 的空地址同样提前拒绝。
+- `overlay create` 拒绝只差大小写的同名 overlay；`overlay use`/`create` 拒绝全局的 `--overlay`/`--no-overlay`。
+- 命令行参数被拒绝时报 `Refusing to write …/manifest.yaml`，不再报 `Invalid manifest schema`，像是磁盘上的文件坏了。
+- `tools config <tool> <path>` 读取时拒绝 `--layer`，不再静默忽略。
+- `apply --dry-run --verify` 报二者不能同用，不再提示加上已给出的 `--yes`。
+- `--overlay` 与 `--no-overlay` 的冲突检查不再把 `--` 之后的参数算进去。
+- `self-update` 显示 pnpm 安装来源时去掉查询参数，不再输出其中的 token。
+
 ## 0.13.0 - 2026-10-09
 
 ### 升级须知
