@@ -5,11 +5,26 @@ import { DegradedError } from '../errors.js';
 // a second Ctrl-C meanwhile ends dshenv at once.
 const INTERRUPTS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 const interruptCleanups = new Set<() => Promise<void>>();
+const signalExitHooks = new Set<() => void>();
 let interrupting = false;
 
+// Ending by the signal skips process 'exit' listeners, so what must happen on any exit runs here first.
 function exitBy(signal: NodeJS.Signals): void {
   for (const name of INTERRUPTS) process.off(name, onInterrupt);
+  for (const hook of signalExitHooks) {
+    try {
+      hook();
+    } catch {
+      // ending anyway
+    }
+  }
   process.kill(process.pid, signal);
+}
+
+// Runs a synchronous hook when dshenv ends by an interrupt; the returned function unregisters it.
+export function onSignalExit(hook: () => void): () => void {
+  signalExitHooks.add(hook);
+  return () => signalExitHooks.delete(hook);
 }
 
 // The handler stays registered while the cleanups run: execa's exit hook re-raises the signal as soon as it is the

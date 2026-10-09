@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DshError } from '../errors.js';
 import { processAlive } from './process-tree.js';
+import { onSignalExit } from './interrupt.js';
 
 export interface ProfileLockOptions {
   timeoutMs?: number;
@@ -13,6 +14,7 @@ const LOCK_RETRY_MAX_MS = 1_000;
 
 // Locks this process created and still holds; the finally below never runs when dshenv exits mid-operation.
 const heldLocks = new Set<string>();
+let stopOnSignalExit: (() => void) | undefined;
 
 function releaseHeldLocks(): void {
   for (const lockPath of heldLocks) {
@@ -74,6 +76,7 @@ export async function withProfilePackageLock<T>(
   }
   if (heldLocks.size === 0) {
     process.on('exit', releaseHeldLocks);
+    stopOnSignalExit = onSignalExit(releaseHeldLocks);
   }
   heldLocks.add(lockPath);
   try {
@@ -82,6 +85,7 @@ export async function withProfilePackageLock<T>(
     heldLocks.delete(lockPath);
     if (heldLocks.size === 0) {
       process.off('exit', releaseHeldLocks);
+      stopOnSignalExit?.();
     }
     await fs.promises.rm(lockPath, { force: true });
   }

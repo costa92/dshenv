@@ -129,6 +129,26 @@ await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => process
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  // The second Ctrl-C ends dshenv by the signal, which skips process 'exit' listeners.
+  it.skipIf(process.platform === 'win32')('removes the lock it holds when a second Ctrl-C ends dshenv', () => {
+    const driver = path.join(dir, 'driver.mts');
+    fs.writeFileSync(
+      driver,
+      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
+import { stopOnInterrupt } from ${JSON.stringify(path.resolve('src/io/interrupt.ts'))};
+stopOnInterrupt(() => new Promise(() => {}));
+await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => {
+  process.kill(process.pid, 'SIGINT');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  process.kill(process.pid, 'SIGINT');
+  await new Promise(() => setInterval(() => {}, 1000));
+});`
+    );
+    const result = spawnSync(process.execPath, ['--import', 'tsx/esm', driver], { timeout: 20_000 });
+    expect(result.signal).toBe('SIGINT');
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
   it('leaves a lock another process holds when it exits', () => {
     fs.writeFileSync(lockPath, '1\n');
     const driver = path.join(dir, 'driver.mts');
