@@ -62,6 +62,8 @@ export interface UnfinishedOperation {
 // The last operation of each kind whose process died, or failed to undo itself, before it finished.
 export async function findUnfinishedOperations(paths: EnvironmentPaths): Promise<UnfinishedOperation[]> {
   const entries = await readJournalEntries(paths);
+  // Newest first, by sequence, so the order holds when the clock was set back.
+  const snapshotOrder = (await listEnvironmentSnapshots(paths)).map((snapshot) => snapshot.snapshotId);
   const unfinished: UnfinishedOperation[] = [];
   for (const kind of TRACKED_KINDS) {
     const last = entries.filter((entry) => entry.type.startsWith(`${kind}-`)).at(-1);
@@ -70,10 +72,14 @@ export async function findUnfinishedOperations(paths: EnvironmentPaths): Promise
     }
     const started = entries.find((entry) => entry.type === `${kind}-started` && entry.operationId === last.operationId);
     const startedAt = started?.timestamp ?? last.timestamp;
+    const ownSnapshot = snapshotOrder.findIndex((id) => snapshotOperationId(id) === last.operationId);
     // Only a rollback to a snapshot from before it started puts its files back; a newer one restores them half-written.
-    const undone = entries.some((entry) => {
-      const restored = entry.type === 'rollback-completed' && entry.timestamp > last.timestamp ? snapshotTime(entry.details?.snapshotId) : null;
-      return restored !== null && restored <= startedAt;
+    const undone = entries.slice(entries.lastIndexOf(last) + 1).some((entry) => {
+      if (entry.type !== 'rollback-completed') return false;
+      const restored = snapshotOrder.indexOf(String(entry.details?.snapshotId));
+      if (ownSnapshot !== -1 && restored !== -1) return restored >= ownSnapshot;
+      const restoredAt = snapshotTime(entry.details?.snapshotId);
+      return restoredAt !== null && restoredAt <= startedAt;
     });
     if (!undone) {
       const command = kind === 'sync' && started?.details?.from === null ? 'remote add' : kind;
