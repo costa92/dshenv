@@ -148,8 +148,13 @@ fs.promises.cp = async (...args) => {
   }, 60_000);
 
   it('says the apply finished when the interrupt comes after it committed, and still ends by the signal', async () => {
-    const result = await runInterrupted(`const append = fs.promises.appendFile.bind(fs.promises);
-fs.promises.appendFile = async (file, line, ...rest) => { await append(file, line, ...rest); if (String(line).includes('apply-completed')) await interrupt(); };`);
+    const result = await runInterrupted(`const open = fs.promises.open.bind(fs.promises);
+fs.promises.open = async (...args) => {
+  const handle = await open(...args);
+  const append = handle.appendFile.bind(handle);
+  handle.appendFile = async (line, ...rest) => { await append(line, ...rest); if (String(line).includes('apply-completed')) await interrupt(); };
+  return handle;
+};`);
     expect(result.signal).toBe('SIGINT');
     expect(result.stdout).not.toContain('applied');
     expect(result.stderr).toMatch(/Apply apply-[0-9a-f]{12} had already finished when interrupted, so nothing was rolled back: Successfully applied/);
