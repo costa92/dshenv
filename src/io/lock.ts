@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { assertEnvctlNotMoved } from '../environment/moved.js';
 import { DshError } from '../errors.js';
@@ -17,14 +18,22 @@ const LOCK_RETRY_MAX_MS = 40;
 const WANTED_FRESH_MS = 3 * LOCK_RETRY_MAX_MS;
 const LOCK_WRITE_GRACE_MS = 5000;
 
-// Lock files this process holds now, so a lock naming its own pid is told apart from a former run's.
+// The content of each lock this process holds now, so a lock naming its own pid is told apart from a former run's;
+// by content, not path, as contenders in one process take the same path in turn.
 const heldLocks = new Set<string>();
 
 async function createLockFile(lockFilePath: string, lockContent: string): Promise<boolean> {
   try {
     const handle = await retryWhileBusy(() => fs.promises.open(lockFilePath, 'wx', 0o600));
-    await handle.writeFile(lockContent);
-    await handle.close();
+    // Held before the pid is written: a waiter in this process would otherwise take its own pid for a former run's.
+    heldLocks.add(lockContent);
+    try {
+      await handle.writeFile(lockContent);
+      await handle.close();
+    } catch (err) {
+      heldLocks.delete(lockContent);
+      throw err;
+    }
     return true;
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
@@ -56,7 +65,7 @@ async function staleLockInode(lockFilePath: string): Promise<number | null> {
     if (info?.pid && info.hostname === os.hostname()) {
       // Our own pid on a lock this process does not hold is a former run's (a restarted container reuses its pids).
       if (info.pid === process.pid) {
-        return heldLocks.has(lockFilePath) ? null : stat.ino;
+        return heldLocks.has(raw) ? null : stat.ino;
       }
       try {
         process.kill(info.pid, 0);
@@ -172,7 +181,8 @@ export async function acquireFileLock(lockFilePath: string, label: string, timeo
   const lockContent = JSON.stringify({
     pid: process.pid,
     hostname: os.hostname(),
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    nonce: randomUUID()
   });
 
   const wantedPath = `${lockFilePath}.wanted`;
@@ -193,16 +203,16 @@ export async function acquireFileLock(lockFilePath: string, label: string, timeo
     await new Promise((resolve) => setTimeout(resolve, Math.min(LOCK_RETRY_MIN_MS + Math.random() * ceiling, remaining)));
   }
   await fs.promises.rm(wantedPath, { force: true }).catch(() => {});
-  heldLocks.add(lockFilePath);
 
   return {
     lockPath: lockFilePath,
     release: async () => {
-      heldLocks.delete(lockFilePath);
       try {
         await retryWhileBusy(() => fs.promises.unlink(lockFilePath));
       } catch {
         // ignore
+      } finally {
+        heldLocks.delete(lockContent);
       }
     }
   };

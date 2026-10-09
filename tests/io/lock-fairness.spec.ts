@@ -61,4 +61,23 @@ describe('acquireFileLock fairness', () => {
     );
     expect(maxWait).toBeLessThan(waitBound(2_000));
   }, 30_000);
+
+  // Contenders in one process write the same pid, so a lock just created must not look like a former run's.
+  it('never lets two holders in one process hold the lock at once', async () => {
+    const lockFile = path.join(dir, 'x.lock');
+    let holders = 0;
+    let maxHolders = 0;
+    await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        for (let round = 0; round < 40; round++) {
+          const handle = await acquireFileLock(lockFile, 'Test lock', 5_000);
+          maxHolders = Math.max(maxHolders, ++holders);
+          await sleep(1);
+          holders--;
+          await handle.release();
+        }
+      })
+    );
+    expect(maxHolders).toBe(1);
+  }, 30_000);
 });
