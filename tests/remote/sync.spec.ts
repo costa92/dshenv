@@ -27,6 +27,7 @@ import {
 
 const LOCAL_OVERLAY = 'apiVersion: dshenv-overlay/v1\n';
 const NO_ENTRY_CHANGES = { added: [], modified: [], removed: [] };
+const EXTRA_MANIFEST = `${TEAM_MANIFEST}      extra:\n        package: extra-plugin\n        source: { type: npm, version: "1.0.0" }\n`;
 const npmEntry = (pkg: string, version: string): PluginLockEntry => ({ package: pkg, source: { type: 'npm', resolvedVersion: version } });
 const lockOf = (profiles: Record<string, Record<string, PluginLockEntry>>): EnvironmentLock => ({
   apiVersion: 'dshenv-lock/v1',
@@ -350,12 +351,15 @@ describe('remote sync engine', () => {
     writeLock(lock);
     await commitTeamFiles(
       team,
-      { 'envctl/lock.json': teamLock({ shared: npmEntry('shared-plugin', '1.1.0'), extra: npmEntry('extra-plugin', '1.0.0') }) },
+      {
+        'envctl/manifest.yaml': EXTRA_MANIFEST,
+        'envctl/lock.json': teamLock({ shared: npmEntry('shared-plugin', '1.1.0'), extra: npmEntry('extra-plugin', '1.0.0') })
+      },
       'lock v2'
     );
     const preview = await prepare({ previous: true });
     expect(preview.status).toBe('pending');
-    expect(preview.files).toEqual(NO_ENTRY_CHANGES);
+    expect(preview.files).toEqual({ added: [], modified: ['manifest.yaml'], removed: [] });
     expect(preview.lockEntries).toEqual({ added: ['web/extra'], modified: ['web/shared'], removed: [] });
     await acceptSync(paths, preview);
     expect(readLock()).toEqual(lockOf({
@@ -438,7 +442,10 @@ describe('remote sync engine', () => {
     writeLock(lock);
     await commitTeamFiles(
       team,
-      { 'envctl/lock.json': teamLock({ shared: npmEntry('shared-plugin', '1.0.0'), extra: npmEntry('extra-plugin', '1.0.0') }) },
+      {
+        'envctl/manifest.yaml': EXTRA_MANIFEST,
+        'envctl/lock.json': teamLock({ shared: npmEntry('shared-plugin', '1.0.0'), extra: npmEntry('extra-plugin', '1.0.0') })
+      },
       'pin extra'
     );
     for (const discardLocalChanges of [false, true]) {

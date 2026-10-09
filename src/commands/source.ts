@@ -53,6 +53,18 @@ function declaredGitSource(
   return source?.type === 'git' && sameGitUrl(source.url, url) ? source : undefined;
 }
 
+function isInside(parent: string, dir: string): boolean {
+  const rel = path.relative(path.resolve(parent), dir);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+// A clone under envctl/sources is one the lock pins; moved without -p, its checkout and the lock would part ways.
+function assertNotManagedClone(paths: EnvironmentPaths, dir: string, command: string): void {
+  if (isInside(path.join(paths.managerDir, 'sources'), dir)) {
+    throw new ValidationError(`${dir} is under envctl/sources, where dshenv keeps the clones lock.json pins; ${command} it with -p <profile> so the lock follows`);
+  }
+}
+
 function overlaySuffix(name: string): string {
   return ` (overlay '${name}')`;
 }
@@ -176,8 +188,12 @@ export function registerSourceCommands(ctx: CommandContext): void {
       // A managed clone is named after its package, which is only known once cloned, so it lands in a staging dir first.
       const cloneDir = explicitTarget ?? path.join(sourcesDir, `.staging-${crypto.randomBytes(6).toString('hex')}`);
 
-      // Hold the lock from reading the manifest until the lock file is written, cloning included.
-      const lockHandle = cmdOpts.profile ? await acquireEnvironmentLock(paths) : null;
+      if (!cmdOpts.profile && explicitTarget) {
+        assertNotManagedClone(paths, explicitTarget, 'clone');
+      }
+      // Hold the lock from reading the manifest until the lock file is written, cloning included; a clone anywhere in
+      // envctl holds it too, as snapshots, gc and migrate work on that directory.
+      const lockHandle = cmdOpts.profile || isInside(paths.managerDir, cloneDir) ? await acquireEnvironmentLock(paths) : null;
       // Checked under the lock, so a concurrent clone's directories are never counted as ours.
       let ownedClone: string | null = fs.existsSync(cloneDir) ? null : cloneDir;
       const createdParents = explicitTarget || fs.existsSync(sourcesDir) ? [] : [sourcesDir];
@@ -454,7 +470,11 @@ export function registerSourceCommands(ctx: CommandContext): void {
           writeOut(`Updated ${resolvedTarget} from ${res.previousCommit} to ${res.newCommit}\n`);
         }
       };
-      if (cmdOpts.profile) await withEnvironmentLock(paths, sync);
+      const unmanagedTarget = cmdOpts.profile ? null : path.resolve(process.cwd(), targetDir ?? '.');
+      if (unmanagedTarget) {
+        assertNotManagedClone(paths, unmanagedTarget, 'sync');
+      }
+      if (!unmanagedTarget || isInside(paths.managerDir, unmanagedTarget)) await withEnvironmentLock(paths, sync);
       else await sync();
     });
 }

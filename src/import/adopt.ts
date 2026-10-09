@@ -26,6 +26,9 @@ import {
 import { writeAtomic } from '../io/atomic-file.js';
 import { ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
+import { createEnvironmentSnapshot } from '../io/backup.js';
+import { appendJournalEntry, assertNoUnfinishedOperations } from '../io/journal.js';
+import { assertNotRemoteOwned } from '../remote/ownership.js';
 import { freeAlias, isSameCommit, pluginOwnershipRecord } from '../resources/plugin.js';
 import { sameGitUrl } from '../source/git.js';
 
@@ -142,11 +145,15 @@ export async function adoptEnvironment(
   return withEnvironmentLock(paths, () => adoptUnderLock(paths, candidate, options));
 }
 
-async function adoptUnderLock(
+// For a caller that already holds the environment lock, so the pull after it sees the files it wrote.
+export async function adoptUnderLock(
   paths: EnvironmentPaths,
   candidate: CaptureDocument,
   options?: AdoptOptions
 ): Promise<AdoptSummary> {
+  // Adopt rewrites the base and the whole lock; a subscription always owns the base, so team lock entries stay intact too.
+  assertNotRemoteOwned(paths, paths.manifestFile);
+  await assertNoUnfinishedOperations(paths, { locked: true });
   const inventory = await readEnvironmentInventory(paths);
   checkCandidateFreshness(candidate, inventory);
 
@@ -324,6 +331,13 @@ async function adoptUnderLock(
     return { adoptedCount: details.length, profiles: Array.from(profilesSet), details, overlaySources, operationId };
   }
 
+  const snapshot = await createEnvironmentSnapshot(paths, operationId);
+  await appendJournalEntry(paths, {
+    operationId,
+    type: 'adopt-started',
+    timestamp: new Date().toISOString(),
+    details: { profiles: Array.from(profilesSet) }
+  });
   // Each write is atomic but the three together are not, so a failure puts back the files already written.
   const writes: Array<[string, string]> = [
     [paths.manifestFile, serializeManifest(mergedManifest)],
@@ -338,12 +352,27 @@ async function adoptUnderLock(
       written++;
     }
   } catch (err) {
+    const failures: string[] = [];
     for (let index = written - 1; index >= 0; index--) {
       const original = originals[index];
-      await (original ? writeAtomic(writes[index][0], original, 'overwrite') : fs.promises.rm(writes[index][0], { force: true })).catch(() => {});
+      try {
+        await (original ? writeAtomic(writes[index][0], original, 'overwrite') : fs.promises.rm(writes[index][0], { force: true }));
+      } catch (restoreErr) {
+        failures.push(restoreErr instanceof Error ? restoreErr.message : String(restoreErr));
+      }
+    }
+    await appendJournalEntry(paths, {
+      operationId,
+      type: failures.length > 0 ? 'adopt-rollback-failed' : 'adopt-rollback',
+      timestamp: new Date().toISOString(),
+      details: { reason: err instanceof Error ? err.message : String(err), ...(failures.length > 0 ? { restoreErrors: failures } : {}) }
+    }).catch(() => {});
+    if (failures.length > 0 && err instanceof Error) {
+      err.message += `; putting the files back also failed (${failures.join('; ')}), run dshenv rollback ${snapshot.snapshotId} --yes`;
     }
     throw err;
   }
+  await appendJournalEntry(paths, { operationId, type: 'adopt-completed', timestamp: new Date().toISOString() });
 
   return {
     adoptedCount: details.length,

@@ -144,7 +144,9 @@ describe('CLI writes to remote-owned files and lock entries', () => {
   });
 
   it('refuses adopt', async () => {
-    const { code, stderr } = await run(['adopt', '--from', path.join(home, 'candidate.yaml'), '--yes']);
+    const candidate = path.join(home, 'candidate.yaml');
+    expect((await run(['capture', '-o', candidate])).code).toBe(0);
+    const { code, stderr } = await run(['adopt', '--from', candidate, '--yes']);
     expect(code).toBe(3);
     expect(stderr).toContain(`The base manifest is owned by remote ${FIXTURE_REMOTE_URL}`);
     expectUnchanged();

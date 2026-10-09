@@ -6,6 +6,8 @@ import { adoptEnvironment } from '../../src/import/adopt.js';
 import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
 import { loadManifest, loadState } from '../../src/manifest/files.js';
 import type { CaptureDocument } from '../../src/domain.js';
+import { readJournalEntries } from '../../src/io/journal.js';
+import { rollbackEnvironment } from '../../src/rollback/rollback.js';
 
 describe('adoptEnvironment', () => {
   let tempHome: string;
@@ -161,6 +163,57 @@ describe('adoptEnvironment', () => {
     expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(manifestBefore);
     expect(fs.existsSync(paths.lockFile)).toBe(false);
     expect(fs.existsSync(paths.stateFile)).toBe(false);
+  });
+
+  describe('snapshot and journal', () => {
+    const candidate: CaptureDocument = {
+      apiVersion: 'dshenv-capture/v1',
+      manifest: {
+        apiVersion: 'dshenv/v1',
+        profiles: { web: { plugins: { 'agent-teams': { package: '@nanmicoder/dsh-agent-teams', enabled: true, source: { type: 'npm', version: '0.1.21' } } } } }
+      },
+      lock: { apiVersion: 'dshenv-lock/v1', profiles: {} },
+      warnings: []
+    };
+    const manifestBefore = 'apiVersion: dshenv/v1\nprofiles: {}\n';
+
+    it('records its writes in the journal and is undone by rollback', async () => {
+      const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+      fs.mkdirSync(paths.managerDir, { recursive: true });
+      fs.writeFileSync(paths.manifestFile, manifestBefore);
+      const summary = await adoptEnvironment(paths, candidate);
+      expect((await readJournalEntries(paths)).map((entry) => [entry.operationId, entry.type])).toEqual([
+        [summary.operationId, 'adopt-started'],
+        [summary.operationId, 'adopt-completed']
+      ]);
+      await rollbackEnvironment(paths, { operationId: summary.operationId });
+      expect(fs.readFileSync(paths.manifestFile, 'utf8')).toBe(manifestBefore);
+      expect(fs.existsSync(paths.stateFile)).toBe(false);
+    });
+
+    it('names the snapshot to roll back to when putting the files back fails, and refuses the next adopt until then', async () => {
+      const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+      fs.mkdirSync(paths.managerDir, { recursive: true });
+      fs.writeFileSync(paths.manifestFile, manifestBefore);
+      const realRename = fs.promises.rename;
+      let manifestWrites = 0;
+      const spy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+        const name = path.basename(String(to));
+        if (name === path.basename(paths.stateFile) || (name === path.basename(paths.manifestFile) && ++manifestWrites > 1)) {
+          throw new Error('disk full');
+        }
+        return realRename(from, to);
+      });
+      try {
+        await expect(adoptEnvironment(paths, candidate)).rejects.toThrow(
+          /^disk full; putting the files back also failed \(disk full\), run dshenv rollback \S+-adopt-[0-9a-f]{12} --yes$/
+        );
+      } finally {
+        spy.mockRestore();
+      }
+      expect((await readJournalEntries(paths)).map((entry) => entry.type)).toEqual(['adopt-started', 'adopt-rollback-failed']);
+      await expect(adoptEnvironment(paths, candidate)).rejects.toThrow(/^The previous adopt adopt-[0-9a-f]{12} did not finish; run dshenv rollback \S+ --yes/);
+    });
   });
 
   it('keeps the declared patches of a plugin the manifest already has', async () => {

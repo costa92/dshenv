@@ -24,7 +24,7 @@ import { readRemoteConfig } from '../remote/schema.js';
 import { assertNotRemoteOwned, readLocalLock, remoteOwnedKey } from '../remote/ownership.js';
 import { rewriteProfilePatchFile } from '../apply/patches.js';
 import { createEnvironmentSnapshot, restoreEnvironmentSnapshot } from '../io/backup.js';
-import { appendJournalEntry } from '../io/journal.js';
+import { appendJournalEntry, assertNoUnfinishedOperations } from '../io/journal.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { HOME_PATCH_TARGET, containsLocalPath, describePatchTarget, diffProfilePatches, localPatchEntries, mergeProfilePatches, overrideKey } from '../profile-patches/entries.js';
@@ -163,7 +163,9 @@ export async function pullProfilePatches(paths: EnvironmentPaths, options: PullO
   return withEnvironmentLock(paths, () => pullUnderLock(paths, options));
 }
 
-async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Promise<PullResult> {
+// For a caller that already holds the environment lock, as adopt does to pull right after it.
+export async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Promise<PullResult> {
+  await assertNoUnfinishedOperations(paths, { locked: true });
   if (!fs.existsSync(paths.manifestFile)) {
     throw missingManifestError(paths.manifestFile);
   }
@@ -405,6 +407,12 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
     overlayKeys: overlayName ? [`overlays/${overlayName}.yaml`] : []
   });
   const selectionBefore = fs.existsSync(paths.overlaySelectionFile) ? fs.readFileSync(paths.overlaySelectionFile) : null;
+  await appendJournalEntry(paths, {
+    operationId,
+    type: 'pull-started',
+    timestamp: new Date().toISOString(),
+    details: { profiles: reads.map((read) => read.profile), plugins: plugins.map((plugin) => `${plugin.profile}/${plugin.alias}`) }
+  });
   // Snapshots hold only envctl files, so patch files already rewritten are put back from what was read.
   const rewritten: { read: ProfilePatchImport; written: string }[] = [];
   try {
@@ -432,12 +440,31 @@ async function pullUnderLock(paths: EnvironmentPaths, options: PullOptions): Pro
       rewritten.push({ read, written: await importProfilePatchFile(paths, read, basePatchesOf(merged, read.profile) ?? []) });
     }
   } catch (err) {
+    const failures: string[] = [];
+    const attempt = async (step: () => Promise<unknown>) => {
+      try {
+        await step();
+      } catch (restoreErr) {
+        failures.push(restoreErr instanceof Error ? restoreErr.message : String(restoreErr));
+      }
+    };
     // DSH may have edited a rewritten file since; its edits win over the undo.
     for (const { read, written } of rewritten) {
-      await rewriteProfilePatchFile(paths, read.profile, (current) => (current === written ? read.content : current)).catch(() => {});
+      await attempt(() => rewriteProfilePatchFile(paths, read.profile, (current) => (current === written ? read.content : current)));
     }
-    await restoreEnvironmentSnapshot(snapshot, paths).catch(() => {});
-    await (selectionBefore ? writeAtomic(paths.overlaySelectionFile, selectionBefore, 'overwrite') : writeSelectionFile(paths, null)).catch(() => {});
+    await attempt(() => restoreEnvironmentSnapshot(snapshot, paths));
+    await attempt(() => (selectionBefore ? writeAtomic(paths.overlaySelectionFile, selectionBefore, 'overwrite') : writeSelectionFile(paths, null)));
+    const reason = err instanceof Error ? err.message : String(err);
+    await appendJournalEntry(paths, {
+      operationId,
+      type: failures.length > 0 ? 'pull-rollback-failed' : 'pull-rollback',
+      timestamp: new Date().toISOString(),
+      details: { reason, ...(failures.length > 0 ? { restoreErrors: failures } : {}) }
+    }).catch(() => {});
+    // Keep the original error (and its exit code), but say the files are half-written and how to recover.
+    if (failures.length > 0 && err instanceof Error) {
+      err.message += `; undoing the pull also failed (${failures.join('; ')}), run dshenv rollback ${snapshot.snapshotId} --yes`;
+    }
     throw err;
   }
   await appendJournalEntry(paths, {

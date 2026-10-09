@@ -1,10 +1,10 @@
-import type { EnvironmentLock, EnvironmentManifest } from '../domain.js';
+import type { EnvironmentLock, EnvironmentManifest, EnvironmentOverlay } from '../domain.js';
 import { ValidationError } from '../errors.js';
 import { loadLock, loadManifest, parseOverlay } from '../manifest/files.js';
 import { isTransportHelperUrl } from '../manifest/schema.js';
 import { mergeManifest } from '../overlay/merge.js';
 import { isUndigestedEntry } from '../source/local.js';
-import { listTree, readBlob } from './git.js';
+import { listTree, readBlobs, type TreeEntry } from './git.js';
 import { lockEntryDigests, lockEntryId } from './lock-entries.js';
 import { ENV_KEY_ADVICE, documentSecrets } from '../security/secrets.js';
 import { isRemoteFileKey, overlayNameFromKey, sha256Hex, type RemoteLockEntries } from './schema.js';
@@ -21,6 +21,11 @@ export interface RemoteSnapshot {
 }
 
 const REGULAR_FILE_MODES = new Set(['100644', '100755']);
+
+// Read under the environment lock and held in memory, so a team repository past these is refused rather than read.
+export const MAX_REMOTE_FILES = 10_000;
+export const MAX_REMOTE_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_REMOTE_TOTAL_BYTES = 100 * 1024 * 1024;
 
 // Everything else under the path (state, selection, backups, sources, nested overlays) is machine-local and ignored.
 function candidateKey(rel: string): string | null {
@@ -152,6 +157,8 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
   const executables: string[] = [];
   // The lock is owned per entry, so it is kept apart from the whole-file keys.
   let lockData: Buffer | null = null;
+  const wanted: Array<{ key: string; entry: TreeEntry }> = [];
+  let totalBytes = 0;
   for (const entry of await listTree(repoDir, commit, remotePath)) {
     if (!entry.path.startsWith(prefix)) {
       continue;
@@ -174,11 +181,24 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
         `Remote skill file ${entry.path} is never copied into DSH, which skips node_modules and .tmp-* in a skill; remove it from the team repository`
       );
     }
-    const data = await readBlob(repoDir, commit, entry.path);
+    if ((entry.size ?? 0) > MAX_REMOTE_FILE_BYTES) {
+      throw new ValidationError(`Remote file ${entry.path} is ${entry.size} bytes, more than the ${MAX_REMOTE_FILE_BYTES} dshenv reads from a team repository`);
+    }
+    totalBytes += entry.size ?? 0;
+    wanted.push({ key, entry });
+  }
+  if (wanted.length > MAX_REMOTE_FILES) {
+    throw new ValidationError(`Remote path ${remotePath} holds ${wanted.length} files, more than the ${MAX_REMOTE_FILES} dshenv reads from a team repository`);
+  }
+  if (totalBytes > MAX_REMOTE_TOTAL_BYTES) {
+    throw new ValidationError(`Remote path ${remotePath} holds ${totalBytes} bytes, more than the ${MAX_REMOTE_TOTAL_BYTES} dshenv reads from a team repository`);
+  }
+  const blobs = await readBlobs(repoDir, wanted.map(({ entry }) => entry.object), totalBytes);
+  for (const [index, { key, entry }] of wanted.entries()) {
     if (key === 'lock.json') {
-      lockData = data;
+      lockData = blobs[index];
     } else {
-      files[key] = data;
+      files[key] = blobs[index];
       if (entry.mode === '100755') {
         executables.push(key);
       }
@@ -230,6 +250,7 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
       skillPaths.set(prefix.toLowerCase(), prefix);
     }
   }
+  const overlays: EnvironmentOverlay[] = [];
   for (const key of Object.keys(files)) {
     const name = overlayNameFromKey(key);
     if (name === null) {
@@ -237,12 +258,26 @@ export async function loadRemoteSnapshot(repoDir: string, commit: string, remote
     }
     withFile(where(key), () => {
       const overlay = parseOverlay(files[key].toString('utf8'), where(key));
+      overlays.push(overlay);
       assertNoLocalEnvironment(overlay.environment);
       assertNoLocalPluginSources(overlay.profiles);
       assertNoJsExpressions(overlay.profiles, overlay.patches);
       assertNoPlaintextSecrets(overlay);
       mergeManifest(manifest, overlay, name);
     });
+  }
+
+  // An entry no team layer declares would pin, and lock against local changes, a plugin only a local overlay adds.
+  for (const [profile, { plugins }] of Object.entries(lock?.profiles ?? {})) {
+    for (const alias of Object.keys(plugins)) {
+      const inBase = Object.hasOwn(manifest.profiles[profile]?.plugins ?? {}, alias);
+      const inOverlay = overlays.some((overlay) => overlay.profiles?.[profile]?.plugins?.[alias]?.package !== undefined);
+      if (!inBase && !inOverlay) {
+        throw new ValidationError(
+          `Remote file ${where('lock.json')}: lock entry '${lockEntryId(profile, alias)}' is declared by neither the team manifest nor a team overlay; remove it from the team lock`
+        );
+      }
+    }
   }
 
   const digests = Object.fromEntries(Object.entries(files).map(([key, data]) => [key, sha256Hex(data)]));

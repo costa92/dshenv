@@ -13,6 +13,7 @@ import { loadEffectiveManifest, overlaySwitchWarning, readOverlay } from '../ove
 import { mergeManifest } from '../overlay/merge.js';
 import { resolveCliPaths, resolveCliOverlay, overlayBanner, filterProfile, type CommandContext } from './context.js';
 import { readRemoteConfig } from '../remote/schema.js';
+import { assertNoUnfinishedOperations } from '../io/journal.js';
 import { findLocalDrift, findRemoteLockDrift } from '../remote/ownership.js';
 import { ENV_KEY_ADVICE, documentSecrets } from '../security/secrets.js';
 import { readSkippedBundles } from '../dsh/dump-check.js';
@@ -44,6 +45,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
     .action(async (cmdOpts: { profile?: string }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: writeErr });
 
       const selection = resolveCliOverlay(opts, paths);
       const effective = loadEffectiveManifest(paths, selection).manifest;
@@ -107,6 +109,7 @@ export function registerInspectCommands(ctx: CommandContext): void {
       }
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: writeErr });
       const selection = resolveCliOverlay(opts, paths);
 
       let lock: EnvironmentLock | null = null;

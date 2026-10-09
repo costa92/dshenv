@@ -8,6 +8,7 @@ import { execa } from 'execa';
 import { runCli } from '../../src/cli.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../../src/environment/paths.js';
 import { createEnvironmentSnapshot } from '../../src/io/backup.js';
+import { appendJournalEntry } from '../../src/io/journal.js';
 import { loadLock, serializeLock } from '../../src/manifest/files.js';
 import { lockEntryDigest } from '../../src/remote/lock-entries.js';
 import { readRemoteConfig, sha256Hex } from '../../src/remote/schema.js';
@@ -59,7 +60,7 @@ describe('CLI remote', () => {
     expect(stdout).toContain('Files:\n  + manifest.yaml\n  + overlays/team.yaml\n');
     expect(stdout).toContain('Lock entries:\n  + web/shared\n');
     expect(stdout).toContain('+ [web] shared-plugin (shared)');
-    expect(stdout).toContain(`Re-run with --ref ${await teamHead(team)} --yes to accept this commit.`);
+    expect(stdout).toContain(`Re-run with --expect ${await teamHead(team)} --yes to accept this commit.`);
     expect(fs.existsSync(paths.manifestFile)).toBe(false);
     expect(fs.existsSync(paths.remoteFile)).toBe(false);
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
@@ -159,12 +160,32 @@ describe('CLI remote', () => {
     expect(fs.existsSync(paths.remoteDir)).toBe(false);
   });
 
+  it('points at rollback, not --replace, when a previous remote add was killed mid-accept', async () => {
+    // A killed accept: snapshot and sync-started exist, the manifest is written, remote.json is not.
+    const operationId = 'sync-0123456789ab';
+    const { snapshotId } = await createEnvironmentSnapshot(paths, operationId, { overlayKeys: ['overlays/team.yaml'] });
+    await appendJournalEntry(paths, { operationId, type: 'sync-started', timestamp: new Date().toISOString(), details: { from: null } });
+    fs.writeFileSync(paths.manifestFile, TEAM_MANIFEST);
+
+    const { code, stderr } = await run(['remote', 'add', team.url, '--yes']);
+    expect(code).toBe(3);
+    expect(stderr).toContain(
+      `The previous remote add ${operationId} did not finish; run dshenv rollback ${snapshotId} --yes to restore the files it started changing, then remote add again`
+    );
+    expect(fs.existsSync(paths.remoteFile)).toBe(false);
+
+    expect((await run(['rollback', snapshotId, '--yes'])).code).toBe(0);
+    expect(fs.existsSync(paths.manifestFile)).toBe(false);
+    expect((await run(['remote', 'add', team.url, '--yes'])).code).toBe(0);
+    expect(read(paths.manifestFile)).toBe(TEAM_MANIFEST);
+  });
+
   it('keeps --replace in the accept command the preview prints', async () => {
     fs.mkdirSync(paths.managerDir, { recursive: true });
     fs.writeFileSync(paths.manifestFile, LOCAL_MANIFEST);
     const { code, stdout } = await run(['remote', 'add', team.url, '--replace']);
     expect(code).toBe(2);
-    expect(stdout).toContain(`Re-run with --ref ${await teamHead(team)} --replace --yes to accept this commit.`);
+    expect(stdout).toContain(`Re-run with --expect ${await teamHead(team)} --replace --yes to accept this commit.`);
   });
 
   it('asks to add again, not sync, when a local skill takes a team skill name', async () => {
@@ -387,7 +408,7 @@ describe('CLI remote', () => {
   it('removes the subscription only with --yes and leaves the files writable', async () => {
     const addDryRun = await run(['remote', 'add', team.url, '--yes', '--dry-run']);
     expect(addDryRun.code).toBe(2);
-    expect(addDryRun.stdout).toContain('Run it again without --dry-run and with --ref ');
+    expect(addDryRun.stdout).toContain('Run it again without --dry-run and with --expect ');
     expect(fs.existsSync(paths.remoteFile)).toBe(false);
     await run(['remote', 'add', team.url, '--yes']);
     const removeDryRun = await run(['remote', 'remove', '--yes', '--dry-run']);

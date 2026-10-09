@@ -2,6 +2,7 @@ import { ValidationError } from '../errors.js';
 import { pullProfilePatches, type PullResult } from '../import/pull.js';
 import { HOME_PATCH_TARGET } from '../profile-patches/entries.js';
 import { reportPreview } from './confirm.js';
+import { assertNoUnfinishedOperations } from '../io/journal.js';
 import { resolveCliPaths, resolveCliOverlay, filterProfile, type CommandContext } from './context.js';
 
 export function renderPullResult(result: PullResult): string {
@@ -63,6 +64,7 @@ export function registerPullCommand(ctx: CommandContext): void {
       }
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: ctx.writeErr });
       const result = await pullProfilePatches(paths, {
         profiles: cmdOpts.profile ? [cmdOpts.profile] : undefined,
         prefer: cmdOpts.prefer,
