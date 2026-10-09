@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../src/cli.js';
-import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
+import { assertEnvctlNotAboveDsh, resolveEnvironmentPaths } from '../../src/environment/paths.js';
 import { acquireEnvironmentLock } from '../../src/io/lock.js';
 import { migrateEnvctl } from '../../src/environment/migrate.js';
 
@@ -65,6 +65,65 @@ describe('CLI envctl location', () => {
       expect(fs.existsSync(dir)).toBe(false);
     }
     expect(fs.existsSync(path.join(home, 'envctl', 'manifest.yaml'))).toBe(true);
+  });
+
+  it('refuses a new envctl that contains the DSH home, and a migrate target that does', async () => {
+    const result = await run(['init', '--envctl-dir', tempRoot]);
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain(`envctl-dir ${tempRoot} contains the DSH home`);
+    expect(fs.existsSync(path.join(tempRoot, 'manifest.yaml'))).toBe(false);
+
+    const envctl = path.join(tempRoot, 'ec');
+    expect((await run(['init', '--envctl-dir', envctl])).code).toBe(0);
+    const paths = resolveEnvironmentPaths({ cliDshHome: path.join(tempRoot, 'a', 'dsh'), cliEnvctlDir: envctl });
+    await expect(migrateEnvctl(paths, path.join(tempRoot, 'a'))).rejects.toThrow('contains the DSH home');
+  });
+
+  it('moves only its own files out of an envctl left above the DSH home, and refuses to use it otherwise', async () => {
+    const seed = path.join(tempRoot, 'seed');
+    expect((await run(['init', '--envctl-dir', seed])).code).toBe(0);
+    fs.mkdirSync(path.join(seed, 'overlays'));
+    const own = path.join(tempRoot, 'sources', 'web', 'notes');
+    const other = path.join(tempRoot, 'myproject');
+    fs.writeFileSync(
+      path.join(seed, 'overlays', 'laptop.yaml'),
+      `apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      notes:\n        source: { type: local-file, path: '${own}' }\n` +
+        `      mine:\n        source: { type: local-file, path: '${other}' }\n`
+    );
+    // As an envctl dshenv accepted before it refused this layout.
+    for (const name of fs.readdirSync(seed)) fs.renameSync(path.join(seed, name), path.join(tempRoot, name));
+    fs.rmdirSync(seed);
+    fs.mkdirSync(path.join(home, 'profiles', 'web'), { recursive: true });
+    fs.mkdirSync(other);
+    fs.writeFileSync(path.join(other, 'notes.txt'), 'important\n');
+    expect(() => assertEnvctlNotAboveDsh(resolveEnvironmentPaths({ cliDshHome: home, cliEnvctlDir: tempRoot }))).toThrow('dshenv migrate --to <dir>');
+
+    const target = path.join(tempRoot, 'moved');
+    const result = await run(['migrate', '--to', target, '--yes', '--json', '--envctl-dir', tempRoot]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).rewritten).toEqual([`${path.join('overlays', 'laptop.yaml')}: ${own} -> ${path.join(target, 'sources', 'web', 'notes')}`]);
+    expect(fs.readdirSync(tempRoot).sort()).toEqual(['dsh', 'dshenv.moved', 'moved', 'myproject']);
+    expect(fs.readFileSync(path.join(other, 'notes.txt'), 'utf8')).toBe('important\n');
+    expect(fs.existsSync(path.join(home, 'profiles', 'web'))).toBe(true);
+    expect(fs.readdirSync(target).sort()).toEqual(['lock.json', 'manifest.yaml', 'overlays', 'state.json']);
+    expect((await run(['plan', '--envctl-dir', target])).code).not.toBe(3);
+    const stale = await run(['plan', '--envctl-dir', tempRoot]);
+    expect(stale.code).toBe(3);
+    expect(stale.stderr).toContain(`was moved to ${target}`);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses an envctl that reaches into the DSH home through a symlink', async () => {
+    fs.mkdirSync(path.join(home, 'skills'));
+    fs.symlinkSync(path.join(home, 'skills'), path.join(tempRoot, 'skl'));
+    const result = await run(['init', '--envctl-dir', path.join(tempRoot, 'skl', 'ec')]);
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain("overlaps DSH's");
+    expect(fs.readdirSync(path.join(home, 'skills'))).toEqual([]);
+
+    const alias = path.join(tempRoot, 'dsh-link');
+    fs.symlinkSync(home, alias);
+    expect(() => resolveEnvironmentPaths({ cliDshHome: alias, cliEnvctlDir: path.join(home, 'profiles', 'ec') })).toThrow("overlaps DSH's");
+    expect(() => resolveEnvironmentPaths({ cliDshHome: alias, cliEnvctlDir: tempRoot })).toThrow('contains the DSH home');
   });
 
   it.skipIf(process.platform === 'win32')('refuses a symlinked envctl or envctl subdirectory', async () => {

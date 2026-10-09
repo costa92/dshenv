@@ -52,17 +52,19 @@ export function resolveDshCommand(input?: ResolveDshCommandInput): CommandSpec |
   if (envDshCli && envDshCli.trim().length > 0) {
     const trimmed = envDshCli.trim();
     if (trimmed.startsWith('[')) {
+      let parsed: unknown;
       try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === 'string')) {
-          return {
-            file: parsed[0],
-            args: parsed.slice(1)
-          };
-        }
+        parsed = JSON.parse(trimmed);
       } catch {
-        // Fallback to literal execution if JSON parse fails
+        // Reported below; run as a path, it would only read as a missing DSH.
       }
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === 'string' && x !== '')) {
+        return {
+          file: parsed[0],
+          args: parsed.slice(1)
+        };
+      }
+      throw new ValidationError(`DSH_CLI is not a valid JSON array of non-empty strings: ${trimmed}`);
     }
     // Literal single executable (NO shell expansion)
     return {
