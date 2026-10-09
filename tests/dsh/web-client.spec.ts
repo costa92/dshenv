@@ -38,7 +38,8 @@ describe('parseDshWebUrl', () => {
     ['http://127.0.0.1:3080/', /exactly one token/],
     [`http://127.0.0.1:3080/?token=${SECRET}&token=${SECRET}`, /exactly one token/],
     ['http://127.0.0.1:3080/?token=', /exactly one token/],
-    [`http://10.0.0.5:3080/?token=${SECRET}`, /Refusing to send the dsh web token to 10\.0\.0\.5:3080; pass --allow-remote/]
+    [`http://10.0.0.5:3080/?token=${SECRET}`, /Refusing to send the dsh web token to 10\.0\.0\.5:3080; pass --allow-remote/],
+    [`http://127.0.0.1:6667/?token=${SECRET}`, /port 6667 is one fetch refuses/]
   ])('rejects %s with a ValidationError that never contains the token', (value, message) => {
     let caught: unknown;
     try {
@@ -137,6 +138,12 @@ describe('dsh web login and calls', () => {
     const error = await errorOf(() => loginDshWeb(parseDshWebUrl(fake!.url), { timeoutMs: 100 }));
     expect(error.message).toMatch(/Could not reach DSH at 127\.0\.0\.1:\d+: timed out after 100 ms/);
     expect(error.message).not.toContain(SECRET);
+  });
+
+  it('names the cause of a fetch failure that has no error code, without the URL or token', async () => {
+    const target = { origin: 'http://127.0.0.1:6667', endpoint: '127.0.0.1:6667', token: SECRET };
+    const error = await errorOf(() => loginDshWeb(target));
+    expect(error.message).toBe('Could not reach DSH at 127.0.0.1:6667: bad port');
   });
 
   it('names the connection error code when nothing listens', async () => {

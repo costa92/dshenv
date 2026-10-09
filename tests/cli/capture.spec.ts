@@ -55,6 +55,34 @@ describe('CLI capture --profile', () => {
     expect(stdout).not.toMatch(/^\s+tui:/m);
   });
 
+  it('refuses an empty -o instead of writing to stdout', async () => {
+    let stdout = '';
+    let stderr = '';
+    const code = await runCli(['capture', '-o', '', '--dsh-home', tempHome], {
+      stdout: (chunk: string) => {
+        stdout += chunk;
+      },
+      stderr: (chunk: string) => {
+        stderr += chunk;
+      }
+    });
+    expect(code).toBe(3);
+    expect(stderr).toMatch(/--output must not be empty/);
+    expect(stdout).toBe('');
+  });
+
+  it('suggests the profile a mistyped -p was meant to be', async () => {
+    let stderr = '';
+    const code = await runCli(['capture', '-p', 'wbe', '--dsh-home', tempHome], {
+      stdout: () => {},
+      stderr: (chunk: string) => {
+        stderr += chunk;
+      }
+    });
+    expect(code).toBe(3);
+    expect(stderr).toContain("did you mean 'web'?");
+  });
+
   it('should fail when the named profile does not exist', async () => {
     let stderr = '';
     const io = {

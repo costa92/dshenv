@@ -42,6 +42,13 @@ describe('CLI pull', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
+  it('suggests the profile a mistyped -p was meant to be', async () => {
+    expect((await run(['init'])).code).toBe(0);
+    const out = await run(['pull', '-p', 'wbe']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain("did you mean 'web'?");
+  });
+
   it('reports DSH entries in plan, pulls them, and leaves plan clean', async () => {
     expect((await run(['init'])).code).toBe(0);
     const plan = await run(['plan']);

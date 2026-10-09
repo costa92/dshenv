@@ -44,6 +44,20 @@ describe('CLI adopt', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
+  it('refuses an empty or directory candidate path with exit 3', async () => {
+    for (const [arg, message] of [['', /must not be empty/], [tempHome, /is not a file/]] as const) {
+      let stderr = '';
+      const code = await runCli(['adopt', arg, '--dsh-home', tempHome], {
+        stdout: () => {},
+        stderr: (chunk) => {
+          stderr += chunk;
+        }
+      });
+      expect(code).toBe(3);
+      expect(stderr).toMatch(message);
+    }
+  });
+
   it('should adopt candidate manifest via CLI adopt --from <file>', async () => {
     const candidatePath = path.join(tempHome, 'candidate.yaml');
     fs.writeFileSync(

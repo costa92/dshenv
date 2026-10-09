@@ -45,6 +45,27 @@ describe('CLI envctl location', () => {
     expect(fs.existsSync(path.join(tempRoot, 'from-cli', 'manifest.yaml'))).toBe(true);
   });
 
+  it('refuses an envctl that is the DSH home or overlaps the directories DSH owns in it', async () => {
+    for (const dir of [home, path.join(home, 'skills'), path.join(home, 'skills', 'x'), path.join(home, 'profiles'), path.join(home, 'profiles', 'web')]) {
+      const result = await run(['plan', '--envctl-dir', dir]);
+      expect(result.code).toBe(3);
+      expect(result.stderr).toMatch(/envctl-dir .* (is the DSH home|overlaps DSH's)/);
+    }
+    expect(fs.existsSync(path.join(home, 'skills'))).toBe(false);
+    expect((await run(['init', '--envctl-dir', path.join(home, 'custom')])).code).toBe(0);
+  });
+
+  it('refuses to migrate envctl into the DSH home or a directory DSH owns there', async () => {
+    await run(['init']);
+    for (const dir of [path.join(home, 'skills'), path.join(home, 'profiles', 'web')]) {
+      const result = await run(['migrate', '--to', dir, '--yes']);
+      expect(result.code).toBe(3);
+      expect(result.stderr).toContain("overlaps DSH's");
+      expect(fs.existsSync(dir)).toBe(false);
+    }
+    expect(fs.existsSync(path.join(home, 'envctl', 'manifest.yaml'))).toBe(true);
+  });
+
   it.skipIf(process.platform === 'win32')('refuses a symlinked envctl or envctl subdirectory', async () => {
     const real = path.join(tempRoot, 'real');
     fs.mkdirSync(real);

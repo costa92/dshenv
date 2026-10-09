@@ -12,7 +12,7 @@ import type { CaptureDocument } from '../domain.js';
 import { assertNotRemoteOwned } from '../remote/ownership.js';
 import { assertBaseMergesWithOverlay, resolveWriteLayer } from '../overlay/write.js';
 import { readOverlay } from '../overlay/effective.js';
-import { resolveCliPaths, resolveCliOverlay, profileOption, PROFILE_FILTER_HELP, type CommandContext } from './context.js';
+import { resolveCliPaths, resolveCliOverlay, filterProfile, type CommandContext } from './context.js';
 import { Option } from 'commander';
 import { pullProfilePatches } from '../import/pull.js';
 import { renderPullResult } from './pull.js';
@@ -53,7 +53,7 @@ export function registerSetupCommands(ctx: CommandContext): void {
     .command('capture')
     .description('Write what DSH already has installed into a candidate manifest for adopt to review')
     .option('-o, --output <file>', 'output candidate manifest file')
-    .option('-p, --profile <name>', PROFILE_FILTER_HELP, profileOption)
+    .addOption(filterProfile())
     .action(async (cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
@@ -62,7 +62,10 @@ export function registerSetupCommands(ctx: CommandContext): void {
         profile: cmdOpts.profile
       });
 
-      if (cmdOpts.output) {
+      if (cmdOpts.output !== undefined) {
+        if (!cmdOpts.output.trim()) {
+          throw new ValidationError('--output must not be empty');
+        }
         const targetOutput = path.isAbsolute(cmdOpts.output)
           ? cmdOpts.output
           : path.resolve(process.cwd(), cmdOpts.output);
@@ -103,6 +106,9 @@ export function registerSetupCommands(ctx: CommandContext): void {
       if (from === undefined) {
         throw new ValidationError("missing required argument 'file'");
       }
+      if (!from.trim()) {
+        throw new ValidationError('The candidate file must not be empty');
+      }
 
       const selection = resolveCliOverlay(opts, paths);
       // adopt picks the layer per plugin (machine-local ones go to an overlay), so an active overlay does not make it ask for --layer.
@@ -118,6 +124,9 @@ export function registerSetupCommands(ctx: CommandContext): void {
 
       if (!fs.existsSync(candidatePath)) {
         throw new ValidationError(`Candidate file not found: ${candidatePath}`);
+      }
+      if (!fs.statSync(candidatePath).isFile()) {
+        throw new ValidationError(`Candidate ${candidatePath} is not a file`);
       }
 
       const content = fs.readFileSync(candidatePath, 'utf8');

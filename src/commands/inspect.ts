@@ -102,6 +102,9 @@ export function registerInspectCommands(ctx: CommandContext): void {
     .description('Show whether DSH matches the manifest: drift, pending operations and unmanaged plugins')
     .addOption(filterProfile())
     .action(async (plugin: string | undefined, cmdOpts: { profile?: string }) => {
+      if (plugin !== undefined && !plugin.trim()) {
+        throw new ValidationError('The plugin alias must not be empty; omit it to show every plugin');
+      }
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
       const selection = resolveCliOverlay(opts, paths);

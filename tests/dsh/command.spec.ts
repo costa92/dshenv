@@ -103,6 +103,14 @@ describe('resolveDshCommand', () => {
     })).toThrow(/Harness source not found: \/nonexistent\/harness/);
   });
 
+  it('refuses an empty --harness-source and expands a leading ~, as --dsh-home does', () => {
+    for (const value of ['', '  ']) {
+      expect(() => resolveDshCommand({ cliHarnessSource: value, envDshCli: '/usr/bin/dsh', sourceDirExists: () => true })).toThrow(/harness-source must not be empty/);
+    }
+    const cmd = resolveDshCommand({ cliHarnessSource: '~/harness', sourceDirExists: () => true });
+    expect(cmd?.cwd).toBe(path.join(os.homedir(), 'harness'));
+  });
+
   it('lets an explicit --harness-source win over DSH_CLI, which only the manifest source yields to', () => {
     const fromFlag = resolveDshCommand({ cliHarnessSource: '/src/harness', envDshCli: '/usr/bin/dsh', sourceDirExists: () => true });
     expect(fromFlag).toEqual({ file: 'pnpm', args: ['--silent', '--dir', '/src/harness', 'dsh'], cwd: '/src/harness' });

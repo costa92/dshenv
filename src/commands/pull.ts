@@ -2,7 +2,7 @@ import { ValidationError } from '../errors.js';
 import { pullProfilePatches, type PullResult } from '../import/pull.js';
 import { HOME_PATCH_TARGET } from '../profile-patches/entries.js';
 import { reportPreview } from './confirm.js';
-import { resolveCliPaths, resolveCliOverlay, profileOption, PROFILE_FILTER_HELP, type CommandContext } from './context.js';
+import { resolveCliPaths, resolveCliOverlay, filterProfile, type CommandContext } from './context.js';
 
 export function renderPullResult(result: PullResult): string {
   const warnings = (result.warnings ?? []).map((warning) => `! ${warning}`);
@@ -53,7 +53,7 @@ export function registerPullCommand(ctx: CommandContext): void {
   program
     .command('pull')
     .description('Take plugins, patch entries and loose skills changed in DSH into the manifest')
-    .option('-p, --profile <name>', PROFILE_FILTER_HELP, profileOption)
+    .addOption(filterProfile())
     .option('--prefer <side>', 'when both DSH and the manifest changed since the last apply: dsh, manifest, or skip to leave it (exit code 6)')
     .option('--dry-run', 'show what would be taken over without writing; exit code 2 when there is any (6 when --prefer skip left something)')
     .option('-y, --yes', 'take it over; without it pull only previews, like --dry-run')

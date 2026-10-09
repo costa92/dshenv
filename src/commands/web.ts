@@ -8,10 +8,10 @@ import { unsupportedDshVersionMessage } from '../dsh/version.js';
 import { DSH_WEB_START_TIMEOUT_MS, dshWebState, launchDshWeb, stopProcessGroup, type DshWebState } from '../dsh/web-server.js';
 import { acquireFileLock } from '../io/lock.js';
 import { listWebRecords, readWebRecord, removeWebRecord, webLogFile, writeWebRecord, type DshWebRecord } from '../dsh/web-record.js';
-import { parseDshWebUrl } from '../dsh/web-client.js';
+import { fetchBadPortMessage, parseDshWebUrl } from '../dsh/web-client.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
 import { assertProfileName } from '../manifest/schema.js';
-import { filterProfile, profileNotCreatedError, resolveCliOverlay, resolveCliPaths, targetProfile, type CommandContext } from './context.js';
+import { createdProfiles, declaredProfiles, filterProfile, profileNotCreatedError, resolveCliOverlay, resolveCliPaths, targetProfile, type CommandContext } from './context.js';
 
 interface CliOpts {
   dshHome?: string;
@@ -118,6 +118,10 @@ function portOption(value: string): number {
   if (!/^\d+$/.test(value) || port > 65535) {
     throw new ValidationError('--port must be an integer from 0 to 65535 (0 picks a free port)');
   }
+  const badPort = fetchBadPortMessage(port);
+  if (badPort) {
+    throw new ValidationError(`--port ${badPort}`);
+  }
   return port;
 }
 
@@ -200,6 +204,10 @@ export function registerWebCommands(ctx: CommandContext): void {
       const opts = program.opts<CliOpts>();
       const paths = resolveCliPaths(opts);
       const { profile } = cmdOpts;
+      // A typo would otherwise report "not running" and exit 0, unlike web start and list.
+      if (!readWebRecord(paths, profile) && !declaredProfiles(paths, opts).includes(profile) && !createdProfiles(paths).includes(profile)) {
+        throw profileNotCreatedError(paths, opts, profile);
+      }
       const record = await withProfileLock(paths, profile, async () => {
         const current = readWebRecord(paths, profile);
         const state = current ? await dshWebState(current.pid, current.leaderStart) : 'stopped';

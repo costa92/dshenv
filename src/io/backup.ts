@@ -239,6 +239,11 @@ export async function listEnvironmentSnapshots(paths: EnvironmentPaths): Promise
   return snapshots;
 }
 
+// A snapshot id is `<timestamp>-<operation id>`, the timestamp an ISO time with ':' and '.' replaced by '-'.
+export function snapshotOperationId(snapshotId: string): string {
+  return snapshotId.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/, '');
+}
+
 export async function findEnvironmentSnapshot(
   paths: EnvironmentPaths,
   operationId?: string
@@ -253,7 +258,7 @@ export async function findEnvironmentSnapshot(
   }
 
   const match = snapshots.find(
-    (snapshot) => snapshot.snapshotId === operationId || snapshot.snapshotId.endsWith(`-${operationId}`)
+    (snapshot) => snapshot.snapshotId === operationId || snapshotOperationId(snapshot.snapshotId) === operationId
   );
   if (!match) {
     throw new Error(`Snapshot not found for operation: ${operationId}`);

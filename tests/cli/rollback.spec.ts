@@ -70,6 +70,30 @@ describe('CLI rollback and gc', () => {
       expect(current()).toEqual(before);
     });
 
+    it('refuses an empty or blank operation id instead of restoring the latest snapshot', async () => {
+      snapshot('2026-01-01T00-00-00-000Z-apply-aaa', { 'manifest.yaml': 'apiVersion: dshenv/v1\nprofiles: {}\n' });
+      const before = current();
+      for (const id of ['', '  ']) {
+        const out = await run(['rollback', id, '--yes']);
+        expect(out.code).toBe(3);
+        expect(out.stderr).toMatch(/operation id must not be empty/);
+      }
+      expect(current()).toEqual(before);
+    });
+
+    it('matches only a whole snapshot id or operation id, not any dash-separated suffix', async () => {
+      snapshot('2026-01-01T00-00-00-000Z-apply-aaa', { 'manifest.yaml': 'apiVersion: dshenv/v1\nprofiles: {}\n' });
+      const before = current();
+      for (const id of ['aaa', '000Z-apply-aaa']) {
+        const out = await run(['rollback', id, '--yes']);
+        expect(out.code).toBe(3);
+        expect(out.stderr).toMatch(new RegExp(`Snapshot not found for operation: ${id}`));
+      }
+      expect(current()).toEqual(before);
+      expect((await run(['rollback', 'apply-aaa'])).code).toBe(2);
+      expect((await run(['rollback', '2026-01-01T00-00-00-000Z-apply-aaa'])).code).toBe(2);
+    });
+
     it('never picks a snapshot that was still being copied', async () => {
       fs.mkdirSync(envctl('backups', '.2026-01-01T00-00-00-000Z-apply-aaa.partial'), { recursive: true });
       const before = current();
