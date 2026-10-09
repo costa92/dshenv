@@ -56,9 +56,9 @@ export DSHENV_HOME=~/dshenv-data
 开头的 `~`、`~/`、`~\` 按 DSH 的规则展开为用户主目录（`.env`、Docker `ENV` 里的 `~` 不经 shell 展开）；其余相对路径先按当前工作目录转为绝对路径。盘点读取 Profile 的 `package.json`（`dsh.profile.bundles` + `dependencies`），不把 `node_modules` 中的传递依赖当成插件，也不跟随 Profile 外的 symlink 读取包元数据。
 
 DSH 运行时命令解析优先级：
-1. 命令行 `--harness-source <path>`（转换为 `pnpm --dir <sourceDir> dsh`）。相对路径按当前目录解析，目录不存在时以退出码 3 报错，不会改用其他 DSH
+1. 命令行 `--harness-source <path>`（转换为 `pnpm --silent --dir <sourceDir> dsh`，在源码目录中运行）。相对路径按当前目录解析，目录不存在时以退出码 3 报错，不会改用其他 DSH
 2. 环境变量 `DSH_CLI`（支持 JSON 数组或字面执行文件名，绝不进入 shell）
-3. 清单中的 `environment.harness.sourceDir`（同样转换为 `pnpm --dir <sourceDir> dsh`），在本机不存在时继续往下找
+3. 清单中的 `environment.harness.sourceDir`（同样转换为 `pnpm --silent --dir <sourceDir> dsh`，在源码目录中运行），在本机不存在时继续往下找
 4. 系统 `PATH` 中的 `dsh`
 
 跨机器同步 `manifest.yaml` 与 `overlays/`；`state.json`、`overlay-selection.json` 只属于本机。`lock.json` 由本机维护，但订阅团队 remote 后，团队 lock 中的条目归远程、随 `sync` 更新（见第 20 节）。
@@ -113,7 +113,7 @@ dshenv self-update --to 0.2.0  # 升级或回退（降级）到指定的精确�
 `self-update` 用 `npm view --prefer-online` 查询版本，再用安装 dshenv 的包管理器替换自身：全局 npm 安装执行 `npm install -g @costa92/dshenv@<版本> --prefer-online`，全局 pnpm 安装执行 `pnpm add -g @costa92/dshenv@<版本>`。安装过程的输出直接显示在终端（stderr），不设超时，因为中途打断可能留下装了一半的全局包。
 
 - 不带 `--to` 时只会升级：本机版本高于 npm 上的最新版（如预发布版或本地构建）时报告 `newer-installed`，不做改动。回退必须用 `--to` 明确指定，输出会注明是降级。
-- 本地链接或源码检出安装的 dshenv，以及用 pnpm 从 Git 地址安装的 dshenv，不会被替换为 npm 版本，命令以退出码 3 给出升级方法（如 `git pull && pnpm build`）。`--check` 对这类安装仍会报告，`method` 为 `null`。
+- 本地链接或源码检出安装的 dshenv，以及用 pnpm 从 Git 地址安装的 dshenv，有版本要装时不会被替换为 npm 版本，而以退出码 3 给出升级方法（如 `git pull && pnpm build`）。已是最新或本机版本更新时，照常报告 `up-to-date` / `newer-installed`，退出码 0。`--check` 对这类安装仍会报告，`method` 为 `null`。
 - 失败时只显示错误码（如 `EACCES`、`ERR_PNPM_FETCH_401`），完整原因见上方包管理器自己的输出；`EACCES` 表示全局安装目录不可写。
 - Windows 上 npm 会在 `dshenv.cmd` 运行期间覆盖它，升级成功后命令行可能多出一行批处理报错，可以忽略，用 `dshenv --version` 确认版本。
 
@@ -138,7 +138,7 @@ DSH 发布新版本时，用 `make smoke-dsh DSH_VERSION=<版本>` 验证兼容�
 `-p, --profile <name>` 是 DSH Profile 的名字，即 `profiles/<name>/` 的目录名和清单 `profiles:` 下的键。所有命令用同一套规则：
 
 - 作用于单个 Profile 的命令（`install`、`update`、`enable`、`disable`、`remove`、`purge`、`plugins config`、`tools`、`verify`、`web start`、`web stop`）：不写 `-p` 时取环境变量 `DSHENV_PROFILE`；两者都没有时以退出码 3 报错并列出可选的 Profile（清单声明的与 DSH 已创建的）。`verify`、`web start`、`web stop` 在清单只声明一个 Profile 时直接用它。
-- 按 Profile 过滤的命令（`plugins list`、`plugins official`、`plan`、`apply`、`status`、`pull`、`capture`、`overlay show`、`mark-restarted`、`web list`）：不写 `-p` 表示全部 Profile，`DSHENV_PROFILE` 对它们不生效；`-p` 写了清单没声明、DSH 也没创建的名字时以退出码 3 拒绝，不会把拼错的名字报成“已同步”。
+- 按 Profile 过滤的命令（`plugins list`、`plugins official`、`plan`、`apply`、`status`、`pull`、`capture`、`overlay show`、`mark-restarted`、`web list`）：不写 `-p` 表示全部 Profile，`DSHENV_PROFILE` 对它们不生效；`-p` 写了清单没声明、DSH 也没创建的名字时以退出码 3 拒绝，不会把拼错的名字报成“已同步”。`pull`、`capture` 的 `-p` 还要求 DSH 已创建该 Profile，`overlay show` 的 `-p` 要求合并后的清单声明了它，否则报 `Profile not found` 一类错误（退出码 3），不给相近名字。
 - `source`、`new` 的 `-p` 表示把克隆或新建的包登记到该 Profile，不写就不登记。
 
 - 写入命令（`install`、`new -p`、`source clone -p`）指定一个清单没声明、DSH 也没创建的 Profile 时，默认按拼写错误拒绝并给出相近的名字；确实要新建时加 `--new-profile`。环境里还没有任何 Profile（清单与 DSH 都没有）时不做这项检查，DSH 的模板 Profile 名（`acp`、`web` 等）也不例外。
@@ -185,7 +185,7 @@ dshenv doctor --json
 
 对已验证的 DSH `0.1.7-rc.2` 源码，`discovery` 与 `packageOperations` 为 `available`，`bundleSelection` 与 `entryToggle` 为 `requires-live-service`，`configurationValidation` 与 `environmentMutation` 为 `disabled`。`packageOperations` 需要官方 operations export 的声明及目标文件均通过只读探测；只通过 DSH 命令探测、缺少可验证源码时，该项为 `disabled`。
 
-`runtime.mutationsSupported=false`（能力矩阵中的 `mutations=false`）表示通用、完整的环境写能力仍未开放。它不代表 `apply` 命令不存在：当前 `apply` 通过 DSH CLI 执行 `install/update/remove`，通过 Profile `dsh.profile.bundles` 执行 `enable/disable`，并对 `configure` 写入 `cordis.patch.yml` 受管块。计划之外的通用环境变更仍不受支持。
+`runtime.mutationsSupported=false`（`doctor` 文本输出为 `Mutation Capability: Planned apply steps only`）表示通用、完整的环境写能力仍未开放。它不代表 `apply` 命令不存在：当前 `apply` 通过 DSH CLI 执行 `install/update/remove`，通过 Profile `dsh.profile.bundles` 执行 `enable/disable`，并对 `configure` 写入 `cordis.patch.yml` 受管块。计划之外的通用环境变更仍不受支持。
 
 ### 2. `dshenv init`
 在 dshenv 数据目录（默认 `$DSH_HOME/envctl/`，见[路径与解析优先级](#路径与解析优先级)）下初始化空的清单、锁文件与初始状态。
@@ -370,7 +370,7 @@ dshenv status --json
 ```
 
 ### 14. `dshenv source clone`
-带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`，并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。清单里这个别名已声明同一仓库的 `commit` 或 `ref`（如 `install <url>#<sha>` 写入的）时，克隆并锁定它而不是 HEAD，commit 不在仓库里时报错；给了 `--ref` 时改用该 ref 并写进清单。别名默认与 `install` 相同（仓库名去掉 `dsh-plugin-`、`dsh-` 前缀）；别名已指向另一个包时拒绝（退出码 3）。本机仓库的路径（如 `/src/plugin`）记为 `file://` 地址，pnpm 才会按 Git 仓库安装。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
+带 `--profile` 时克隆到 `envctl/sources/<profile>/<package>`（带作用域的包名里的 `/` 换成 `_`，如 `@scope_plugin`），并把 HEAD commit 写入 lock；包名取仓库 `package.json` 的 `name`（可用 `--package` 指定）。清单里这个别名已声明同一仓库的 `commit` 或 `ref`（如 `install <url>#<sha>` 写入的）时，克隆并锁定它而不是 HEAD，commit 不在仓库里时报错；给了 `--ref` 时改用该 ref 并写进清单。别名默认与 `install` 相同（仓库名去掉 `dsh-plugin-`、`dsh-` 前缀）；别名已指向另一个包时拒绝（退出码 3）。本机仓库的路径（如 `/src/plugin`）记为 `file://` 地址，pnpm 才会按 Git 仓库安装。带账号密码或 token 的 URL 会被拒绝，请改用 SSH 或 git credential helper。随后 `apply --yes` 才能安装。显式给出目标目录时仍可克隆到外部路径（`purge` 不会删除外部目录）。
 
 ```bash
 dshenv source clone https://github.com/ex/plugin.git --profile web --as demo
@@ -568,7 +568,7 @@ dshenv web stop -p web             # 停止它以及它启动的子进程（如 
 
 - 启动命令为 `dsh --profile <P> --no-open --port <端口>`，DSH CLI 的选择与其他命令相同（`DSH_CLI`、`--harness-source`、`environment.harness.sourceDir`、`PATH`）。DSH 的 `cordis.patch.yml`（如 `$DSH_HOME/cordis.patch.yml`）设置了 `webserver.port` 时，DSH 忽略 `--port`，`web start --port` 与 `verify --start` 的随机空闲端口都不起作用。dsh web 在独立的进程组中运行，dshenv 退出或关闭终端后继续运行。
 - 地址（含登录 token）与 pid 记在 `envctl/run/<profile>.json`，输出写到 `envctl/run/<profile>.log`，两者权限均为 `0600`；不在快照、同步与团队仓库范围内。`start` 打印地址，已在运行时再次 `start` 也会打印现有的地址；`web list`（旧名 `web status`）从不打印 token。
-- 已在运行时 `start` 只报告现有的那个；它自己退出后，`web list` 显示 `not running`，再次 `start` 会启动新的。dsh web 自己退出但它启动的子进程还在时，`web list` 显示 `not running (leftover processes)`，`start` 先停掉这些子进程再启动，`stop` 也会停掉它们。
+- 已在运行时 `start` 只报告现有的那个（`--port` 与它的端口不同时以退出码 3 拒绝，先 `stop`）；它自己退出后，`web list` 显示 `not running`，再次 `start` 会启动新的。dsh web 自己退出但它启动的子进程还在时，`web list` 显示 `not running (leftover processes)`，`start` 先停掉这些子进程再启动，`stop` 也会停掉它们。
 - 记录里保存了 dsh web 的启动时间，`stop` 只停止 pid 与启动时间都对得上的进程，被系统复用的 pid 不会被误停；无法确认时（`web list` 显示 `unknown`）`stop` 和 `start` 报错并保留记录，不做任何停止。SIGKILL 后仍未退出时 `stop` 以非零退出码报错并保留记录，可以再次执行。
 - 同一 Profile 的 `start`、`stop` 依次执行，两个 `start` 同时运行也只会启动一个；启动过程中按 Ctrl+C 会停止正在启动的 dsh web（`verify --start` 在核对过程中被中断也一样），不会遗留进程。
 - Profile 必须已存在（DSH 会自动创建不存在的 Profile）；bundles 选了其他应用（`dsh-headless`、`dsh-acp-app`、`dsh-sdk-app`）的 Profile 以退出码 3 报 `Profile <p> runs <应用包>, not dsh web`，60 秒内没有打印地址也会停止并报错。
