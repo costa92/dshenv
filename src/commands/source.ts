@@ -22,7 +22,7 @@ import { mergeManifest } from '../overlay/merge.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { acquireEnvironmentLock, withEnvironmentLock } from '../io/lock.js';
 import { retryWhileBusy } from '../io/windows-retry.js';
-import { hasEmbeddedCredentials } from '../manifest/schema.js';
+import { PackageNameRegex, TRANSPORT_HELPER_MESSAGE, hasEmbeddedCredentials, isTransportHelperUrl, isValidGitRef } from '../manifest/schema.js';
 import { readPackageJsonName } from '../source/local.js';
 import { assertLockEntryNotRemoteOwned, assertNotRemoteOwned } from '../remote/ownership.js';
 import { assertBaseMergesWithOverlay, resolveWriteLayer, saveOverlay, setOverlayPluginFields, type WriteLayer } from '../overlay/write.js';
@@ -48,7 +48,8 @@ function declaredGitSource(
   const manifest = layer === 'overlay'
     ? loadEffectiveManifest(paths, selection).manifest
     : loadManifest(fs.readFileSync(paths.manifestFile, 'utf8'));
-  const source = manifest.profiles[profile]?.plugins[alias]?.source;
+  const plugins = manifest.profiles[profile]?.plugins;
+  const source = plugins && Object.hasOwn(plugins, alias) ? plugins[alias].source : undefined;
   return source?.type === 'git' && sameGitUrl(source.url, url) ? source : undefined;
 }
 
@@ -70,6 +71,9 @@ export function registerSourceCommands(ctx: CommandContext): void {
     .action(async (sourcePath?: string, cmdOpts?: { profile?: string; as?: string }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      if (!cmdOpts?.profile && cmdOpts?.as !== undefined) {
+        throw new ValidationError('--as requires --profile for source show');
+      }
       let targetDir: string;
       if (cmdOpts?.profile) {
         const manifest = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths)).manifest;
@@ -92,6 +96,10 @@ export function registerSourceCommands(ctx: CommandContext): void {
           : managedGitSourceDir(paths.managerDir, cmdOpts.profile, plugin.package);
       } else {
         targetDir = sourcePath ? path.resolve(process.cwd(), sourcePath) : process.cwd();
+      }
+      // A managed clone not made yet is a state to show; a directory given by hand that is missing is a mistake.
+      if (sourcePath && !fs.existsSync(targetDir)) {
+        throw new ValidationError(`Directory not found: ${targetDir}`);
       }
       const gitStatus = await inspectGitWorkingTree(targetDir);
       let localInfo: unknown = null;
@@ -139,14 +147,25 @@ export function registerSourceCommands(ctx: CommandContext): void {
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
       }
-      // The same default alias install gives this repository, so cloning after install names the same plugin.
-      const alias: string = cmdOpts.as || packageNameFromGitUrl(url).replace(/^(dsh-plugin-|dsh-)/, '');
+      if (isTransportHelperUrl(url)) {
+        throw new ValidationError(TRANSPORT_HELPER_MESSAGE);
+      }
       if (!targetDir && !cmdOpts.profile) {
         throw new ValidationError('source clone requires <dir> or --profile');
       }
-      if (!cmdOpts.profile && cmdOpts.layer !== undefined) {
-        throw new ValidationError('--layer requires --profile for source clone');
+      for (const [flag, value] of [['--layer', cmdOpts.layer], ['--as', cmdOpts.as], ['--package', cmdOpts.package], ['--new-profile', cmdOpts.newProfile]]) {
+        if (!cmdOpts.profile && value !== undefined) {
+          throw new ValidationError(`${flag} requires --profile for source clone`);
+        }
       }
+      if (cmdOpts.ref !== undefined && !isValidGitRef(cmdOpts.ref)) {
+        throw new ValidationError(`Invalid --ref '${cmdOpts.ref}'`);
+      }
+      if (cmdOpts.package !== undefined && !PackageNameRegex.test(cmdOpts.package)) {
+        throw new ValidationError(`Invalid --package '${cmdOpts.package}'`);
+      }
+      // The same default alias install gives this repository, so cloning after install names the same plugin.
+      const alias: string = cmdOpts.as || aliasOption(packageNameFromGitUrl(url).replace(/^(dsh-plugin-|dsh-)/, ''));
       if (cmdOpts.profile) {
         assertKnownProfile(paths, opts, cmdOpts.profile, cmdOpts.newProfile);
       }
@@ -209,11 +228,13 @@ export function registerSourceCommands(ctx: CommandContext): void {
           const original = fs.existsSync(manifestTarget) ? fs.readFileSync(manifestTarget) : null;
           if (layer === 'overlay' && selection) {
             const overlayDoc = readOverlay(paths, selection.name);
-            const baseEntry = base.profiles[profile]?.plugins[alias];
+            const basePlugins = base.profiles[profile]?.plugins;
+            const baseEntry = basePlugins && Object.hasOwn(basePlugins, alias) ? basePlugins[alias] : undefined;
             if (baseEntry && baseEntry.package !== packageName) {
               throw new ValidationError(`Alias '${alias}' is '${baseEntry.package}' in the base manifest; an overlay cannot change its package`);
             }
-            const overlayEntry = overlayDoc.profiles?.[profile]?.plugins?.[alias];
+            const overlayPlugins = overlayDoc.profiles?.[profile]?.plugins;
+            const overlayEntry = overlayPlugins && Object.hasOwn(overlayPlugins, alias) ? overlayPlugins[alias] : undefined;
             if (overlayEntry && !overlayEntry.remove && overlayEntry.package !== undefined && overlayEntry.package !== packageName) {
               if (!sameRepository(overlayEntry.source)) {
                 throw aliasTaken(overlayEntry.package);
@@ -233,7 +254,7 @@ export function registerSourceCommands(ctx: CommandContext): void {
             if (!base.profiles[profile]) {
               base.profiles[profile] = { plugins: {} };
             }
-            const current = base.profiles[profile].plugins[alias];
+            const current = Object.hasOwn(base.profiles[profile].plugins, alias) ? base.profiles[profile].plugins[alias] : undefined;
             if (current && current.package !== packageName && !sameRepository(current.source)) {
               throw aliasTaken(current.package);
             }
@@ -325,6 +346,12 @@ export function registerSourceCommands(ctx: CommandContext): void {
       const paths = resolveCliPaths(opts);
       if (cmdOpts.ref !== undefined && targetRef !== undefined) {
         throw new ValidationError('Give the ref once: with --ref or as the second argument, not both');
+      }
+      if (cmdOpts.ref === '' || targetRef === '') {
+        throw new ValidationError('Git ref must not be empty');
+      }
+      if (!cmdOpts.profile && cmdOpts.as !== undefined) {
+        throw new ValidationError('--as requires --profile for source sync');
       }
       const ref = cmdOpts.ref || targetRef || undefined;
       const dryRun = Boolean(cmdOpts.dryRun) || !cmdOpts.yes;

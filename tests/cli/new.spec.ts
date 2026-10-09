@@ -75,7 +75,9 @@ describe('CLI new', () => {
     [['new', 'tool', 'x', '--dir', 'OUT', '--as', 'y'], '--as, --layer and --new-profile require -p'],
     [['new', 'tool', 'x', '--dir', 'OUT', '--layer', 'base'], '--as, --layer and --new-profile require -p'],
     [['new', 'tool', 'x', '--dir', 'OUT', '--new-profile'], '--as, --layer and --new-profile require -p'],
-    [['new', 'tool', 'Bad', '--dir', 'OUT'], "Component name 'Bad' must be kebab-case"]
+    [['new', 'tool', 'Bad', '--dir', 'OUT'], "Component name 'Bad' must be kebab-case"],
+    [['new', 'skill', 's2', '--dir', 'OUT', '-p', 'web', '--as', 'a b'], 'Plugin alias must not contain whitespace'],
+    [['new', 'skill', 's2', '--dir', 'OUT', '-p', 'web', '--as', ''], 'Plugin alias must not be empty']
   ])('rejects %j with exit code 3', async (args, message) => {
     const out = path.join(work, 'out');
     const result = await run(args.map((arg) => (arg === 'OUT' ? out : arg)));

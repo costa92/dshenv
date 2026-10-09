@@ -1,7 +1,9 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import { CapabilityError, DegradedError, ValidationError } from '../errors.js';
+import { resolveHomePath } from '../environment/paths.js';
 import { awaitWithTreeTimeout } from '../io/process-tree.js';
 import { parseDshVersion } from './version.js';
 
@@ -35,9 +37,9 @@ export function resolveDshCommand(input?: ResolveDshCommandInput): CommandSpec |
   });
 
   // The command runs with the source as its cwd and also gets --dir, so a relative path would be resolved twice.
-  const cliSource = input?.cliHarnessSource && !path.isAbsolute(input.cliHarnessSource)
-    ? path.resolve(input.cliHarnessSource)
-    : input?.cliHarnessSource;
+  const cliSource = input?.cliHarnessSource === undefined || path.isAbsolute(input.cliHarnessSource)
+    ? input?.cliHarnessSource
+    : resolveHomePath(input.cliHarnessSource, 'CLI harness-source', process.cwd(), os.homedir());
   // A source asked for by name, on this command line, wins over DSH_CLI and must not quietly become another DSH.
   if (cliSource) {
     if (!checkExists(cliSource)) {

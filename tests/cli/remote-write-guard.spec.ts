@@ -132,14 +132,15 @@ describe('CLI writes to remote-owned files and lock entries', () => {
     expectUnchanged();
   });
 
-  it('leaves an unsubscribed update failing where it always did on a corrupt lock file', async () => {
+  it('refuses an unsubscribed update on a corrupt lock file before writing the manifest', async () => {
     fs.rmSync(paths.remoteFile);
     fs.writeFileSync(paths.lockFile, '{');
+    const before = read(paths.manifestFile);
     const { code, stderr } = await run(['update', 'shared', '--to', '1.1.0', '-p', 'web']);
     expect(code).toBe(3);
     expect(stderr).toContain('Invalid JSON in lock file');
-    // The manifest layer is written before pinLockVersion parses the lock, exactly as before this guard existed.
-    expect(loadManifest(read(paths.manifestFile)).profiles.web.plugins.shared.source).toEqual({ type: 'npm', version: '1.1.0' });
+    // As source sync does: the lock is read before the manifest is written, so a failed update changes nothing.
+    expect(read(paths.manifestFile)).toBe(before);
   });
 
   it('refuses adopt', async () => {

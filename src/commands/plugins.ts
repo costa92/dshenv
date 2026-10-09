@@ -10,8 +10,8 @@ import { buildPlan } from '../planner/plan.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { readLocalSourceDigests } from '../source/local.js';
 import { CapabilityError, ValidationError } from '../errors.js';
-import { ExactVersionRegex, GitCommitRegex, PackageNameRegex } from '../manifest/schema.js';
-import type { EnvironmentManifest, OverlayPatchEntry, OverlayPluginEntry, PatchEntry, PluginManifestEntry, PluginSource, ProfilePatch } from '../domain.js';
+import { ExactVersionRegex, GitCommitRegex, PackageNameRegex, hasEmbeddedCredentials } from '../manifest/schema.js';
+import type { EnvironmentManifest, OverlayPatchEntry, OverlayPluginEntry, PatchEntry, PluginLockSource, PluginManifestEntry, PluginSource, ProfilePatch } from '../domain.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
 import { removeOverlayPlugin, setOverlayPatchValue, setOverlayPluginFields } from '../overlay/write.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
@@ -105,14 +105,29 @@ export function isLocalPathSpec(spec: string, pathApi: path.PlatformPath = path)
 export function registerPluginCommands(ctx: CommandContext): PluginCommands {
   const { program, writeOut } = ctx;
 
+  function deriveAlias(name: string, from: string): string {
+    const alias = name.replace(/^(dsh-plugin-|dsh-)/, '');
+    if (alias === '') {
+      throw new ValidationError(`Cannot derive an alias from '${from}'; pass --as <alias>`);
+    }
+    return alias;
+  }
+
   function parsePluginSpec(spec: string, optsAlias?: string, optsPackage?: string): { alias: string; packageName: string; source: PluginSource } {
     if (/^(?:git\+|https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(spec) || spec.split('#')[0].endsWith('.git')) {
       const cleanUrl = spec.startsWith('git+') ? spec.slice(4) : spec;
+      // Before any error below can echo the URL; the manifest schema would refuse it only after naming it.
+      if (hasEmbeddedCredentials(cleanUrl)) {
+        throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
+      }
       const urlParts = cleanUrl.split('#');
+      if (urlParts.length > 2) {
+        throw new ValidationError(`'${spec}': a git spec takes at most one #<ref>`);
+      }
       const repoUrl = normalizeGitUrl(urlParts[0]);
       const commitOrRef = urlParts[1] || undefined;
-      const baseName = path.basename(repoUrl, '.git');
-      const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
+      const baseName = path.basename(repoUrl.split('?')[0], '.git');
+      const alias = optsAlias ?? deriveAlias(baseName, repoUrl);
       return {
         alias,
         packageName: optsPackage ?? baseName,
@@ -130,6 +145,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         throw new ValidationError(`'${spec}': a local path takes no #<ref>; for a Git repository use git+file://<path>#<commit>`);
       }
       const localPath = spec.startsWith('file://') ? fileURLToPath(spec) : spec.startsWith('file:') ? spec.slice(5) : spec;
+      // path.resolve('') is the working directory, which nobody meant.
+      if (localPath === '') {
+        throw new ValidationError(`'${spec}': the local plugin path is empty; give file:<path>`);
+      }
       const resolved = path.resolve(localPath);
       // apply would only fail on it, after other steps already ran.
       if (!fs.existsSync(resolved)) {
@@ -140,7 +159,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         throw new ValidationError(`Local plugin path is not a directory: ${resolved}`);
       }
       const baseName = path.basename(resolved);
-      const alias = optsAlias || baseName.replace(/^(dsh-plugin-|dsh-)/, '');
+      const alias = optsAlias ?? deriveAlias(baseName, resolved);
       return {
         alias,
         packageName: optsPackage ?? readPackageJsonName(resolved) ?? baseName,
@@ -162,7 +181,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         throw new ValidationError(`in-box takes a package name with no version: in-box:<package>, got '${packageName}'`);
       }
       const simpleName = packageName.startsWith('@') ? packageName.split('/')[1] : packageName;
-      return { alias: optsAlias || officialBundleAlias(packageName) || simpleName.replace(/^(dsh-plugin-|dsh-)/, ''), packageName, source: { type: 'in-box' } };
+      return { alias: optsAlias ?? (officialBundleAlias(packageName) || deriveAlias(simpleName, spec)), packageName, source: { type: 'in-box' } };
     }
 
     let packageName = spec;
@@ -191,7 +210,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
     }
 
     const simpleName = packageName.startsWith('@') ? packageName.split('/')[1] : packageName;
-    const alias = optsAlias || simpleName.replace(/^(dsh-plugin-|dsh-)/, '');
+    const alias = optsAlias ?? deriveAlias(simpleName, packageName);
 
     return {
       alias,
@@ -492,11 +511,17 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         );
         warnOverlayKeeps(opts, resolveCliPaths(opts), result.selection, result.overlay, cmdOpts.profile, result.alias, (entry) =>
           entry.source ? `the source of ${result.alias} in profile '${cmdOpts.profile}', so it stays at ${describeSource(entry.source)}` : undefined);
-        // Only the lock decides the commit that is installed; one that pins another makes plan block.
-        const lockedSource = result.source.type === 'git' && result.source.commit !== undefined && fs.existsSync(resolveCliPaths(opts).lockFile)
-          ? loadLock(fs.readFileSync(resolveCliPaths(opts).lockFile, 'utf8')).profiles[cmdOpts.profile]?.plugins[result.alias]?.source
-          : undefined;
-        if (!opts.json && result.source.type === 'git' && result.source.commit !== undefined && lockedSource?.type === 'git' &&
+        // Only the lock decides the commit that is installed; one that pins another makes plan block. The hint is only a
+        // hint: a lock it cannot read must not turn the install, already written, into a failure.
+        let lockedSource: PluginLockSource | undefined;
+        if (!opts.json && result.source.type === 'git' && result.source.commit !== undefined && fs.existsSync(resolveCliPaths(opts).lockFile)) {
+          try {
+            lockedSource = loadLock(fs.readFileSync(resolveCliPaths(opts).lockFile, 'utf8')).profiles[cmdOpts.profile]?.plugins[result.alias]?.source;
+          } catch {
+            lockedSource = undefined;
+          }
+        }
+        if (result.source.type === 'git' && result.source.commit !== undefined && lockedSource?.type === 'git' &&
           lockedSource.url === result.source.url && !isSameCommit(lockedSource.commit, result.source.commit)) {
           ctx.writeErr(
             `lock.json pins ${result.alias} to ${lockedSource.commit}; lock ${result.source.commit} with: ` +
@@ -525,7 +550,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
         // The lock pin runs after the manifest write, so a team-pinned entry must be refused before anything is written.
-        // Skip the lock read entirely when unsubscribed, so a corrupt lock.json still fails where it always did. An overlay
+        // Skip the lock read here when unsubscribed; a corrupt lock.json is refused under the write lock below. An overlay
         // write leaves a team's lock entry as it is (its npm version decides nothing), as install --layer overlay does.
         const teamLocked = Boolean(overlay) && isLockEntryRemoteOwned(paths, profile, alias);
         if (!overlay && readRemoteConfig(paths) && lockPinsNpm(paths, profile, alias)) {
@@ -545,6 +570,11 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         }
         const npmCheck = await checkNpmSpec(opts, { packageName: declared.package, source: { ...declared.source, version } }, cmdOpts.npmCheck);
 
+        // pinLockVersion parses the lock only after the manifest is written; a lock it would fail on must stop the write,
+        // as source sync does.
+        const assertLockReadable = () => {
+          if (!teamLocked && fs.existsSync(paths.lockFile)) loadLock(fs.readFileSync(paths.lockFile, 'utf8'));
+        };
         let unchanged = false;
         if (overlay) {
           await writeOverlay(paths, overlay, (doc) => {
@@ -554,7 +584,10 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             }
             // Restating the version the overlay already gets would pin it, so a later base update stops reaching it.
             unchanged = plugin.source.version === version;
-            if (!unchanged) setOverlayPluginFields(doc, profile, alias, { source: { ...plugin.source, version } });
+            if (!unchanged) {
+              assertLockReadable();
+              setOverlayPluginFields(doc, profile, alias, { source: { ...plugin.source, version } });
+            }
           });
         } else {
           await writeBase(paths, selection, (manifest) => {
@@ -562,6 +595,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
             if (plugin.source.type !== 'npm') {
               throw npmOnly(plugin.source.type);
             }
+            assertLockReadable();
             plugin.source = { ...plugin.source, version };
           });
         }
@@ -792,12 +826,17 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const opts = program.opts();
         const paths = resolveCliPaths(opts);
         assertConfigPath(dottedPath);
+        const parsedValue = parseConfigValue(value);
+        // As with checkNpmSpec and warnOverlayKeeps, --json keeps stderr for the error alone.
+        const warn = (text: string) => {
+          if (!opts.json) ctx.writeErr(text);
+        };
         const profile: string = cmdOpts.profile;
         const { selection, overlay } = resolveWrite(opts, paths, cmdOpts.layer);
         const alias = resolveAlias(paths, selection, profile, name, { overlay });
         const declared = overlay ? effectivePlugin(paths, overlay, profile, alias) : layerPlugin(paths, selection, overlay, profile, alias);
         const composed = await composedRows(paths, opts, profile);
-        if (!cmdOpts.force && 'rows' in composed) {
+        if (!cmdOpts.force && !opts.json && 'rows' in composed) {
           warnUnknownConfigKey(composed.rows, declared.package, dottedPath);
         }
         // DSH replaces the plugin's whole config with the patch, so a new patch starts from all the config DSH composes
@@ -814,14 +853,14 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
         const misnamed = active && row && row.id !== active.id ? active.id : undefined;
         const patchId = row?.id ?? active?.id ?? alias;
         if (misnamed) {
-          ctx.writeErr(`Patch '${misnamed}' of ${alias} matches no entry DSH loads; DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch now targets that id\n`);
+          warn(`Patch '${misnamed}' of ${alias} matches no entry DSH loads; DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch now targets that id\n`);
         } else if (!active && patchId !== alias) {
-          ctx.writeErr(`DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch targets that id\n`);
+          warn(`DSH loads ${declared.package} in profile '${profile}' as '${patchId}', so the patch targets that id\n`);
         }
         const effective = loadEffectiveManifest(paths, selection).manifest.profiles[profile]?.plugins[alias];
         if (!declared.patches?.length) {
           const unknown = (why: string, advice = ' To keep them: config unset it, apply, then config set it again') =>
-            ctx.writeErr(`${why}, so the patch holds only ${dottedPath}; DSH replaces the plugin's whole config with it, dropping its defaults.${advice}\n`);
+            warn(`${why}, so the patch holds only ${dottedPath}; DSH replaces the plugin's whole config with it, dropping its defaults.${advice}\n`);
           if (effective?.patches?.length || extractPluginBlocks(await readProfilePatchFile(paths, profile), profile, alias).trim() !== '') {
             unknown(`What DSH composes for ${declared.package} in profile '${profile}' already holds a dshenv patch for it, not only its defaults`, '');
           } else if ('reason' in composed) {
@@ -841,7 +880,7 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
           }
         }
         const restate = (patch: PatchEntry | OverlayPatchEntry) => {
-          if (seed) patch.config = setAtPath(seed, dottedPath, parseConfigValue(value));
+          if (seed) patch.config = setAtPath(seed, dottedPath, parsedValue);
           return patch;
         };
 
@@ -854,12 +893,12 @@ export function registerPluginCommands(ctx: CommandContext): PluginCommands {
                 }
                 held.id = patchId;
               }
-              return restate(setOverlayPatchValue(doc, profile, alias, patchId, dottedPath, parseConfigValue(value)));
+              return restate(setOverlayPatchValue(doc, profile, alias, patchId, dottedPath, parsedValue));
             })
           : await writeBase(paths, selection, (manifest) => {
               const held = misnamed ? manifest.profiles[profile]?.plugins[alias]?.patches?.find((patch) => patch.id === misnamed) : undefined;
               if (held) held.id = patchId;
-              return restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parseConfigValue(value), patchId));
+              return restate(upsertPluginPatch(manifest, profile, alias, dottedPath, parsedValue, patchId));
             });
 
         reportWrite(opts, overlay, 'set', { profile, alias, path: dottedPath, patch }, `Set ${alias} config ${dottedPath} in profile '${profile}'`);

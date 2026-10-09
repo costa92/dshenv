@@ -222,11 +222,26 @@ describe('CLI remote', () => {
   it.each([
     ['https://user:token@example.com/team.git', [], 'Git URL must not embed credentials'],
     [null, ['--path', '../envctl'], "Invalid --path '../envctl'"],
-    [null, ['--branch', 'bad branch'], "Invalid --branch 'bad branch'"]
+    [null, ['--branch', 'bad branch'], "Invalid --branch 'bad branch'"],
+    [null, ['--branch', 'a..b'], "Invalid --branch 'a..b'"],
+    [null, ['--branch', 'main/'], "Invalid --branch 'main/'"],
+    [null, ['--branch', 'main.lock'], "Invalid --branch 'main.lock'"],
+    [null, ['--ref', ''], "Invalid ref: ''"],
+    [null, ['--ref', 'a..b'], "Invalid ref: 'a..b'"],
+    ['ext::sh -c touch% x', [], 'transport'],
+    ['alice:token@example.com:team.git', [], 'Git URL must not embed credentials']
   ])('rejects bad input %s %j', async (url, extra, message) => {
     const { code, stderr } = await run(['remote', 'add', url ?? team.url, ...extra]);
     expect(code).toBe(3);
     expect(stderr).toContain(message);
+    expect(fs.existsSync(paths.remoteDir)).toBe(false);
+  });
+
+  it.each([[''], ['a..b']])('remote sync rejects --ref %j with exit 3', async (ref) => {
+    expect((await run(['remote', 'add', team.url, '--yes'])).code).toBe(0);
+    const { code, stderr } = await run(['remote', 'sync', '--ref', ref]);
+    expect(code).toBe(3);
+    expect(stderr).toContain(`Invalid ref: '${ref}'`);
   });
 
   it('follows --branch and --path', async () => {

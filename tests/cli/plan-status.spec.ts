@@ -48,6 +48,16 @@ profiles:
     expect(stdout).toContain('+ [web] @nanmicoder/dsh-agent-teams');
   });
 
+  it('refuses an empty status alias instead of listing every plugin', async () => {
+    await runCli(['init', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+    let stdout = '';
+    let stderr = '';
+    const code = await runCli(['status', '', '--dsh-home', tempHome], { stdout: (chunk) => { stdout += chunk; }, stderr: (chunk) => { stderr += chunk; } });
+    expect(code).toBe(3);
+    expect(stderr).toMatch(/alias must not be empty/);
+    expect(stdout).toBe('');
+  });
+
   it('warns about plaintext credentials in the manifest on stderr, naming paths but not values, without changing the exit code', async () => {
     const quiet = { stdout: () => {}, stderr: () => {} };
     await runCli(['init', '--dsh-home', tempHome], quiet);

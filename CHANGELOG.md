@@ -2,6 +2,26 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 升级须知
+
+- `rollback <id>` 只接受完整快照 id 或完整 operation id，不再按任意 `-` 后缀匹配；`rollback ''` 报错而不是恢复最新快照。
+- envctl 目录不能是 DSH home 本身，也不能位于 `<home>/profiles`、`<home>/skills` 之内；已这样配置的需先把目录移走。
+- `config set` / `tools config set` 的值以 `{` / `[` 开头却不是合法 JSON 时报错，作字符串写入要加引号（`'"[WIP] x"'`）；超出安全整数或非有限的数字同样拒绝。
+- overlay 名不能以 `.` 或 `-` 开头；`--as` 不能以 `.` 或 `-` 开头、不能含 `/` 或 `\`；profile 名限 100 字符，npm 包名按 npm 规则限 214 字符。
+
+### 修复
+
+- scp 形式（`user:pass@host:path`）的 git URL 也按内嵌凭据拒绝；URL 带 `?token=` 时报错不再回显 token。
+- 拒绝 `ext::` 等 `<transport>::` git URL，所有 git 调用限定 `GIT_ALLOW_PROTOCOL=file:git:http:https:ssh`。
+- git ref 与 remote 分支名按 `git check-ref-format` 主要规则校验，空 ref 在克隆前拒绝；`a#b#c` 这种多个 `#` 的 spec 报错。
+- `install` 遇到损坏的 lock 不再在写入 manifest 后报失败；`update` 在 lock 损坏时不改 manifest。
+- 显式传入的空参数（`--as ''`、`--ref ''`、`capture -o ''`、`status ''`、`adopt ''`、`--harness-source ''`）报错，不再当作没传；`file:` 空路径报错。
+- `web start --port` 拒绝 fetch 不会连接的端口；`web stop -p` 写错 profile 名时报错并提示相近名；`pull -p`、`capture -p` 同样提示相近名。
+- `source clone` 认 `git+` 前缀，`--as`/`--package`/`--new-profile` 没给 `--profile` 时报错，`--package` 在克隆前校验；`source show` 目录不存在时报错。
+- `--json` 下 `config set` 不再往 stderr 写纯文本警告；`tools config unset` 与 `config unset` 统一校验配置路径。
+
 ## 0.11.0 - 2026-10-09
 
 ### 升级须知

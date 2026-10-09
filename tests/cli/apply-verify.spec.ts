@@ -87,6 +87,17 @@ process.exit(1);
     expect(`${out.stdout}${out.stderr}`).not.toContain('SECRET-TOKEN-123');
   });
 
+  it('refuses an invalid --verify-timeout before applying anything', async () => {
+    const lockFile = path.join(tempHome, 'envctl', 'lock.json');
+    const before = fs.existsSync(lockFile) ? fs.readFileSync(lockFile, 'utf8') : null;
+    for (const value of ['', 'abc', '-1', '1e3', '5s']) {
+      const out = await run(['apply', '--yes', '--verify', '--verify-timeout', value]);
+      expect(out.code, value).toBe(3);
+      expect(out.stderr).toContain(`Invalid --verify-timeout value: ${value}`);
+    }
+    expect(fs.existsSync(lockFile) ? fs.readFileSync(lockFile, 'utf8') : null).toBe(before);
+  });
+
   it('waits up to --verify-timeout for DSH to hot-reload, then exits 2 while the plugin is still loading', async () => {
     await serve({ bundles: [bundle()], plugins: [entry('loading')] });
     const started = Date.now();

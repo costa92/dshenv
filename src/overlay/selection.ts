@@ -12,7 +12,8 @@ export interface OverlaySelection {
   via: OverlaySelectionVia;
 }
 
-const OverlayNameRegex = /^[A-Za-z0-9._-]+$/;
+// A leading '-' would read as an option to overlay use.
+const OverlayNameRegex = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 export function isValidOverlayName(name: string): boolean {
   return OverlayNameRegex.test(name) && name !== '.' && name !== '..';
@@ -20,7 +21,7 @@ export function isValidOverlayName(name: string): boolean {
 
 export function validateOverlayName(name: string): string {
   if (!isValidOverlayName(name)) {
-    throw new ValidationError(`Invalid overlay name: '${name}' (allowed: letters, digits, '.', '_', '-')`);
+    throw new ValidationError(`Invalid overlay name: '${name}' (allowed: letters, digits, '.', '_', '-'; not starting with '.' or '-')`);
   }
   return name;
 }

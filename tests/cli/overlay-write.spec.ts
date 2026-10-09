@@ -353,6 +353,15 @@ warnings: []
     expect(pinned.stderr).toBe("Overlay 'laptop' sets the source of shared in profile 'web', so it stays at 1.9.0 on this machine; use --layer overlay to change it here\n");
   });
 
+  it('says an invalid edit is refused, not that the overlay file is broken', async () => {
+    const before = fs.readFileSync(overlayFile(), 'utf8');
+    const out = await run(['install', 'git+https://example.invalid/x.git', '--package', 'Bad Name', '--profile', 'web', '--layer', 'overlay']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain(`Refusing to write ${overlayFile()}: `);
+    expect(out.stderr).not.toContain('Invalid overlay schema');
+    expect(fs.readFileSync(overlayFile(), 'utf8')).toBe(before);
+  });
+
   it('installing what the overlay removed from the base only lifts the removal, pinning no source', async () => {
     const out = await run(['install', 'heavy-plugin@1.0.0', '--as', 'heavy', '--profile', 'web', '--layer', 'overlay', '--no-npm-check']);
     expect(out.code).toBe(0);

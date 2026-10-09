@@ -16,7 +16,11 @@ describe('package names', () => {
     expect(() => loadManifest(manifestWith(pkg))).toThrow();
   });
 
-  it.each(['demo', '@scope/demo', 'dsh.plugin', 'a_b-c'])('accepts %j', (pkg) => {
+  it.each(['_demo', 'node_modules', 'favicon.ico', 'a'.repeat(215)])('rejects %j, which npm refuses', (pkg) => {
+    expect(() => loadManifest(manifestWith(pkg))).toThrow();
+  });
+
+  it.each(['demo', '@scope/demo', 'dsh.plugin', 'a_b-c', '@scope/_demo', 'a'.repeat(214)])('accepts %j', (pkg) => {
     expect(loadManifest(manifestWith(pkg)).profiles.web.plugins.demo.package).toBe(pkg);
   });
 

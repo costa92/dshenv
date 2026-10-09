@@ -5,7 +5,7 @@ import type { ProfilePatch } from '../domain.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { ValidationError } from '../errors.js';
 import { didYouMean } from './suggest.js';
-import { getAtPath, parseConfigValue } from '../config/config.js';
+import { assertConfigPath, getAtPath, parseConfigValue } from '../config/config.js';
 import { resolveDshCommand } from '../dsh/command.js';
 import { dumpProfileConfig } from '../dsh/hmr.js';
 import { loadEffectiveManifest, readOverlay } from '../overlay/effective.js';
@@ -288,7 +288,10 @@ export function registerToolsCommands(ctx: CommandContext): void {
     .addOption(targetProfile())
     .addOption(presetOption())
     .addOption(writeLayer())
-    .action((tool: string, dottedPath: string, cmdOpts) => change(tool, cmdOpts, { kind: 'unset', path: dottedPath }, `Removed ${dottedPath} of`, 'unset'));
+    .action((tool: string, dottedPath: string, cmdOpts) => {
+      assertConfigPath(dottedPath);
+      return change(tool, cmdOpts, { kind: 'unset', path: dottedPath }, `Removed ${dottedPath} of`, 'unset');
+    });
 
   tools
     .command('reset <tool>')

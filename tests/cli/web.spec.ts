@@ -181,6 +181,23 @@ describe('CLI web', () => {
     expect(JSON.parse(fs.readFileSync(path.join(tempHome, 'args.json'), 'utf8'))).toEqual(['--profile', 'web', '--no-open', '--port', '3090']);
     expect((await run(['web', 'start', '-p', 'web', '--port', 'x'])).stderr).toMatch(/--port must be an integer from 0 to 65535/);
   });
+
+  it('refuses a port fetch blocks, which verify could never reach', async () => {
+    serving();
+    for (const port of ['6667', '22']) {
+      const out = await run(['web', 'start', '-p', 'web', '--port', port]);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(new RegExp(`port ${port} is one fetch refuses`));
+    }
+    expect(fs.existsSync(recordFile())).toBe(false);
+  });
+
+  it('refuses to stop a profile that is neither declared nor created, suggesting a close one', async () => {
+    const out = await run(['web', 'stop', '-p', 'wbe']);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain("did you mean 'web'?");
+    expect((await run(['web', 'stop', '-p', 'web'])).code).toBe(0);
+  });
   it('refuses a profile name that would leave the profiles or run directory', async () => {
     serving();
     fs.mkdirSync(path.join(tempHome, 'outside', 'x'), { recursive: true });

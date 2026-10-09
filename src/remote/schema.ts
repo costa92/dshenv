@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { ValidationError } from '../errors.js';
 import { writeAtomic } from '../io/atomic-file.js';
-import { hasEmbeddedCredentials } from '../manifest/schema.js';
+import { TRANSPORT_HELPER_MESSAGE, hasEmbeddedCredentials, isTransportHelperUrl, isValidGitRef } from '../manifest/schema.js';
 import { isValidOverlayName } from '../overlay/selection.js';
 
 export const REMOTE_API_VERSION = 'dshenv-remote/v1';
@@ -52,7 +52,7 @@ export function isValidRemotePath(value: string): boolean {
 }
 
 export function isValidBranchName(value: string): boolean {
-  return BranchRegex.test(value);
+  return BranchRegex.test(value) && isValidGitRef(value);
 }
 
 export function compareRemoteKeys(a: string, b: string): number {
@@ -69,8 +69,9 @@ export const RemoteConfigSchema = z
       .string()
       .min(1)
       .refine((url) => !hasEmbeddedCredentials(url), { message: 'Git URL must not embed credentials; use SSH or a git credential helper' })
-      .refine((url) => !url.startsWith('-'), { message: 'Git URL must not start with -' }),
-    branch: z.string().regex(BranchRegex, { message: 'Invalid branch name' }),
+      .refine((url) => !url.startsWith('-'), { message: 'Git URL must not start with -' })
+      .refine((url) => !isTransportHelperUrl(url), { message: TRANSPORT_HELPER_MESSAGE }),
+    branch: z.string().refine(isValidBranchName, { message: 'Invalid branch name' }),
     path: z.string().refine(isValidRemotePath, { message: "Path must be '.' or a relative directory without '.' or '..' segments" }),
     commit: z.string().regex(CommitShaRegex, { message: 'Commit must be a 40-character lowercase hex SHA-1' }),
     files: z

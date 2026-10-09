@@ -166,6 +166,24 @@ describe('Managed Git Source Lifecycle', () => {
     expect(fs.existsSync(marker)).toBe(false);
   });
 
+  it('never runs a transport helper, even when the git config allows one', async () => {
+    const marker = path.join(tempDir, 'marker');
+    const saved = { ...process.env };
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.ext.allow', GIT_CONFIG_VALUE_0: 'always' });
+    try {
+      await expect(cloneManagedGit(`ext::sh -c touch% ${marker}`, path.join(tempDir, 'c4'))).rejects.toThrow(/git clone failed/);
+    } finally {
+      process.env = saved;
+    }
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it('reports a failed clone as a git error rather than the raw command', async () => {
+    const err = await cloneManagedGit(path.join(tempDir, 'missing'), path.join(tempDir, 'c5')).catch((e: unknown) => e);
+    expect(err).toMatchObject({ exitCode: 1 });
+    expect((err as Error).message).toMatch(/^git clone failed: \S/);
+  });
+
   it('clones the ref it is given', async () => {
     await execa('git', ['branch', 'feature'], { cwd: repoDir });
     const result = await cloneManagedGit(repoDir, path.join(tempDir, 'c3'), 'feature');

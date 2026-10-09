@@ -9,8 +9,11 @@ import { isValidProfileName } from '../manifest/schema.js';
 // step, they would make every command below inspect, merge or lock another repository.
 const REPOSITORY_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'];
 
+// Overrides any protocol.*.allow config, so a URL can never reach a remote helper such as ext::, which runs a command.
+const ALLOWED_PROTOCOLS = 'file:git:http:https:ssh';
+
 export function isolatedGit(): { env: NodeJS.ProcessEnv; extendEnv: false } {
-  const env = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_ALLOW_PROTOCOL: ALLOWED_PROTOCOLS };
   for (const name of REPOSITORY_ENV) delete env[name];
   return { env, extendEnv: false };
 }
@@ -52,7 +55,9 @@ export function managedGitSourceDir(
 }
 
 // pnpm reads a plain repository path as a local directory to link, or a GitHub shorthand, never as a Git repository.
-export function normalizeGitUrl(url: string): string {
+// git itself does not know the git+ prefix install accepts.
+export function normalizeGitUrl(given: string): string {
+  const url = given.replace(/^git\+/, '');
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) || /^[^/\\@]+@[^/\\:]+:/.test(url)) {
     return url;
   }
@@ -165,7 +170,12 @@ export async function cloneManagedGit(
 
   await fs.promises.mkdir(path.dirname(targetDir), { recursive: true });
 
-  await execa('git', ['clone', ...(ref ? ['--branch', ref] : []), '--', url, targetDir], { ...isolatedGit(), shell: false, timeout: 60000 });
+  try {
+    await execa('git', ['clone', ...(ref ? ['--branch', ref] : []), '--', url, targetDir], { ...isolatedGit(), shell: false, timeout: 60000 });
+  } catch (err) {
+    const stderr = (err as { stderr?: unknown }).stderr;
+    throw new DshError(`git clone failed: ${(typeof stderr === 'string' && stderr.trim()) || (err instanceof Error ? err.message : String(err))}`, 1);
+  }
 
   const commitRes = await execa('git', ['rev-parse', 'HEAD'], { ...isolatedGit(),
     cwd: targetDir,

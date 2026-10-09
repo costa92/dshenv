@@ -4,8 +4,9 @@ import * as path from 'node:path';
 import { PROFILE_PATCHES_ALIAS } from '../profile-patches/entries.js';
 
 // A leading dot is refused so '.' and '..' can never name a directory outside the package's own, and a leading '-'
-// so pnpm never reads the name as an option.
-export const PackageNameRegex = /^(?:@[a-z0-9_][a-z0-9._-]*\/)?[a-z0-9_][a-z0-9._-]*$/;
+// so pnpm never reads the name as an option. npm also caps a name at 214 characters, refuses a leading '_' outside a
+// scope, and blacklists node_modules and favicon.ico.
+export const PackageNameRegex = /^(?=.{1,214}$)(?!(?:node_modules|favicon\.ico)$)(?:@[a-z0-9_][a-z0-9._-]*\/[a-z0-9_]|[a-z0-9])[a-z0-9._-]*$/;
 
 // dshenv pins exact npm versions; ranges and tags would never compare equal to an installed version.
 // The SemVer 2.0 grammar, as npm takes it: no leading zeros, a prerelease and a build part each optional.
@@ -27,16 +28,33 @@ export const NpmSourceSchema = z
 const CredentialParamRegex = /^(?:access_?token|private_?token|oauth_?token|token|password|passwd|secret|api_?key|auth)$/i;
 
 // Manifest and lock are meant to be shared, so a URL may not carry a password or token: any userinfo on
-// http(s), user:password on other schemes (scp-style and ssh://git@ URLs stay allowed), or a token query parameter.
+// http(s), user:password on other schemes and scp-style URLs (git@host: and ssh://git@ stay allowed), or a token query parameter.
 export function hasEmbeddedCredentials(url: string): boolean {
   const query = url.split('#')[0].split('?')[1];
   if (query !== undefined && [...new URLSearchParams(query).keys()].some((key) => CredentialParamRegex.test(key))) {
     return true;
   }
   const match = url.match(/^(?:git\+)?([a-z][a-z0-9+.-]*):\/\/([^/@]*)@/i);
-  if (!match) return false;
+  if (!match) {
+    return /^(?:git\+)?[^/@]*:[^/@]*@[^/:@]+:/.test(url);
+  }
   const scheme = match[1].toLowerCase();
   return scheme === 'http' || scheme === 'https' ? match[2].length > 0 : match[2].includes(':');
+}
+
+export const TRANSPORT_HELPER_MESSAGE = 'Git URL must not use a <transport>:: remote helper such as ext::';
+
+// git hands '<transport>::<address>' to a remote helper; ext:: runs an arbitrary command.
+export function isTransportHelperUrl(url: string): boolean {
+  return /^(?:git\+)?[a-z][a-z0-9+.-]*::/i.test(url);
+}
+
+// What git check-ref-format refuses: whitespace and control characters, '..', any of ~^:?*[\, '@{', and a trailing
+// '/' or '.lock'. ':' and '*' would also change the meaning of a fetch refspec, and a leading '-' reads as an option.
+const InvalidGitRefRegex = /[\x00-\x20\x7f:*?[\\^~]|\.\.|@\{|\/$|\.lock$/;
+
+export function isValidGitRef(ref: string): boolean {
+  return ref.length > 0 && !ref.startsWith('-') && !InvalidGitRefRegex.test(ref);
 }
 
 // The URL and commit end up as arguments to git and pnpm, where a leading '-' would read as an option.
@@ -46,7 +64,8 @@ const gitUrlSchema = z
   .refine((url) => !hasEmbeddedCredentials(url), {
     message: 'Git URL must not embed credentials; use SSH or a git credential helper'
   })
-  .refine((url) => !url.startsWith('-'), { message: 'Git URL must not start with -' });
+  .refine((url) => !url.startsWith('-'), { message: 'Git URL must not start with -' })
+  .refine((url) => !isTransportHelperUrl(url), { message: TRANSPORT_HELPER_MESSAGE });
 
 export const GitCommitRegex = /^[0-9a-f]{7,64}$/i;
 
@@ -54,7 +73,12 @@ export const GitSourceSchema = z
   .object({
     type: z.literal('git'),
     url: gitUrlSchema,
-    ref: z.string().refine((ref) => !ref.startsWith('-'), { message: 'Git ref must not start with -' }).optional(),
+    ref: z
+      .string()
+      .min(1, { message: 'Git ref must not be empty' })
+      .refine((ref) => !ref.startsWith('-'), { message: 'Git ref must not start with -' })
+      .refine((ref) => !InvalidGitRefRegex.test(ref), { message: 'Invalid git ref name' })
+      .optional(),
     commit: z.string().regex(GitCommitRegex, { message: 'git commit must be a 7-64 character hexadecimal commit id' }).optional()
   })
   .strict();
@@ -107,7 +131,7 @@ const notReserved = (name: string) => !ReservedKeys.has(name);
 const ProfileNameRegex = /^[A-Za-z0-9._][-A-Za-z0-9._]*$/;
 
 export function isValidProfileName(name: string): boolean {
-  return ProfileNameRegex.test(name) && name !== '.' && name !== '..';
+  return ProfileNameRegex.test(name) && name.length <= 100 && name !== '.' && name !== '..';
 }
 
 export function assertProfileName(name: string): string {
@@ -120,7 +144,7 @@ export function assertProfileName(name: string): string {
 export const ProfileNameKeySchema = z
   .string()
   .refine(notReserved, { message: 'Profile name is reserved' })
-  .refine(isValidProfileName, { message: "Invalid profile name (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" });
+  .refine(isValidProfileName, { message: "Invalid profile name (allowed: letters, digits, '.', '_', '-', at most 100 characters; not '.' or '..')" });
 
 // Aliases appear in single-line patch markers, so whitespace would break or inject into them.
 const LockAliasSchema = z

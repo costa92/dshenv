@@ -96,6 +96,9 @@ describe('remote.json schema', () => {
     expect(isValidBranchName('release/1.x')).toBe(true);
     expect(isValidBranchName('-x')).toBe(false);
     expect(isValidBranchName('bad branch')).toBe(false);
+    for (const bad of ['', 'a..b', 'main/', 'x.lock', 'a@{1}']) {
+      expect(isValidBranchName(bad)).toBe(false);
+    }
     expect(isRemoteFileKey('overlays/team.yaml')).toBe(true);
     expect(isRemoteFileKey('lock.json')).toBe(false);
     expect(isRemoteFileKey('overlays/..yaml')).toBe(false);

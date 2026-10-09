@@ -92,7 +92,7 @@ describe('remote git helpers', () => {
 
   it('rejects refs git would not accept, with exit code 3', async () => {
     await fetchBranch(repoDir, 'main');
-    for (const ref of ['v1:refs/heads/x', 'v*', 'v?', 'v[1]', 'v\\1', 'v^', 'v~1', 'v 1', 'v\t1', 'a..b', 'v\u00011']) {
+    for (const ref of ['', 'v1:refs/heads/x', 'v*', 'v?', 'v[1]', 'v\\1', 'v^', 'v~1', 'v 1', 'v\t1', 'a..b', 'v\u00011', 'v@{1}', 'v/', 'v.lock']) {
       await expect(resolveTargetRef(repoDir, ref)).rejects.toMatchObject({ exitCode: 3, message: `Invalid ref: '${ref}'` });
     }
   });
@@ -111,5 +111,17 @@ describe('remote git helpers', () => {
     const err = await cloneRemoteRepo(`file://${root}/missing.git`, path.join(root, 'other.git')).catch((e: unknown) => e);
     expect(err).toMatchObject({ exitCode: 1 });
     expect((err as Error).message).toMatch(/^git clone failed: \S/);
+  });
+
+  it('never runs a transport helper, even when the git config allows one', async () => {
+    const marker = path.join(root, 'marker');
+    const saved = { ...process.env };
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.ext.allow', GIT_CONFIG_VALUE_0: 'always' });
+    try {
+      await expect(cloneRemoteRepo(`ext::sh -c touch% ${marker}`, path.join(root, 'ext.git'))).rejects.toThrow(/git clone failed/);
+    } finally {
+      process.env = saved;
+    }
+    expect(fs.existsSync(marker)).toBe(false);
   });
 });

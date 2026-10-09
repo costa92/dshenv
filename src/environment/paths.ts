@@ -46,6 +46,22 @@ export function resolveHomePath(value: string, label: string, cwd: string, userH
   return normalized.length > path.parse(normalized).root.length ? normalized.replace(/[\\/]+$/, '') : normalized;
 }
 
+function isSameOrInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+// envctl may sit in the DSH home (its default is <home>/envctl), but not on top of what DSH itself reads: its skills would hide DSH's loose skills.
+export function assertEnvctlClearOfDsh(managerDir: string, home: string, label: string): void {
+  if (path.relative(home, managerDir) === '') {
+    throw new ValidationError(`${label} ${managerDir} is the DSH home; use ${path.join(home, 'envctl')} or a directory outside it`);
+  }
+  const owned = [path.join(home, 'profiles'), path.join(home, 'skills')].find((dir) => isSameOrInside(dir, managerDir));
+  if (owned !== undefined) {
+    throw new ValidationError(`${label} ${managerDir} overlaps DSH's ${owned}; use ${path.join(home, 'envctl')} or a directory outside it`);
+  }
+}
+
 export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentPaths {
   const userHome = input?.userHome ?? os.homedir();
   const cwd = input?.cwd ?? process.cwd();
@@ -68,6 +84,9 @@ export function resolveEnvironmentPaths(input?: ResolvePathsInput): EnvironmentP
       : managerDirSource === 'env'
         ? resolveHomePath(input!.envEnvctlDir!, 'DSHENV_HOME environment variable', cwd, userHome)
         : path.join(home, 'envctl');
+  if (managerDirSource !== 'default') {
+    assertEnvctlClearOfDsh(managerDir, home, managerDirSource === 'flag' ? 'CLI envctl-dir' : 'DSHENV_HOME environment variable');
+  }
 
   return {
     home,

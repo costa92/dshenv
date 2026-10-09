@@ -95,7 +95,7 @@ export async function saveOverlay(
   assertNotRemoteOwned(paths, file);
   // Edits are made on parsed objects, so re-validate before a write could leave an overlay no command can load.
   const content = serializeOverlay(doc);
-  mergeManifest(base, parseOverlay(content, file), name);
+  mergeManifest(base, parseOverlay(content, file, true), name);
   await writeAtomic(file, content, 'overwrite');
 }
 

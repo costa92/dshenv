@@ -4,6 +4,7 @@ import { withEnvironmentLock } from '../io/lock.js';
 import {
   createEnvironmentSnapshot,
   findEnvironmentSnapshot,
+  snapshotOperationId,
   listEnvironmentSnapshots,
   readAbsentKeys,
   readClearedSelection,
@@ -198,11 +199,6 @@ function assertSnapshotReadable(snapshotId: string, snapshotDir: string): void {
   }
 }
 
-// A snapshot id is `<timestamp>-<operation id>`, the timestamp an ISO time with ':' and '.' replaced by '-'.
-function snapshotOperationId(snapshotId: string): string {
-  return snapshotId.replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/, '');
-}
-
 // Applies that failed and put their own lock.json and state.json back; restoring their snapshot changes nothing.
 async function selfUndoneApplies(paths: EnvironmentPaths): Promise<Set<string>> {
   return new Set((await readJournalEntries(paths)).filter((entry) => entry.type === 'apply-rollback').map((entry) => entry.operationId));
@@ -217,7 +213,10 @@ export async function lastSuccessfulApply(paths: EnvironmentPaths): Promise<stri
 
 // Without an id, the latest snapshot that is not from a failed apply: that one already undid itself.
 async function pickSnapshot(paths: EnvironmentPaths, operationId: string | undefined): Promise<{ snapshot: EnvironmentSnapshot; skipped: string[] }> {
-  if (operationId) {
+  if (operationId !== undefined) {
+    if (!operationId.trim()) {
+      throw new Error('The operation id must not be empty; omit it to restore the latest snapshot');
+    }
     return { snapshot: await findEnvironmentSnapshot(paths, operationId), skipped: [] };
   }
   const snapshots = await listEnvironmentSnapshots(paths);

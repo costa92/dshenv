@@ -1,6 +1,7 @@
 import type { EnvironmentLock, EnvironmentManifest } from '../domain.js';
 import { ValidationError } from '../errors.js';
 import { loadLock, loadManifest, parseOverlay } from '../manifest/files.js';
+import { isTransportHelperUrl } from '../manifest/schema.js';
 import { mergeManifest } from '../overlay/merge.js';
 import { isUndigestedEntry } from '../source/local.js';
 import { listTree, readBlob } from './git.js';
@@ -33,6 +34,10 @@ function candidateKey(rel: string): string | null {
 // Only a network URL (scheme://, or scp-style host:path) names the same repository on every machine. pnpm's own
 // protocols (link:../x, file:/x) look like host:path but name a directory here, which pnpm then links or copies.
 function isMachineLocalGitUrl(url: string): boolean {
+  // A <transport>:: helper runs a program here (ext::) or reads a local descriptor (fd::).
+  if (isTransportHelperUrl(url)) {
+    return true;
+  }
   const scheme = /^(?:git\+)?([a-z][a-z0-9+.-]*):\/\//i.exec(url)?.[1].toLowerCase();
   if (scheme !== undefined) {
     return scheme === 'file';

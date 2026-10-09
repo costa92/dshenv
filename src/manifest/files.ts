@@ -105,12 +105,13 @@ export function withResources(state: EnvironmentState, owned: OwnedResources): E
   return Object.keys(resources).length > 0 ? { ...rest, resources } : rest;
 }
 
-export function parseOverlay(content: string, file: string): EnvironmentOverlay {
+// `writing`: the content is what a command is about to write, so the file on disk is not the one at fault.
+export function parseOverlay(content: string, file: string, writing = false): EnvironmentOverlay {
   const raw = parseYamlStrict(content);
   const res = OverlaySchema.safeParse(raw);
   if (!res.success) {
     const issues = describeIssues(res.error);
-    throw new ValidationError(`Invalid overlay schema in ${file}: ${issues}`);
+    throw new ValidationError(writing ? `Refusing to write ${file}: ${issues}` : `Invalid overlay schema in ${file}: ${issues}`);
   }
   return res.data as EnvironmentOverlay;
 }

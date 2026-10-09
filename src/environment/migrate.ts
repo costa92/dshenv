@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { EnvironmentPaths } from './paths.js';
+import { assertEnvctlClearOfDsh, type EnvironmentPaths } from './paths.js';
 import { DshError, ValidationError } from '../errors.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { MOVED_FILE, assertEnvctlNotMoved } from './moved.js';
@@ -186,6 +186,8 @@ export async function migrateEnvctl(paths: EnvironmentPaths, to: string, options
   if ([target, realTarget].some((t) => isPathInside(source, t) || isPathInside(t, source) || isPathInside(from, t) || isPathInside(t, from))) {
     throw new ValidationError(`Cannot migrate ${from} to ${target}: one contains the other`);
   }
+  assertEnvctlClearOfDsh(target, path.resolve(paths.home), 'Target');
+  assertEnvctlClearOfDsh(realTarget, realpathOfExisting(path.resolve(paths.home)), 'Target');
   const targetStat = fs.lstatSync(target, { throwIfNoEntry: false });
   // An envctl moved away from the target left only its marker there, so it can be moved back.
   const targetEntries = targetStat?.isDirectory() ? fs.readdirSync(target).filter((name) => name !== MOVED_FILE) : [];

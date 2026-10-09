@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { assertNotReservedKey, assertProfileName, isValidProfileName } from '../manifest/schema.js';
+import { PluginAliasSchema, assertNotReservedKey, assertProfileName, isValidProfileName } from '../manifest/schema.js';
 import { Option, type Command } from 'commander';
 import { ValidationError } from '../errors.js';
 import { resolveEnvironmentPaths, type EnvironmentPaths } from '../environment/paths.js';
@@ -62,7 +62,22 @@ export function overlayBanner(selection: OverlaySelection): string {
 }
 
 export const profileOption = (value: string): string => assertProfileName(assertNotReservedKey('Profile name', value));
-export const aliasOption = (value: string): string => assertNotReservedKey('Plugin alias', value);
+// Refused when given rather than when the manifest is written. Only the CLI refuses a leading '-' or '.' and path
+// separators, so a manifest that already has such an alias still loads.
+export const aliasOption = (value: string): string => {
+  if (value === '') {
+    throw new ValidationError('Plugin alias must not be empty');
+  }
+  assertNotReservedKey('Plugin alias', value);
+  const parsed = PluginAliasSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new ValidationError(`${parsed.error.issues[0].message}: '${value}'`);
+  }
+  if (/^[-.]|[/\\]/.test(value)) {
+    throw new ValidationError(`Plugin alias must not start with '-' or '.', or contain '/' or '\\': '${value}'`);
+  }
+  return value;
+};
 
 export const PROFILE_ENV = 'DSHENV_PROFILE';
 export const LAYER_ENV = 'DSHENV_LAYER';
