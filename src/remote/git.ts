@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import { DshError, ValidationError } from '../errors.js';
+import { isValidGitRef } from '../manifest/schema.js';
 import { isolatedGit } from '../source/git.js';
 
 export interface TreeEntry {
@@ -83,11 +84,8 @@ export async function fetchBranch(repoDir: string, branch: string): Promise<stri
   return revParseCommit(repoDir, tracking);
 }
 
-// Characters git forbids in ref names; ':' or '*' would also change the meaning of the fetch refspec.
-const InvalidRefRegex = /[\x00-\x20\x7f:*?[\\^~]|\.\./;
-
 export async function resolveTargetRef(repoDir: string, ref: string): Promise<string> {
-  if (ref.startsWith('-') || InvalidRefRegex.test(ref)) {
+  if (!isValidGitRef(ref)) {
     throw new ValidationError(`Invalid ref: '${ref}'`);
   }
   if (/^[0-9a-f]{7,40}$/.test(ref) && (await hasCommit(repoDir, ref))) {

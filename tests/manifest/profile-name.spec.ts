@@ -11,13 +11,13 @@ const lockWith = (profile: string) => JSON.stringify({ apiVersion: 'dshenv-lock/
 
 // A profile name becomes a directory under profiles/ and an option value for DSH.
 describe('profile names', () => {
-  it.each(['../outside', '..', '.', 'a/b', 'a\\\\b', '-x', 'with space', ''])('rejects %j in the manifest, an overlay and the lock', (name) => {
+  it.each(['../outside', '..', '.', 'a/b', 'a\\\\b', '-x', 'with space', '', 'p'.repeat(101)])('rejects %j in the manifest, an overlay and the lock', (name) => {
     expect(() => loadManifest(manifestWith(name))).toThrow(/Invalid profile name/);
     expect(() => parseOverlay(overlayWith(name), 'overlays/x.yaml')).toThrow(/Invalid profile name/);
     expect(() => loadLock(lockWith(name))).toThrow(/Invalid profile name/);
   });
 
-  it.each(['web', 'my.profile', 'team_1', 'a-b', '.hidden'])('accepts %j', (name) => {
+  it.each(['web', 'my.profile', 'team_1', 'a-b', '.hidden', 'p'.repeat(100)])('accepts %j', (name) => {
     expect(Object.keys(loadManifest(manifestWith(name)).profiles)).toEqual([name]);
     expect(() => parseOverlay(overlayWith(name), 'overlays/x.yaml')).not.toThrow();
     expect(Object.keys(loadLock(lockWith(name)).profiles)).toEqual([name]);
@@ -74,9 +74,17 @@ describe('git sources in the manifest', () => {
   it.each([
     ['an option-like URL', '{ type: git, url: "--upload-pack=evil" }', /Git URL must not start with -/],
     ['an option-like ref', '{ type: git, url: "https://example.com/demo.git", ref: "--output=x" }', /ref must not start with -/],
-    ['a commit that is not a commit id', '{ type: git, url: "https://example.com/demo.git", commit: "--registry=x" }', /commit/]
+    ['a commit that is not a commit id', '{ type: git, url: "https://example.com/demo.git", commit: "--registry=x" }', /commit/],
+    ['an ext:: transport URL', '{ type: git, url: "ext::sh -c touch% /tmp/pwned" }', /transport/],
+    ['an fd:: transport URL', '{ type: git, url: "fd::17" }', /transport/],
+    ['an empty ref', '{ type: git, url: "https://example.com/demo.git", ref: "" }', /ref/]
   ])('rejects %s', (_label, source, message) => {
     expect(() => loadManifest(gitManifest(source))).toThrow(message);
+  });
+
+  it.each(['main..x y', 'a b', 'x@{1}', 'feat/', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b', 'a\\b', 'a\tb'])('rejects the ref %j', (ref) => {
+    const manifest = `apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      demo:\n        package: demo-plugin\n        source: ${JSON.stringify({ type: 'git', url: 'https://example.com/demo.git', ref })}\n`;
+    expect(() => loadManifest(manifest)).toThrow(/Invalid git ref/);
   });
 
   it('accepts a URL, a branch and a commit id', () => {

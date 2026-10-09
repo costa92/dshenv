@@ -20,6 +20,7 @@ describe('git URLs with embedded credentials', () => {
     'https://ghp_SECRET@github.com/x/demo.git',
     'git+https://alice:ghp_SECRET@github.com/x/demo.git',
     'ssh://git:ghp_SECRET@example.com/x/demo.git',
+    'alice:ghp_SECRET@github.com:x/demo.git',
     'https://gitlab.example.com/x/demo.git?private_token=ghp_SECRET',
     'https://example.com/x/demo.git?ref=main&access_token=ghp_SECRET'
   ])('are rejected in the manifest without echoing the secret: %s', (url) => {
@@ -75,6 +76,14 @@ describe('CLI refuses to store git credentials', () => {
     const { code, stderr } = await run(['install', 'https://alice:ghp_SECRET@github.com/x/demo.git', '--profile', 'web']);
     expect(code).toBe(3);
     expect(stderr).not.toContain('ghp_SECRET');
+    expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
+  });
+
+  it('refuses install from an scp-style URL with a password, without echoing it', async () => {
+    const before = fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8');
+    const { code, stdout, stderr } = await run(['install', 'alice:ghp_SECRET@github.com:o/dsh-plugin-w.git', '--profile', 'web']);
+    expect(code).toBe(3);
+    expect(stdout + stderr).not.toContain('ghp_SECRET');
     expect(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).toBe(before);
   });
 

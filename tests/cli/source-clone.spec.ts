@@ -466,6 +466,92 @@ describe('CLI source clone --profile', () => {
     expect(loadLock(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).profiles.web.plugins.demo.source).toMatchObject({ type: 'git', url });
   });
 
+  describe('input it refuses before cloning', () => {
+    const run = async (args: string[]) => {
+      let stdout = '';
+      let stderr = '';
+      const code = await runCli([...args, '--dsh-home', tempHome], {
+        stdout: (chunk) => { stdout += chunk; },
+        stderr: (chunk) => { stderr += chunk; }
+      });
+      return { code, stdout, stderr };
+    };
+    const manifestFile = () => path.join(tempHome, 'envctl', 'manifest.yaml');
+
+    it.each([
+      ['an empty --ref', ['--ref', ''], 'Invalid --ref'],
+      ['a --ref git would not take', ['--ref', 'main..x y'], 'Invalid --ref'],
+      ['an invalid --package', ['--package', 'Bad Name'], "Invalid --package 'Bad Name'"]
+    ])('refuses %s with exit 3, leaving nothing behind', async (_label, extra, message) => {
+      const before = fs.readFileSync(manifestFile(), 'utf8');
+      const { code, stderr } = await run(['source', 'clone', upstream, '--profile', 'web', '--as', 'demo', ...extra]);
+      expect(code).toBe(3);
+      expect(stderr).toContain(message);
+      expect(fs.readFileSync(manifestFile(), 'utf8')).toBe(before);
+      expect(fs.existsSync(path.join(tempHome, 'envctl', 'sources'))).toBe(false);
+    });
+
+    it.each(['ext::sh -c touch% x', 'fd::17'])('refuses the transport-helper URL %j', async (url) => {
+      const { code, stderr } = await run(['source', 'clone', url, path.join(tempHome, 'out')]);
+      expect(code).toBe(3);
+      expect(stderr).toMatch(/transport/);
+      expect(fs.existsSync(path.join(tempHome, 'out'))).toBe(false);
+    });
+
+    it.each([
+      ['--as', ['source', 'clone', 'UPSTREAM', 'OUT', '--as', 'demo']],
+      ['--package', ['source', 'clone', 'UPSTREAM', 'OUT', '--package', 'demo-plugin']],
+      ['--new-profile', ['source', 'clone', 'UPSTREAM', 'OUT', '--new-profile']],
+      ['--as', ['source', 'show', 'UPSTREAM', '--as', 'demo']],
+      ['--as', ['source', 'sync', 'UPSTREAM', '--as', 'demo']]
+    ])('refuses %s without --profile instead of ignoring it', async (flag, args) => {
+      const out = path.join(tempHome, 'out');
+      const { code, stderr } = await run(args.map((arg) => (arg === 'UPSTREAM' ? upstream : arg === 'OUT' ? out : arg)));
+      expect(code).toBe(3);
+      expect(stderr).toContain(`${flag} requires --profile`);
+      expect(fs.existsSync(out)).toBe(false);
+    });
+
+    it('checks an alias derived from the URL as it checks --as', async () => {
+      const { code, stderr } = await run(['source', 'clone', path.join(tempHome, 'upstream', '__proto__.git'), '--profile', 'web']);
+      expect(code).toBe(3);
+      expect(stderr).toContain("Plugin alias '__proto__' is reserved");
+    });
+
+    it('refuses an empty ref for source sync', async () => {
+      expect((await run(['source', 'clone', upstream, '--profile', 'web', '--as', 'demo'])).code).toBe(0);
+      const cloneDir = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
+      for (const args of [['--profile', 'web', '--as', 'demo', '--ref', ''], [cloneDir, '']]) {
+        const { code, stderr } = await run(['source', 'sync', ...args, '--yes']);
+        expect(code).toBe(3);
+        expect(stderr).toContain('Git ref must not be empty');
+      }
+    });
+
+    it('refuses source show of a directory that does not exist', async () => {
+      const { code, stderr } = await run(['source', 'show', path.join(tempHome, 'missing')]);
+      expect(code).toBe(3);
+      expect(stderr).toContain('Directory not found');
+    });
+  });
+
+  it('takes a git+ URL as install does', async () => {
+    const url = pathToFileURL(upstream).href;
+    expect(await runCli(['source', 'clone', `git+${url}`, '--profile', 'web', '--as', 'demo', '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(loadManifest(fs.readFileSync(path.join(tempHome, 'envctl', 'manifest.yaml'), 'utf8')).profiles.web.plugins.demo.source).toEqual({ type: 'git', url });
+  });
+
+  it('reports a failed clone as a git error in --json, not the raw command', async () => {
+    let output = '';
+    const code = await runCli(['source', 'clone', path.join(tempHome, 'missing'), path.join(tempHome, 'out'), '--json', '--dsh-home', tempHome], {
+      stdout: (chunk) => { output += chunk; },
+      stderr: (chunk) => { output += chunk; }
+    });
+    expect(code).toBe(1);
+    expect(output).toContain('git clone failed');
+    expect(output).not.toContain('ExecaError');
+  });
+
   it('source sync without a directory or --profile fast-forwards the checkout in the working directory', async () => {
     const checkout = path.join(tempHome, 'checkout');
     await execa('git', ['clone', '-q', upstream, checkout]);

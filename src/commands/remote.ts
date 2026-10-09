@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { ValidationError } from '../errors.js';
 import { normalizeGitUrl } from '../source/git.js';
 import { withEnvironmentLock } from '../io/lock.js';
-import { hasEmbeddedCredentials } from '../manifest/schema.js';
+import { TRANSPORT_HELPER_MESSAGE, hasEmbeddedCredentials, isTransportHelperUrl, isValidGitRef } from '../manifest/schema.js';
 import { renderPlan } from '../output/render.js';
 import { planJson } from '../planner/plan.js';
 import { cloneOrigin, cloneRemoteRepo, defaultBranch, fetchBranch, isAncestor, resolveTargetRef } from '../remote/git.js';
@@ -53,6 +53,13 @@ function ownedEntryIds(config: RemoteConfig): string[] {
 // can be compared with the clone's origin.
 function comparableUrl(url: string): boolean {
   return url.includes(':') || path.isAbsolute(url);
+}
+
+// Checked before any clone or fetch; resolveTargetRef would refuse the same ref only after them.
+function assertRefOption(ref: string | undefined): void {
+  if (ref !== undefined && !isValidGitRef(ref)) {
+    throw new ValidationError(`Invalid ref: '${ref}'`);
+  }
 }
 
 // The branch tip, or the commit a ref names on that branch.
@@ -140,12 +147,16 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       if (url.startsWith('-')) {
         throw new ValidationError(`Invalid Git URL: ${url}`);
       }
+      if (isTransportHelperUrl(url)) {
+        throw new ValidationError(TRANSPORT_HELPER_MESSAGE);
+      }
       if (!isValidRemotePath(cmdOpts.path)) {
         throw new ValidationError(`Invalid --path '${cmdOpts.path}': use '.' or a relative directory without '.' or '..' segments`);
       }
       if (cmdOpts.branch !== undefined && !isValidBranchName(cmdOpts.branch)) {
         throw new ValidationError(`Invalid --branch '${cmdOpts.branch}'`);
       }
+      assertRefOption(cmdOpts.ref);
       // A relative path means something only in this directory; the clone may run again from anywhere (sync after a rollback).
       url = normalizeGitUrl(url);
 
@@ -281,6 +292,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       .action(async (cmdOpts: { ref?: string; discardLocalChanges?: boolean; dryRun?: boolean; yes?: boolean }) => {
         const opts = program.opts();
         const paths = resolveCliPaths(opts);
+        assertRefOption(cmdOpts.ref);
         const { url, preview, accepted } = await withEnvironmentLock(paths, async () => {
           const config = readRemoteConfig(paths);
           if (!config) {
