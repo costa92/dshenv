@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { PluginAliasSchema, assertNotReservedKey, assertProfileName, isValidProfileName } from '../manifest/schema.js';
 import { Option, type Command } from 'commander';
 import { ValidationError } from '../errors.js';
-import { resolveEnvironmentPaths, type EnvironmentPaths } from '../environment/paths.js';
+import { assertEnvctlNotAboveDsh, resolveEnvironmentPaths, type EnvironmentPaths } from '../environment/paths.js';
 import { assertEnvctlNotMoved } from '../environment/moved.js';
 import { resolveOverlaySelection, type OverlaySelection } from '../overlay/selection.js';
 import { loadEffectiveManifest } from '../overlay/effective.js';
@@ -23,6 +23,7 @@ export function resolveCliPaths(opts: { dshHome?: string; envctlDir?: string }):
   // Moved first: migrate leaves a symlinked envctl in place with the marker in its target.
   assertEnvctlNotMoved(paths.managerDir);
   assertEnvctlNotLinked(paths);
+  assertEnvctlNotAboveDsh(paths);
   return paths;
 }
 

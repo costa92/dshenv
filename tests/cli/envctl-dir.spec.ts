@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../src/cli.js';
-import { assertEnvctlNotAboveDsh, resolveEnvironmentPaths } from '../../src/environment/paths.js';
+import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
 import { acquireEnvironmentLock } from '../../src/io/lock.js';
 import { migrateEnvctl } from '../../src/environment/migrate.js';
 
@@ -96,7 +96,9 @@ describe('CLI envctl location', () => {
     fs.mkdirSync(path.join(home, 'profiles', 'web'), { recursive: true });
     fs.mkdirSync(other);
     fs.writeFileSync(path.join(other, 'notes.txt'), 'important\n');
-    expect(() => assertEnvctlNotAboveDsh(resolveEnvironmentPaths({ cliDshHome: home, cliEnvctlDir: tempRoot }))).toThrow('dshenv migrate --to <dir>');
+    const legacy = await run(['plan', '--envctl-dir', tempRoot]);
+    expect(legacy.code).toBe(3);
+    expect(legacy.stderr).toContain('dshenv migrate --to <dir>');
 
     const target = path.join(tempRoot, 'moved');
     const result = await run(['migrate', '--to', target, '--yes', '--json', '--envctl-dir', tempRoot]);
