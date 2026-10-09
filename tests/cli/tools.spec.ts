@@ -125,6 +125,10 @@ process.exit(1);
     const missing = await run(['tools', 'config', 'unset', 'tool-web', 'nosuch', '-p', 'headless']);
     expect(missing.code).toBe(3);
     expect(missing.stderr).toContain("The config of 'tool-web' has no 'nosuch'");
+
+    const invalid = await run(['tools', 'config', 'unset', 'tool-web', 'a..b', '-p', 'headless']);
+    expect(invalid.code).toBe(3);
+    expect(invalid.stderr).toContain('Invalid config path: a..b');
   });
 
   it('writes a small patch for a top-level tool and reads or sets its config', async () => {

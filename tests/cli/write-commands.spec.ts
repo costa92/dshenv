@@ -130,6 +130,66 @@ describe('CLI manifest write commands', () => {
       expect(manifest().profiles.web.plugins.z.source).toEqual({ type: 'git', url: 'https://example.invalid/dsh-plugin-z.git' });
     });
 
+    it('refuses a git URL holding a token without echoing it, in either layer', async () => {
+      const before = manifestText();
+      const spec = 'https://github.com/o/dsh-plugin-x.git?access_token=SECRET';
+      const base = await run(['install', spec, '-p', 'web']);
+      expect(base.code).toBe(3);
+      expect(base.stderr).toContain('Git URL must not embed credentials');
+      expect(base.stderr).not.toContain('SECRET');
+      useOverlay('laptop');
+      const layered = await run(['install', spec, '-p', 'web', '--layer', 'overlay']);
+      expect(layered.code).toBe(3);
+      expect(layered.stderr).toContain('Git URL must not embed credentials');
+      expect(layered.stderr).not.toContain('SECRET');
+      expect(manifestText()).toBe(before);
+    });
+
+    it('derives the alias and package from a git URL without its query', async () => {
+      expect((await run(['install', 'https://example.invalid/dsh-plugin-q.git?depth=1', '-p', 'web'])).code).toBe(0);
+      expect(manifest().profiles.web.plugins.q).toMatchObject({ package: 'dsh-plugin-q', source: { type: 'git', url: 'https://example.invalid/dsh-plugin-q.git?depth=1' } });
+    });
+
+    it('refuses a git spec with more than one #', async () => {
+      const before = manifestText();
+      const out = await run(['install', 'git+https://example.invalid/dsh-plugin-x.git#main#x', '-p', 'web']);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(/one #/);
+      expect(manifestText()).toBe(before);
+    });
+
+    it('refuses an empty file: path, and a path it cannot name an alias after', async () => {
+      const before = manifestText();
+      const empty = await run(['install', 'file:', '-p', 'web']);
+      expect(empty.code).toBe(3);
+      expect(empty.stderr).toMatch(/empty/);
+      const root = await run(['install', `file:${'../'.repeat(40)}`, '-p', 'web']);
+      expect(root.code).toBe(3);
+      expect(root.stderr).toMatch(/Cannot derive an alias .*; pass --as/);
+      expect(manifestText()).toBe(before);
+    });
+
+    it.each([[''], ['a b'], ['-x'], ['.hidden'], ['../../etc'], ['a/b'], ['a\\b'], ['@mount:x']])('refuses --as %j before writing', async (alias) => {
+      const before = manifestText();
+      const out = await run(['install', 'dsh-plugin-demo@1.0.0', '-p', 'web', `--as=${alias}`]);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toMatch(/alias/i);
+      expect(out.stderr).not.toMatch(/Invalid manifest schema/);
+      expect(manifestText()).toBe(before);
+    });
+
+    it('reports a git commit install as written even when lock.json is corrupt', async () => {
+      fs.writeFileSync(path.join(tempHome, 'envctl', 'lock.json'), '{');
+      const commit = 'a'.repeat(40);
+      const json = await run(['install', `git+https://example.invalid/dsh-plugin-x.git#${commit}`, '-p', 'web', '--json']);
+      expect(json.code).toBe(0);
+      expect(json.stderr).toBe('');
+      expect(JSON.parse(json.stdout)).toMatchObject({ status: 'installed', alias: 'x' });
+      const text = await run(['install', `git+https://example.invalid/dsh-plugin-y.git#${commit}`, '-p', 'web']);
+      expect(text.code).toBe(0);
+      expect(manifest().profiles.web.plugins.y.source).toEqual({ type: 'git', url: 'https://example.invalid/dsh-plugin-y.git', commit });
+    });
+
     it('keeps the JSON of a write as it was', async () => {
       const out = JSON.parse((await run(['disable', 'agent-teams', '-p', 'web', '--json'])).stdout);
       expect(out).toEqual({ status: 'disabled', profile: 'web', alias: 'agent-teams' });
@@ -458,6 +518,27 @@ describe('CLI manifest write commands', () => {
           new RegExp(`^Could not read the config DSH composes for ${PKG.replace(/[/.@-]/g, '\\$&')} in profile 'web' \\(dsh --dump-config exited with code 1\\), so the patch holds only stateDir; `)
         );
         expect(manifest().profiles.web.plugins['agent-teams'].patches?.[0].config).toEqual({ stateDir: '.sd' });
+
+        const json = await run(['config', 'set', 'agent-teams', 'mode', 'fast', '-p', 'web', '--json']);
+        expect(json.code).toBe(0);
+        expect(json.stderr).toBe('');
+      });
+
+      it('keeps stderr free of warnings under --json', async () => {
+        fakeDump(`- id: teams-row\n  name: '${PKG}'\n  config:\n    stateDir: .agent-teams\n`);
+        const out = await run(['config', 'set', 'agent-teams', 'stateDirr', '.sd', '-p', 'web', '--json']);
+        expect(out.code).toBe(0);
+        expect(out.stderr).toBe('');
+        expect(JSON.parse(out.stdout)).toMatchObject({ status: 'set', path: 'stateDirr' });
+      });
+
+      it('refuses a value JSON would change, or an object key that reaches a prototype', async () => {
+        const before = manifestText();
+        for (const value of ['1e999', '12345678901234567890', '{"a":', '{"__proto__":{"x":1}}', '{"a":{"constructor":1}}']) {
+          const out = await run(['config', 'set', 'agent-teams', 'k', value, '-p', 'web', '--force']);
+          expect(out.code, value).toBe(3);
+        }
+        expect(manifestText()).toBe(before);
       });
 
       it('copies a composed config holding ${...}, which DSH reads as plain text', async () => {

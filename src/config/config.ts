@@ -5,10 +5,34 @@ import { computePatchDigest, extractManagedPatches } from '../patch/patch.js';
 import { readProfilePatchFile } from '../apply/patches.js';
 
 export function parseConfigValue(raw: string): unknown {
+  let value: unknown;
   try {
-    return JSON.parse(raw);
+    value = JSON.parse(raw);
   } catch {
+    // Text that opens like JSON is most likely broken JSON, not a string.
+    if (/^\s*[[{]/.test(raw)) {
+      throw new ValidationError("The value starts like JSON ('{' or '[') but is not valid JSON; to set it as a string, quote it as JSON ('\"...\"')");
+    }
     return raw;
+  }
+  assertConfigValue(value);
+  return value;
+}
+
+// Writing would turn these into something else (.inf, a rounded number) or drop the key, without a word.
+function assertConfigValue(value: unknown): void {
+  if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
+    throw new ValidationError("The value holds a number that cannot be stored exactly (too large, or not finite); to set it as a string, quote it as JSON ('\"...\"')");
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => assertConfigValue(item));
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (UNSAFE_PATH_SEGMENTS.has(key)) {
+        throw new ValidationError(`The value holds the key '${key}', which reaches an object's prototype instead of a config field`);
+      }
+      assertConfigValue(item);
+    }
   }
 }
 
