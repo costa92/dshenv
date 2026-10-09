@@ -76,6 +76,10 @@ export const aliasOption = (value: string): string => {
   if (/^[-.]|[/\\]/.test(value)) {
     throw new ValidationError(`Plugin alias must not start with '-' or '.', or contain '/' or '\\': '${value}'`);
   }
+  // Control and format characters (U+200B and the like) would make aliases that look the same but differ.
+  if (/\p{C}/u.test(value)) {
+    throw new ValidationError(`Plugin alias must not contain control or invisible characters: ${JSON.stringify(value)}`);
+  }
   return value;
 };
 
@@ -257,6 +261,8 @@ export function defaultTargetProfile(program: Command, writeErr: (chunk: string)
       if (!process.env[LAYER_ENV]) {
         return;
       }
+      // Checked before the overlay, so a bad value fails as --layer would rather than going unnoticed without one.
+      const layer = layerFromEnv();
       let overlayActive: boolean;
       try {
         overlayActive = resolveCliOverlay(opts, resolveCliPaths(opts)) !== null;
@@ -265,10 +271,9 @@ export function defaultTargetProfile(program: Command, writeErr: (chunk: string)
         return;
       }
       if (overlayActive) {
-        const layer = layerFromEnv();
         action.setOptionValue('layer', layer);
         note(`Using layer '${layer}' from ${LAYER_ENV}`);
-      } else if (process.env[LAYER_ENV] === 'overlay') {
+      } else if (layer === 'overlay') {
         // A change meant for this machine must not land in the base the team shares.
         throw new ValidationError(`--layer overlay requires an active overlay (use --overlay or dshenv overlay use) (from ${LAYER_ENV})`);
       }

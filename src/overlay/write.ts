@@ -129,7 +129,7 @@ export function assertBaseMergesWithOverlay(
   newBase: EnvironmentManifest
 ): void {
   // Edits are made on parsed objects, so re-validate before a write could leave a base no command can load.
-  loadManifest(serializeManifest(newBase));
+  loadManifest(serializeManifest(newBase), paths.manifestFile);
   if (selection) {
     mergeManifest(newBase, readOverlay(paths, selection.name), selection.name);
   }

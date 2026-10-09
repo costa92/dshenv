@@ -22,12 +22,20 @@ export function registerOverlayCommands(ctx: CommandContext): void {
   const { program, writeOut, writeErr } = ctx;
   const overlayCmd = program.command('overlay').description('Select and inspect per-machine manifest overlays');
 
+  // These name their overlay as an argument, so a global --overlay or --no-overlay would be silently ignored.
+  const refuseGlobalOverlay = (command: string, opts: { overlay?: string | false }) => {
+    if (opts.overlay !== undefined) {
+      throw new ValidationError(`--overlay and --no-overlay do not apply to overlay ${command}; name the overlay as its argument`);
+    }
+  };
+
   overlayCmd
     .command('use [name]')
     .description('Persist the overlay that later commands on this machine use')
     .option('--none', 'clear the persisted overlay for every later command (--no-overlay skips it for one command)')
     .action(async (name: string | undefined, cmdOpts: { none?: boolean }) => {
       const opts = program.opts();
+      refuseGlobalOverlay('use', opts);
       const paths = resolveCliPaths(opts);
       if (Boolean(name) === Boolean(cmdOpts.none)) {
         throw new ValidationError('overlay use requires exactly one of <name> or --none');
@@ -87,11 +95,18 @@ export function registerOverlayCommands(ctx: CommandContext): void {
     .description('Create an empty overlay under envctl/overlays to hold this machine\'s changes')
     .action(async (name: string) => {
       const opts = program.opts();
+      refuseGlobalOverlay('create', opts);
       const paths = resolveCliPaths(opts);
       const file = overlayFilePath(paths, name);
       await withEnvironmentLock(paths, async () => {
         if (fs.existsSync(file)) {
           throw new ValidationError(`Overlay '${name}' already exists: ${file}`);
+        }
+        // On a case-insensitive file system 'Work' and 'work' would be one file.
+        const existing = fs.existsSync(paths.overlaysDir) ? fs.readdirSync(paths.overlaysDir) : [];
+        const sameFolded = existing.find((entry) => entry.toLowerCase() === path.basename(file).toLowerCase());
+        if (sameFolded !== undefined) {
+          throw new ValidationError(`Overlay '${sameFolded.slice(0, -'.yaml'.length)}' already exists and differs from '${name}' only in case`);
         }
         assertNotRemoteOwned(paths, file);
         await fs.promises.mkdir(path.dirname(file), { recursive: true });
@@ -113,7 +128,7 @@ export function registerOverlayCommands(ctx: CommandContext): void {
       const paths = resolveCliPaths(opts);
       const effective = loadEffectiveManifest(paths, resolveCliOverlay(opts, paths));
       const profileNames = cmdOpts.profile ? [cmdOpts.profile] : Object.keys(effective.manifest.profiles).sort();
-      if (cmdOpts.profile && !effective.manifest.profiles[cmdOpts.profile]) {
+      if (cmdOpts.profile && !Object.hasOwn(effective.manifest.profiles, cmdOpts.profile)) {
         throw new ValidationError(`Profile '${cmdOpts.profile}' not found in the effective manifest`);
       }
       if (opts.json) {

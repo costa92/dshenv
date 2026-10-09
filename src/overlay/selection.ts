@@ -12,16 +12,18 @@ export interface OverlaySelection {
   via: OverlaySelectionVia;
 }
 
-// A leading '-' would read as an option to overlay use.
+// A leading '-' would read as an option to overlay use; Windows drops a trailing '.' from the file name.
 const OverlayNameRegex = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 export function isValidOverlayName(name: string): boolean {
-  return OverlayNameRegex.test(name) && name !== '.' && name !== '..';
+  return OverlayNameRegex.test(name) && name.length <= 100 && !name.endsWith('.');
 }
 
 export function validateOverlayName(name: string): string {
   if (!isValidOverlayName(name)) {
-    throw new ValidationError(`Invalid overlay name: '${name}' (allowed: letters, digits, '.', '_', '-'; not starting with '.' or '-')`);
+    throw new ValidationError(
+      `Invalid overlay name: '${name}' (allowed: letters, digits, '.', '_', '-', at most 100 characters; not starting with '.' or '-', not ending in '.')`
+    );
   }
   return name;
 }

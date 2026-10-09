@@ -112,4 +112,9 @@ describe('scaffoldComponent', () => {
     expect(() => scaffoldComponent(opts({ kind: 'tool', name: 'echo', dir: 'echo' }))).toThrow(`Target is not a directory: ${target}`);
     expect(fs.readFileSync(target, 'utf8')).toBe('x');
   });
+
+  it.each(['', '  '])('refuses an empty --dir %j instead of writing into cwd', (dir) => {
+    expect(() => scaffoldComponent(opts({ kind: 'skill', name: 'abc', dir }))).toThrow('--dir must not be empty');
+    expect(fs.readdirSync(work)).toEqual([]);
+  });
 });

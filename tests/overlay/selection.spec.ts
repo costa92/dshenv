@@ -40,7 +40,7 @@ describe('overlay selection', () => {
     expect(resolveOverlaySelection(paths, { env: '' })).toBeNull();
   });
 
-  it.each(['../escape', '..', '.', 'a/b', 'has space', '', '-dash'])('rejects the name %j', (name) => {
+  it.each(['../escape', '..', '.', 'a/b', 'has space', '', '-dash', 'work.', 'o'.repeat(101)])('rejects the name %j', (name) => {
     expect(() => validateOverlayName(name)).toThrow(/Invalid overlay name/);
   });
 

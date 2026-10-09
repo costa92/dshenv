@@ -11,7 +11,7 @@ const lockWith = (profile: string) => JSON.stringify({ apiVersion: 'dshenv-lock/
 
 // A profile name becomes a directory under profiles/ and an option value for DSH.
 describe('profile names', () => {
-  it.each(['../outside', '..', '.', 'a/b', 'a\\\\b', '-x', 'with space', '', 'p'.repeat(101)])('rejects %j in the manifest, an overlay and the lock', (name) => {
+  it.each(['../outside', '..', '.', 'a/b', 'a\\\\b', '-x', 'with space', '', 'p'.repeat(101), 'web.'])('rejects %j in the manifest, an overlay and the lock', (name) => {
     expect(() => loadManifest(manifestWith(name))).toThrow(/Invalid profile name/);
     expect(() => parseOverlay(overlayWith(name), 'overlays/x.yaml')).toThrow(/Invalid profile name/);
     expect(() => loadLock(lockWith(name))).toThrow(/Invalid profile name/);
@@ -21,6 +21,10 @@ describe('profile names', () => {
     expect(Object.keys(loadManifest(manifestWith(name)).profiles)).toEqual([name]);
     expect(() => parseOverlay(overlayWith(name), 'overlays/x.yaml')).not.toThrow();
     expect(Object.keys(loadLock(lockWith(name)).profiles)).toEqual([name]);
+  });
+
+  it('rejects two profiles that differ only in case', () => {
+    expect(() => loadManifest('apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins: {}\n  WEB:\n    plugins: {}\n')).toThrow(/differ only in case/);
   });
 
   it.each(['-h', '--help', '@-x/plugin'])('rejects the package name %j, which pnpm would read as an option', (name) => {
@@ -82,7 +86,7 @@ describe('git sources in the manifest', () => {
     expect(() => loadManifest(gitManifest(source))).toThrow(message);
   });
 
-  it.each(['main..x y', 'a b', 'x@{1}', 'feat/', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b', 'a\\b', 'a\tb'])('rejects the ref %j', (ref) => {
+  it.each(['main..x y', 'a b', 'x@{1}', 'feat/', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b', 'a\\b', 'a\tb', '.x', 'a/.b', 'a//b', 'a.', '/a'])('rejects the ref %j', (ref) => {
     const manifest = `apiVersion: dshenv/v1\nprofiles:\n  web:\n    plugins:\n      demo:\n        package: demo-plugin\n        source: ${JSON.stringify({ type: 'git', url: 'https://example.com/demo.git', ref })}\n`;
     expect(() => loadManifest(manifest)).toThrow(/Invalid git ref/);
   });
