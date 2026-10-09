@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -240,5 +241,26 @@ describe('readEnvironmentInventory', () => {
 
     const inventory = await readEnvironmentInventory(resolveEnvironmentPaths({ cliDshHome: tempHome }));
     expect(Object.keys(inventory.profiles)).toEqual(['web']);
+  });
+
+  // A FIFO reports size 0, and reading it blocks until a writer comes, which never happens.
+  it.skipIf(process.platform === 'win32')('reports files that are not regular files instead of blocking on them', async () => {
+    const mkfifo = (file: string) => execFileSync('mkfifo', [file]);
+    const fifoPackage = path.join(tempHome, 'profiles', 'fifo');
+    fs.mkdirSync(fifoPackage, { recursive: true });
+    mkfifo(path.join(fifoPackage, 'package.json'));
+    const fifoPatch = writeProfile(tempHome, 'patched', {});
+    mkfifo(path.join(fifoPatch, 'cordis.patch.yml'));
+    const web = writeProfile(tempHome, 'web', { bundles: ['demo'], dependencies: { demo: '1.0.0' } });
+    fs.mkdirSync(path.join(web, 'node_modules', 'demo'), { recursive: true });
+    mkfifo(path.join(web, 'node_modules', 'demo', 'package.json'));
+    mkfifo(path.join(tempHome, 'cordis.patch.yml'));
+
+    const inventory = await readEnvironmentInventory(resolveEnvironmentPaths({ cliDshHome: tempHome }));
+    expect(Object.keys(inventory.profiles)).toEqual(['web']);
+    expect(inventory.profiles.web.plugins.demo.version).toBeUndefined();
+    expect(inventory.invalidProfiles?.fifo).toMatch(/^Profile 'fifo' exists at .* but has a package\.json that is not a readable JSON file/);
+    expect(inventory.invalidProfiles?.patched).toMatch(/its cordis\.patch\.yml is not a regular file/);
+    expect(inventory.homePatchesError).toMatch(/cordis\.patch\.yml is not a regular file$/);
   });
 });

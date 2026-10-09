@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { readRemoteConfig, remoteFilePath, remoteOverlayKeys, type RemoteConfig } from '../remote/schema.js';
 import { writeAtomic } from './atomic-file.js';
@@ -14,6 +15,8 @@ const SKILLS_DIR = 'skills';
 const EXISTING_OVERLAYS_DIR = 'existing-overlays';
 // The overlay a rollback deselected as it removed it, kept in the snapshot it took first, so undoing that rollback selects it again.
 const CLEARED_SELECTION_FILE = 'cleared-selection.json';
+// The order snapshots were taken in: the time in their ids misorders them once the clock is set back.
+const SEQUENCE_FILE = 'sequence';
 
 export interface EnvironmentSnapshot {
   snapshotId: string;
@@ -40,7 +43,13 @@ export async function createEnvironmentSnapshot(
   await fs.promises.mkdir(stagingDir, { recursive: true });
   try {
     await copySnapshotFiles(paths, stagingDir, options);
+    // Taken under the environment lock, so no other snapshot can claim the same number.
+    const sequence = Math.max(0, ...(await listEnvironmentSnapshots(paths)).map((snapshot) => snapshotSequence(snapshot.snapshotDir) ?? 0)) + 1;
+    await fs.promises.writeFile(path.join(stagingDir, SEQUENCE_FILE), String(sequence));
+    // On disk before it is renamed into place, so a crash cannot leave a complete-looking snapshot of empty files.
+    await syncTree(stagingDir);
     await retryWhileBusy(() => fs.promises.rename(stagingDir, snapshotDir));
+    await syncPath(paths.backupsDir);
   } catch (err) {
     await fs.promises.rm(stagingDir, { recursive: true, force: true });
     throw err;
@@ -51,6 +60,41 @@ export async function createEnvironmentSnapshot(
     snapshotDir,
     timestamp
   };
+}
+
+// Best effort, as in writeAtomic: some platforms and file systems cannot sync a directory or a read-only handle.
+async function syncPath(file: string): Promise<void> {
+  try {
+    const handle = await fs.promises.open(file, 'r');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function syncTree(dir: string): Promise<void> {
+  for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await syncTree(full);
+    } else if (entry.isFile()) {
+      await syncPath(full);
+    }
+  }
+  await syncPath(dir);
+}
+
+function snapshotSequence(snapshotDir: string): number | null {
+  try {
+    const value = Number(fs.readFileSync(path.join(snapshotDir, SEQUENCE_FILE), 'utf8'));
+    return Number.isSafeInteger(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 async function copySnapshotFiles(paths: EnvironmentPaths, snapshotDir: string, options?: SnapshotOptions): Promise<void> {
@@ -200,16 +244,59 @@ export async function restoreEnvironmentSnapshot(
         await fs.promises.unlink(paths.skillsDir);
         return;
       }
-      const target = path.resolve(path.dirname(paths.skillsDir), await fs.promises.readlink(paths.skillsDir));
-      await fs.promises.rm(target, { recursive: true, force: true });
-      await fs.promises.cp(saved, target, { recursive: true, verbatimSymlinks: true });
+      await replaceDir(saved, await linkTarget(paths.skillsDir));
       return;
     }
-    await fs.promises.rm(paths.skillsDir, { recursive: true, force: true });
     if (fs.existsSync(saved)) {
-      await fs.promises.cp(saved, paths.skillsDir, { recursive: true, verbatimSymlinks: true });
+      await replaceDir(saved, paths.skillsDir);
+    } else {
+      await fs.promises.rm(paths.skillsDir, { recursive: true, force: true });
     }
   }
+}
+
+// Where a chain of links ends, never a link along it; resolved from the real directory each link is in, as the link
+// text is relative to that, not to the path it was reached by (envctl itself may be a link).
+async function linkTarget(link: string): Promise<string> {
+  try {
+    return await fs.promises.realpath(link);
+  } catch {
+    // The chain ends at nothing, which the restore creates.
+  }
+  let current = link;
+  for (let hops = 0; hops < 40; hops++) {
+    current = path.resolve(await fs.promises.realpath(path.dirname(current)), await fs.promises.readlink(current));
+    if (!fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      return current;
+    }
+  }
+  throw new Error(`Too many levels of symbolic links at ${link}`);
+}
+
+// Copied beside the target and swapped in by rename, so an interrupted restore leaves the old content, never an empty
+// or half-copied directory.
+async function replaceDir(saved: string, target: string): Promise<void> {
+  const staging = path.join(path.dirname(target), `.tmp-${path.basename(target)}-${crypto.randomBytes(6).toString('hex')}`);
+  const aside = `${staging}-old`;
+  try {
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.cp(saved, staging, { recursive: true, verbatimSymlinks: true });
+    const existed = fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined;
+    if (existed) {
+      await retryWhileBusy(() => fs.promises.rename(target, aside));
+    }
+    try {
+      await retryWhileBusy(() => fs.promises.rename(staging, target));
+    } catch (err) {
+      if (existed) {
+        await fs.promises.rename(aside, target).catch(() => {});
+      }
+      throw err;
+    }
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true });
+  }
+  await fs.promises.rm(aside, { recursive: true, force: true });
 }
 
 // The time in a snapshot id, `<ISO time with ':' and '.' as '-'>-<operation id>`.
@@ -235,7 +322,9 @@ export async function listEnvironmentSnapshots(paths: EnvironmentPaths): Promise
       timestamp: entry.name
     });
   }
-  snapshots.sort((a, b) => b.snapshotId.localeCompare(a.snapshotId));
+  // Newest first; one taken before snapshots were numbered is older than every numbered one.
+  const sequences = new Map(snapshots.map((snapshot) => [snapshot.snapshotId, snapshotSequence(snapshot.snapshotDir) ?? 0]));
+  snapshots.sort((a, b) => sequences.get(b.snapshotId)! - sequences.get(a.snapshotId)! || b.snapshotId.localeCompare(a.snapshotId));
   return snapshots;
 }
 

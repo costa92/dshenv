@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -10,6 +10,7 @@ import { loadLock, loadManifest, loadState, parseOverlay } from '../../src/manif
 import { readSelectionFile } from '../../src/overlay/selection.js';
 import { readProfilePatchState } from '../../src/profile-patches/entries.js';
 import { rollbackEnvironment } from '../../src/rollback/rollback.js';
+import { readJournalEntries } from '../../src/io/journal.js';
 import { LOCAL_OVERLAY, writeRemoteOwnedFixture } from '../helpers/remote-fixture.js';
 import { readRemoteConfig, sha256Hex, writeRemoteConfig } from '../../src/remote/schema.js';
 
@@ -330,6 +331,31 @@ describe('pullProfilePatches', () => {
     }
     expect(fs.readFileSync(patchFile(), 'utf8')).toBe(before);
     expect(base().profiles).toEqual({});
+  });
+
+  it('records its writes in the journal', async () => {
+    const result = await pull();
+    expect((await readJournalEntries(paths)).map((entry) => [entry.operationId, entry.type])).toEqual([
+      [result.operationId, 'pull-started'],
+      [result.operationId, 'pull-completed']
+    ]);
+  });
+
+  it('names the snapshot to roll back to when undoing a failed pull fails, and refuses the next pull until then', async () => {
+    const realRename = fs.promises.rename;
+    const spy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      if (path.basename(String(to)) === path.basename(paths.manifestFile)) {
+        throw new Error('disk full');
+      }
+      return realRename(from, to);
+    });
+    try {
+      await expect(pull()).rejects.toThrow(/^disk full; undoing the pull also failed \(disk full\), run dshenv rollback \S+-pull-[0-9a-f]{12} --yes$/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await readJournalEntries(paths)).map((entry) => entry.type)).toEqual(['pull-started', 'pull-rollback-failed']);
+    await expect(pull({ dryRun: true })).rejects.toThrow(/^The previous pull pull-[0-9a-f]{12} did not finish; run dshenv rollback \S+-pull-[0-9a-f]{12} --yes/);
   });
 
   it('is undone by rollback, which also drops the selection of the overlay it created', async () => {

@@ -62,6 +62,14 @@ describe('CLI write commands wait for the environment lock', () => {
     await expectWaitsForLock(['overlay', 'create', 'laptop'], () => fs.existsSync(overlayFile));
   });
 
+  it('holds the lock while selecting an overlay', async () => {
+    const overlayFile = path.join(tempHome, 'envctl', 'overlays', 'laptop.yaml');
+    fs.mkdirSync(path.dirname(overlayFile), { recursive: true });
+    fs.writeFileSync(overlayFile, 'apiVersion: dshenv-overlay/v1\n');
+    const selectionFile = path.join(tempHome, 'envctl', 'overlay-selection.json');
+    await expectWaitsForLock(['overlay', 'use', 'laptop'], () => fs.existsSync(selectionFile));
+  });
+
   it('holds the lock while adopting', async () => {
     const profileDir = path.join(tempHome, 'profiles', 'web');
     fs.mkdirSync(path.join(profileDir, 'node_modules', 'demo-plugin'), { recursive: true });

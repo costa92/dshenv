@@ -552,6 +552,51 @@ describe('CLI source clone --profile', () => {
     expect(output).not.toContain('ExecaError');
   });
 
+  it('refuses to clone or sync a managed clone without --profile, which would part it from the lock', async () => {
+    let stderr = '';
+    const run = (args: string[]) => runCli([...args, '--dsh-home', tempHome], { stdout: () => {}, stderr: (chunk) => { stderr += chunk; } });
+    expect(await run(['source', 'clone', upstream, '-p', 'web', '--as', 'demo'])).toBe(0);
+    const clone = path.join(tempHome, 'envctl', 'sources', 'web', 'demo-plugin');
+    const lockBefore = fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8');
+    fs.writeFileSync(path.join(upstream, 'next.txt'), 'next');
+    await execa('git', ['add', '.'], { cwd: upstream });
+    await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
+
+    expect(await run(['source', 'sync', clone, '--yes'])).toBe(3);
+    expect(stderr).toContain(`${clone} is under envctl/sources, where dshenv keeps the clones lock.json pins; sync it with -p <profile> so the lock follows`);
+    expect(fs.existsSync(path.join(clone, 'next.txt'))).toBe(false);
+    const other = path.join(tempHome, 'envctl', 'sources', 'web', 'other');
+    expect(await run(['source', 'clone', upstream, other])).toBe(3);
+    expect(stderr).toContain(`${other} is under envctl/sources, where dshenv keeps the clones lock.json pins; clone it with -p <profile> so the lock follows`);
+    expect(fs.existsSync(other)).toBe(false);
+    expect(fs.readFileSync(path.join(tempHome, 'envctl', 'lock.json'), 'utf8')).toBe(lockBefore);
+  });
+
+  it.each([
+    ['clone', (dir: string, upstreamDir: string) => ['source', 'clone', upstreamDir, dir]],
+    ['sync', (dir: string) => ['source', 'sync', dir, '--yes']]
+  ])('holds the environment lock for source %s into envctl without --profile', async (kind, args) => {
+    const run = (argv: string[]) => runCli([...argv, '--dsh-home', tempHome], { stdout: () => {}, stderr: () => {} });
+    const dir = path.join(tempHome, 'envctl', 'scratch', 'demo');
+    if (kind === 'sync') {
+      await execa('git', ['clone', '-q', upstream, dir]);
+      fs.writeFileSync(path.join(upstream, 'next.txt'), 'next');
+      await execa('git', ['add', '.'], { cwd: upstream });
+      await execa('git', ['commit', '-m', 'next'], { cwd: upstream });
+    }
+    const done = () => fs.existsSync(path.join(dir, kind === 'sync' ? 'next.txt' : 'package.json'));
+    const held = await acquireEnvironmentLock(resolveEnvironmentPaths({ cliDshHome: tempHome }));
+    const pending = run(args(dir, upstream));
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(`${held.lockPath}.wanted`)).toBe(true));
+      expect(done()).toBe(false);
+    } finally {
+      await held.release();
+    }
+    expect(await pending).toBe(0);
+    expect(done()).toBe(true);
+  });
+
   it('source sync without a directory or --profile fast-forwards the checkout in the working directory', async () => {
     const checkout = path.join(tempHome, 'checkout');
     await execa('git', ['clone', '-q', upstream, checkout]);

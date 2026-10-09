@@ -81,6 +81,27 @@ describe('CLI apply has DSH create a template profile that does not exist yet', 
     expect(plan.code).toBe(0);
   });
 
+  it.each([
+    ['corrupt', '{ not json'],
+    ['without dsh.profile', JSON.stringify({ name: 'p', dependencies: {} })],
+    ['missing', null]
+  ])('blocks a template profile whose directory exists with a %s package.json instead of creating it', async (_label, pkg) => {
+    writeManifest(`${team('web')}    patches:\n      - id: agent-team\n        config: { maxMembers: 3 }\n`);
+    fs.mkdirSync(path.join(profileDir('web'), 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(profileDir('web'), 'sessions', 's1.json'), '{}');
+    if (pkg !== null) fs.writeFileSync(path.join(profileDir('web'), 'package.json'), pkg);
+
+    const preview = await run(['apply']);
+    expect(preview.stdout).not.toContain('Profiles DSH creates from its own template first');
+    expect(preview.stdout).toContain('BLOCKED');
+    expect(preview.stdout).toContain(`Profile 'web' exists at ${profileDir('web')}`);
+
+    const out = await run(['apply', '--yes']);
+    expect(out.code).toBe(5);
+    expect(out.stderr).toContain(`Profile 'web' exists at ${profileDir('web')}`);
+    expect(fs.existsSync(path.join(profileDir('web'), 'sessions', 's1.json'))).toBe(true);
+  });
+
   it('still blocks a profile whose name DSH has no template for, and says how to create it', async () => {
     writeManifest(team('mine'));
     const out = await run(['apply', '--yes']);

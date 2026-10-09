@@ -2,19 +2,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readEnvironmentInventory } from '../inventory/profile-reader.js';
 import { captureEnvironment, initEnvironment } from '../import/capture.js';
-import { adoptEnvironment, type AdoptDetail } from '../import/adopt.js';
+import { adoptUnderLock, type AdoptDetail } from '../import/adopt.js';
 import { parseYamlStrict, serializeCaptureDocument } from '../manifest/files.js';
 import { CaptureDocumentSchema } from '../manifest/schema.js';
 import { writeAtomic } from '../io/atomic-file.js';
 import { withEnvironmentLock } from '../io/lock.js';
 import { ValidationError } from '../errors.js';
 import type { CaptureDocument } from '../domain.js';
-import { assertNotRemoteOwned } from '../remote/ownership.js';
+import { assertNoUnfinishedOperations } from '../io/journal.js';
 import { assertBaseMergesWithOverlay, resolveWriteLayer } from '../overlay/write.js';
 import { readOverlay } from '../overlay/effective.js';
 import { resolveCliPaths, resolveCliOverlay, filterProfile, type CommandContext } from './context.js';
 import { Option } from 'commander';
-import { pullProfilePatches } from '../import/pull.js';
+import { pullUnderLock } from '../import/pull.js';
 import { renderPullResult } from './pull.js';
 import { reportPreview } from './confirm.js';
 
@@ -99,6 +99,7 @@ export function registerSetupCommands(ctx: CommandContext): void {
     .action(async (file: string | undefined, cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: ctx.writeErr });
       if (file !== undefined && cmdOpts.from !== undefined) {
         throw new ValidationError('Give the capture file once: as the argument or with -f, not both');
       }
@@ -115,9 +116,6 @@ export function registerSetupCommands(ctx: CommandContext): void {
       if (resolveWriteLayer(selection, cmdOpts.layer ?? 'base') === 'overlay') {
         throw new ValidationError('adopt picks the layer itself: the base, and an overlay for machine-local plugins; drop --layer overlay');
       }
-      // Adopt rewrites the base and the whole lock; a subscription always owns the base, so team lock entries stay intact too.
-      assertNotRemoteOwned(paths, paths.manifestFile);
-
       const candidatePath = path.isAbsolute(from)
         ? from
         : path.resolve(process.cwd(), from);
@@ -138,13 +136,38 @@ export function registerSetupCommands(ctx: CommandContext): void {
       }
 
       const preview = Boolean(cmdOpts.dryRun) || !cmdOpts.yes;
-      const summary = await adoptEnvironment(paths, parsed.data as CaptureDocument, {
-        validateManifest: (manifest) => assertBaseMergesWithOverlay(paths, selection, manifest),
-        dryRun: preview,
-        overlay: selection ? readOverlay(paths, selection.name) : undefined,
-        allowOverlay: selection !== null || opts.overlay !== false
+      // One lock for both, so nothing changes the files adopt wrote before the pull reads them.
+      const { summary, patches } = await withEnvironmentLock(paths, async () => {
+        const summary = await adoptUnderLock(paths, parsed.data as CaptureDocument, {
+          validateManifest: (manifest) => assertBaseMergesWithOverlay(paths, selection, manifest),
+          dryRun: preview,
+          overlay: selection ? readOverlay(paths, selection.name) : undefined,
+          allowOverlay: selection !== null || opts.overlay !== false
+        });
+        if (preview || summary.profiles.length === 0) {
+          return { summary, patches: null };
+        }
+        const machineLocal = summary.details.filter((d) => d.layer === 'overlay');
+        // Taking over a profile includes the settings DSH wrote into its patch file.
+        try {
+          const patches = await pullUnderLock(paths, {
+            profiles: summary.profiles,
+            selection,
+            allowOverlayCreation: opts.overlay !== false,
+            plugins: machineLocal.length > 0 ? machineLocalPackages(machineLocal) : false,
+            overlaySources: summary.overlaySources
+          });
+          return { summary, patches };
+        } catch (err) {
+          // The adoption is already written; only the pull remains, so say so rather than suggest adopt failed.
+          if (err instanceof Error) {
+            err.message =
+              `Adopted ${summary.adoptedCount} plugin(s) across profile(s): ${summary.profiles.join(', ')}, ` +
+              `but taking over their patch entries${machineLocal.length > 0 ? ' and machine-local plugins' : ''} failed: ${err.message}; fix that and run dshenv pull --yes`;
+          }
+          throw err;
+        }
       });
-      const machineLocal = summary.details.filter((d) => d.layer === 'overlay');
       if (preview) {
         const pending = summary.details.filter((d) => !d.alreadyAdopted);
         if (opts.json) {
@@ -163,28 +186,6 @@ export function registerSetupCommands(ctx: CommandContext): void {
         reportPreview(ctx, { json: opts.json, dryRun: cmdOpts.dryRun, pending: pending.length > 0, action: 'adopt' });
         return;
       }
-      // Taking over a profile includes the settings DSH wrote into its patch file.
-      let patches: Awaited<ReturnType<typeof pullProfilePatches>> | null = null;
-      try {
-        patches = summary.profiles.length > 0
-          ? await pullProfilePatches(paths, {
-            profiles: summary.profiles,
-            selection,
-            allowOverlayCreation: opts.overlay !== false,
-            plugins: machineLocal.length > 0 ? machineLocalPackages(machineLocal) : false,
-            overlaySources: summary.overlaySources
-          })
-          : null;
-      } catch (err) {
-        // The adoption is already written; only the pull remains, so say so rather than suggest adopt failed.
-        if (err instanceof Error) {
-          err.message =
-            `Adopted ${summary.adoptedCount} plugin(s) across profile(s): ${summary.profiles.join(', ')}, ` +
-            `but taking over their patch entries${machineLocal.length > 0 ? ' and machine-local plugins' : ''} failed: ${err.message}; fix that and run dshenv pull --yes`;
-        }
-        throw err;
-      }
-
       if (opts.json) {
         writeOut(JSON.stringify(patches ? { ...summary, patches } : summary, null, 2) + '\n');
       } else {

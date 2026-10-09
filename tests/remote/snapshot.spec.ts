@@ -6,7 +6,7 @@ import { cloneRemoteRepo, fetchBranch } from '../../src/remote/git.js';
 import { loadLock } from '../../src/manifest/files.js';
 import { lockEntryDigest } from '../../src/remote/lock-entries.js';
 import { compareRemoteKeys, sha256Hex } from '../../src/remote/schema.js';
-import { loadRemoteSnapshot } from '../../src/remote/snapshot.js';
+import { MAX_REMOTE_FILES, MAX_REMOTE_FILE_BYTES, MAX_REMOTE_TOTAL_BYTES, loadRemoteSnapshot } from '../../src/remote/snapshot.js';
 import { TEAM_LOCK, TEAM_MANIFEST, TEAM_OVERLAY, commitTeamFiles, createTeamRepo } from '../helpers/team-repo.js';
 
 describe('loadRemoteSnapshot', () => {
@@ -258,6 +258,36 @@ describe('loadRemoteSnapshot', () => {
       /^Remote skill file envctl\/skills\/review\/lib\/node_modules\/dep\/index\.js is never copied into DSH/
     ],
     [
+      'lock with an entry the team does not declare',
+      {
+        'envctl/manifest.yaml': TEAM_MANIFEST,
+        'envctl/lock.json': JSON.stringify({
+          apiVersion: 'dshenv-lock/v1',
+          profiles: {
+            web: {
+              plugins: {
+                shared: { package: 'shared-plugin', source: { type: 'npm', resolvedVersion: '1.0.0' } },
+                mine: { package: 'mine', source: { type: 'npm', resolvedVersion: '1.0.0' } }
+              }
+            }
+          }
+        })
+      },
+      /^Remote file envctl\/lock\.json: lock entry 'web\/mine' is declared by neither the team manifest nor a team overlay; remove it from the team lock$/
+    ],
+    [
+      'lock with an entry for a profile the team does not declare',
+      {
+        'envctl/manifest.yaml': TEAM_MANIFEST,
+        'envctl/overlays/team.yaml': TEAM_OVERLAY,
+        'envctl/lock.json': JSON.stringify({
+          apiVersion: 'dshenv-lock/v1',
+          profiles: { cli: { plugins: { shared: { package: 'shared-plugin', source: { type: 'npm', resolvedVersion: '1.0.0' } } } } }
+        })
+      },
+      /lock entry 'cli\/shared' is declared by neither the team manifest nor a team overlay/
+    ],
+    [
       'skill file named .tmp-*',
       { 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/review/SKILL.md': '# a\n', 'envctl/skills/review/.tmp-data': '1\n' },
       /^Remote skill file envctl\/skills\/review\/\.tmp-data is never copied into DSH/
@@ -275,6 +305,44 @@ describe('loadRemoteSnapshot', () => {
       expect(snapshot.manifest.profiles.web.plugins.demo.source).toMatchObject({ url });
     }
   );
+
+  it('accepts a lock entry only a team overlay declares', async () => {
+    const snapshot = await snapshotOf({
+      'envctl/manifest.yaml': TEAM_MANIFEST,
+      'envctl/overlays/dev.yaml':
+        'apiVersion: dshenv-overlay/v1\nprofiles:\n  web:\n    plugins:\n      extra:\n        package: extra-plugin\n        source: { type: npm, version: "2.0.0" }\n',
+      'envctl/lock.json': JSON.stringify({
+        apiVersion: 'dshenv-lock/v1',
+        profiles: { web: { plugins: { extra: { package: 'extra-plugin', source: { type: 'npm', resolvedVersion: '2.0.0' } } } } }
+      })
+    });
+    expect(Object.keys(snapshot.lockEntries.web)).toEqual(['extra']);
+  });
+
+  it('refuses a team file larger than the limit before reading it', async () => {
+    await expect(snapshotOf({ 'envctl/manifest.yaml': TEAM_MANIFEST, 'envctl/skills/big/SKILL.md': 'x'.repeat(MAX_REMOTE_FILE_BYTES + 1) })).rejects.toThrow(
+      `Remote file envctl/skills/big/SKILL.md is ${MAX_REMOTE_FILE_BYTES + 1} bytes, more than the ${MAX_REMOTE_FILE_BYTES} dshenv reads from a team repository`
+    );
+  });
+
+  it('refuses team files larger than the limit together', async () => {
+    const files: Record<string, string> = { 'envctl/manifest.yaml': TEAM_MANIFEST };
+    const size = MAX_REMOTE_FILE_BYTES - 1;
+    for (let index = 0; index * size <= MAX_REMOTE_TOTAL_BYTES; index++) {
+      files[`envctl/skills/big/part-${index}.md`] = String(index).repeat(size / String(index).length | 0);
+    }
+    await expect(snapshotOf(files)).rejects.toThrow(/^Remote path envctl holds \d+ bytes, more than the 104857600 dshenv reads from a team repository$/);
+  }, 60_000);
+
+  it('refuses more team files than the limit', async () => {
+    const files: Record<string, string> = { 'envctl/manifest.yaml': TEAM_MANIFEST };
+    for (let index = 0; index < MAX_REMOTE_FILES; index++) {
+      files[`envctl/skills/many/f${index}.md`] = '';
+    }
+    await expect(snapshotOf(files)).rejects.toThrow(
+      `Remote path envctl holds ${MAX_REMOTE_FILES + 1} files, more than the ${MAX_REMOTE_FILES} dshenv reads from a team repository`
+    );
+  }, 60_000);
 
   it('refuses a symlink in place of an adopted file', async () => {
     const team = await createTeamRepo(root, { 'envctl/real.yaml': TEAM_MANIFEST });

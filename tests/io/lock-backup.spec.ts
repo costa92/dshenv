@@ -147,7 +147,7 @@ describe('Lock, Backup and Journal IO', () => {
     }
   });
 
-  it('should point at a reclaim marker left by a crashed reclaimer instead of removing it', async () => {
+  it('should clear a reclaim marker left by a crashed reclaimer and take over the stale lock', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const lockFile = path.join(paths.managerDir, 'dshenv.lock');
     fs.writeFileSync(lockFile, JSON.stringify({ pid: 2 ** 31 - 1, hostname: os.hostname() }));
@@ -156,8 +156,62 @@ describe('Lock, Backup and Journal IO', () => {
     const past = new Date(Date.now() - 60_000);
     fs.utimesSync(guard, past, past);
 
-    await expect(acquireEnvironmentLock(paths, 0)).rejects.toThrow(/stale reclaim marker/);
-    expect(fs.existsSync(guard)).toBe(true);
+    const handle = await acquireEnvironmentLock(paths, 0);
+    expect(fs.existsSync(guard)).toBe(false);
+    await handle.release();
+  });
+
+  it('should leave a fresh reclaim marker to the reclaimer holding it', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 2 ** 31 - 1, hostname: os.hostname() }));
+    fs.mkdirSync(`${lockFile}.reclaim`);
+
+    await expect(acquireEnvironmentLock(paths, 0)).rejects.toThrow(/already held/);
+    expect(fs.existsSync(`${lockFile}.reclaim`)).toBe(true);
+  });
+
+  it.skipIf(process.platform !== 'linux')('does not take over a lock from another pid namespace on the same host name', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    // Another container of the pod: its pid means nothing here.
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 2 ** 31 - 1, hostname: os.hostname(), pidns: 'pid:[1]' }));
+    await expect(acquireEnvironmentLock(paths, 100)).rejects.toThrow(/already held/);
+
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 2 ** 31 - 1, hostname: os.hostname(), pidns: fs.readlinkSync('/proc/self/ns/pid') }));
+    const handle = await acquireEnvironmentLock(paths, 100);
+    expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pidns).toBe(fs.readlinkSync('/proc/self/ns/pid'));
+    await handle.release();
+  });
+
+  it('does not delete a lock on release that is no longer its own', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    const handle = await acquireEnvironmentLock(paths);
+    const other = JSON.stringify({ pid: process.ppid, hostname: os.hostname(), nonce: 'other' });
+    fs.rmSync(lockFile);
+    fs.writeFileSync(lockFile, other);
+    await handle.release();
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(other);
+  });
+
+  it('removes the lock file it created when writing its content fails', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const lockFile = path.join(paths.managerDir, 'dshenv.lock');
+    const open = fs.promises.open;
+    const spy = vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+      const handle = await open(file, flags, mode);
+      if (file === lockFile && flags === 'wx') {
+        handle.writeFile = () => Promise.reject(new Error('disk full'));
+      }
+      return handle;
+    });
+    try {
+      await expect(acquireEnvironmentLock(paths, 0)).rejects.toThrow(/disk full/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.existsSync(lockFile)).toBe(false);
   });
 
   it('should reclaim an unreadable lock left behind long ago', async () => {
@@ -207,6 +261,110 @@ describe('Lock, Backup and Journal IO', () => {
 
     expect(await listEnvironmentSnapshots(paths)).toEqual([]);
     expect(fs.readdirSync(paths.backupsDir)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('restores linked skills into the directory the links lead to, when envctl itself is a link', async () => {
+    const real = path.join(tempHome, 'real');
+    fs.mkdirSync(path.join(real, 'envctl'), { recursive: true });
+    fs.mkdirSync(path.join(real, 'final-skills', 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(real, 'final-skills', 'alpha', 'SKILL.md'), 'v1');
+    fs.symlinkSync('final-skills', path.join(real, 'shared-skills'));
+    fs.symlinkSync('../shared-skills', path.join(real, 'envctl', 'skills'));
+    fs.mkdirSync(path.join(tempHome, 'links'));
+    fs.symlinkSync(path.join(real, 'envctl'), path.join(tempHome, 'links', 'envctl'));
+    // What the link text names beside the linked envctl: an unrelated directory of the user's.
+    const unrelated = path.join(tempHome, 'links', 'shared-skills');
+    fs.mkdirSync(unrelated);
+    fs.writeFileSync(path.join(unrelated, 'keep.txt'), 'mine');
+    const paths = resolveEnvironmentPaths({ cliDshHome: path.join(tempHome, 'dsh'), cliEnvctlDir: path.join(tempHome, 'links', 'envctl') });
+
+    const snapshot = await createEnvironmentSnapshot(paths, 'test-op-linked');
+    fs.writeFileSync(path.join(real, 'final-skills', 'alpha', 'SKILL.md'), 'v2');
+    await restoreEnvironmentSnapshot(snapshot, paths);
+
+    expect(fs.readFileSync(path.join(real, 'final-skills', 'alpha', 'SKILL.md'), 'utf8')).toBe('v1');
+    expect(fs.lstatSync(path.join(real, 'shared-skills')).isSymbolicLink()).toBe(true);
+    expect(fs.readdirSync(unrelated)).toEqual(['keep.txt']);
+  });
+
+  it('keeps the skills it would replace when copying the saved ones fails', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.mkdirSync(path.join(paths.skillsDir, 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(paths.skillsDir, 'alpha', 'SKILL.md'), 'v1');
+    const snapshot = await createEnvironmentSnapshot(paths, 'test-op-skills');
+    fs.writeFileSync(path.join(paths.skillsDir, 'alpha', 'SKILL.md'), 'v2');
+    const cp = fs.promises.cp;
+    const spy = vi.spyOn(fs.promises, 'cp').mockImplementation(async (src, dest, options) => {
+      if (String(src).startsWith(snapshot.snapshotDir)) {
+        throw new Error('interrupted');
+      }
+      return cp(src, dest, options);
+    });
+    try {
+      await expect(restoreEnvironmentSnapshot(snapshot, paths)).rejects.toThrow(/interrupted/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(path.join(paths.skillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('v2');
+    expect(fs.readdirSync(paths.managerDir).filter((name) => name.startsWith('.tmp-'))).toEqual([]);
+  });
+
+  it('orders snapshots by the order they were taken, not by a clock that went back', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.writeFileSync(paths.manifestFile, 'apiVersion: dshenv/v1\n');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-05-01T00:00:00Z'));
+      const first = await createEnvironmentSnapshot(paths, 'first');
+      vi.setSystemTime(new Date('2026-04-01T00:00:00Z'));
+      const second = await createEnvironmentSnapshot(paths, 'second');
+      expect((await listEnvironmentSnapshots(paths)).map((s) => s.snapshotId)).toEqual([second.snapshotId, first.snapshotId]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('puts snapshots from before sequence numbers behind every numbered one', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const legacy = path.join(paths.backupsDir, '2099-01-01T00-00-00-000Z-apply-legacy');
+    fs.mkdirSync(legacy, { recursive: true });
+    const taken = await createEnvironmentSnapshot(paths, 'numbered');
+    expect((await listEnvironmentSnapshots(paths)).map((s) => s.snapshotId)).toEqual([taken.snapshotId, path.basename(legacy)]);
+  });
+
+  it('flushes every file and directory of a snapshot before it is renamed into place', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    fs.writeFileSync(paths.manifestFile, 'apiVersion: dshenv/v1\n');
+    fs.mkdirSync(path.join(paths.skillsDir, 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(paths.skillsDir, 'alpha', 'SKILL.md'), 'v1');
+    const synced = new Set<string>();
+    let syncedAtRename: string[] = [];
+    const open = fs.promises.open;
+    const rename = fs.promises.rename;
+    const openSpy = vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+      const handle = await open(file, flags, mode);
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        synced.add(String(file));
+        return sync();
+      };
+      return handle;
+    });
+    const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      syncedAtRename = [...synced];
+      return rename(from, to);
+    });
+    try {
+      await createEnvironmentSnapshot(paths, 'test-op-sync');
+    } finally {
+      openSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+    const staging = syncedAtRename.find((file) => file.endsWith('.partial'));
+    expect(staging).toBeDefined();
+    for (const entry of ['manifest.yaml', 'skills', path.join('skills', 'alpha'), path.join('skills', 'alpha', 'SKILL.md')]) {
+      expect(syncedAtRename).toContain(path.join(staging!, entry));
+    }
   });
 
   it('should append and read journal entries', async () => {

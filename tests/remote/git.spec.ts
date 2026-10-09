@@ -8,7 +8,7 @@ import {
   fetchBranch,
   isAncestor,
   listTree,
-  readBlob,
+  readBlobs,
   resolveTargetRef
 } from '../../src/remote/git.js';
 import {
@@ -76,9 +76,28 @@ describe('remote git helpers', () => {
       'envctl/overlays/team.yaml',
       'envctl/state.json'
     ]);
-    expect(entries[1]).toEqual({ mode: '100644', type: 'blob', path: 'envctl/manifest.yaml' });
+    expect(entries[1]).toEqual({
+      mode: '100644',
+      type: 'blob',
+      object: expect.stringMatching(/^[0-9a-f]{40,64}$/),
+      size: Buffer.byteLength(TEAM_MANIFEST),
+      path: 'envctl/manifest.yaml'
+    });
     expect((await listTree(repoDir, first, '.')).map((entry) => entry.path)).toContain('README.md');
-    expect((await readBlob(repoDir, first, 'envctl/manifest.yaml')).toString('utf8')).toBe(TEAM_MANIFEST);
+    expect((await readBlobs(repoDir, [entries[1].object], 1024))[0].toString('utf8')).toBe(TEAM_MANIFEST);
+  });
+
+  it('reads many blobs byte-exact in one batch', async () => {
+    const files: Record<string, string> = { 'envctl/empty': '', 'envctl/newlines': '\n\n', 'envctl/plain': 'no newline' };
+    for (let index = 0; index < 50; index++) {
+      files[`envctl/many/${index}.txt`] = `file ${index}\n`;
+    }
+    await commitTeamFiles(team, files, 'many');
+    const head = await fetchBranch(repoDir, 'main');
+    const entries = (await listTree(repoDir, head, 'envctl')).filter((entry) => Object.hasOwn(files, entry.path));
+    const blobs = await readBlobs(repoDir, entries.map((entry) => entry.object), 4096);
+    expect(Object.fromEntries(entries.map((entry, index) => [entry.path, blobs[index].toString('utf8')]))).toEqual(files);
+    await expect(readBlobs(repoDir, ['f'.repeat(40)], 10)).rejects.toMatchObject({ exitCode: 1 });
   });
 
   it('resolves full and abbreviated commits and tags', async () => {

@@ -22,6 +22,15 @@ const LOCK_WRITE_GRACE_MS = 5000;
 // by content, not path, as contenders in one process take the same path in turn.
 const heldLocks = new Set<string>();
 
+// Containers of one pod share a host name but not their pids; a pid from another namespace proves nothing here.
+function pidNamespace(): string | undefined {
+  try {
+    return fs.readlinkSync('/proc/self/ns/pid');
+  } catch {
+    return undefined;
+  }
+}
+
 async function createLockFile(lockFilePath: string, lockContent: string): Promise<boolean> {
   try {
     const handle = await retryWhileBusy(() => fs.promises.open(lockFilePath, 'wx', 0o600));
@@ -32,6 +41,12 @@ async function createLockFile(lockFilePath: string, lockContent: string): Promis
       await handle.close();
     } catch (err) {
       heldLocks.delete(lockContent);
+      // Left empty, it would block everyone for the write grace; only this file goes, never one that replaced it.
+      const ino = (await handle.stat().catch(() => null))?.ino;
+      await handle.close().catch(() => {});
+      if (ino !== undefined && (await fs.promises.stat(lockFilePath).catch(() => null))?.ino === ino) {
+        await fs.promises.unlink(lockFilePath).catch(() => {});
+      }
       throw err;
     }
     return true;
@@ -55,17 +70,18 @@ async function staleLockInode(lockFilePath: string): Promise<number | null> {
   try {
     const stat = await handle.stat();
     const raw = await handle.readFile('utf8');
-    let info: { pid?: number; hostname?: string };
+    let info: { pid?: number; hostname?: string; pidns?: string };
     try {
       info = JSON.parse(raw);
     } catch {
       // The holder creates the file before writing it; only an old unreadable lock is abandoned.
       return Date.now() - stat.mtimeMs > LOCK_WRITE_GRACE_MS ? stat.ino : null;
     }
-    if (info?.pid && info.hostname === os.hostname()) {
+    if (info?.pid && info.hostname === os.hostname() && (info.pidns === undefined || info.pidns === pidNamespace())) {
       // Our own pid on a lock this process does not hold is a former run's (a restarted container reuses its pids).
       if (info.pid === process.pid) {
-        return heldLocks.has(raw) ? null : stat.ino;
+        // One released just now in this process is unlinked, not stale, and its inode may already be the next lock's.
+        return heldLocks.has(raw) || (await handle.stat()).nlink === 0 ? null : stat.ino;
       }
       try {
         process.kill(info.pid, 0);
@@ -86,16 +102,22 @@ async function staleLockInode(lockFilePath: string): Promise<number | null> {
 // Deleting someone else's lock is serialized by an atomic mkdir guard, so two waiters can never both
 // judge the same stale lock and then remove the lock the other one just created.
 async function reclaimStaleLock(lockFilePath: string, guardPath: string): Promise<void> {
-  try {
-    await fs.promises.mkdir(guardPath);
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code;
-    // On Windows a guard another waiter has just removed stays "delete pending" (EPERM) until its handle closes:
-    // someone else is reclaiming, exactly as with EEXIST.
-    if (code === 'EEXIST' || (process.platform === 'win32' && code === 'EPERM')) {
-      return;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.promises.mkdir(guardPath);
+      break;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // On Windows a guard another waiter has just removed stays "delete pending" (EPERM) until its handle closes:
+      // someone else is reclaiming, exactly as with EEXIST.
+      if (code === 'EEXIST' || (process.platform === 'win32' && code === 'EPERM')) {
+        if (attempt === 0 && (await removeAbandonedGuard(guardPath))) {
+          continue;
+        }
+        return;
+      }
+      throw err;
     }
-    throw err;
   }
   try {
     const stale = await staleLockInode(lockFilePath);
@@ -106,6 +128,28 @@ async function reclaimStaleLock(lockFilePath: string, guardPath: string): Promis
   } finally {
     await retryWhileBusy(() => fs.promises.rmdir(guardPath));
   }
+}
+
+// A reclaimer holds the guard for milliseconds; one older than the write grace was left by a reclaimer that died.
+// It is moved aside before removal, and only if it is still the directory judged old: a waiter that removed it
+// already and took the guard anew keeps it.
+async function removeAbandonedGuard(guardPath: string): Promise<boolean> {
+  const stat = await fs.promises.stat(guardPath).catch(() => null);
+  if (!stat || Date.now() - stat.mtimeMs <= LOCK_WRITE_GRACE_MS) {
+    return false;
+  }
+  const aside = `${guardPath}.${randomUUID()}`;
+  try {
+    await fs.promises.rename(guardPath, aside);
+  } catch {
+    return false;
+  }
+  if ((await fs.promises.stat(aside).catch(() => null))?.ino !== stat.ino) {
+    await fs.promises.rename(aside, guardPath).catch(() => {});
+    return false;
+  }
+  await fs.promises.rmdir(aside).catch(() => {});
+  return true;
 }
 
 async function tryCreateLock(lockFilePath: string, guardPath: string, lockContent: string): Promise<boolean> {
@@ -182,7 +226,8 @@ export async function acquireFileLock(lockFilePath: string, label: string, timeo
     pid: process.pid,
     hostname: os.hostname(),
     createdAt: new Date().toISOString(),
-    nonce: randomUUID()
+    nonce: randomUUID(),
+    pidns: pidNamespace()
   });
 
   const wantedPath = `${lockFilePath}.wanted`;
@@ -208,7 +253,10 @@ export async function acquireFileLock(lockFilePath: string, label: string, timeo
     lockPath: lockFilePath,
     release: async () => {
       try {
-        await retryWhileBusy(() => fs.promises.unlink(lockFilePath));
+        // A lock taken over as stale while this one was held is another's now.
+        if ((await fs.promises.readFile(lockFilePath, 'utf8')) === lockContent) {
+          await retryWhileBusy(() => fs.promises.unlink(lockFilePath));
+        }
       } catch {
         // ignore
       } finally {

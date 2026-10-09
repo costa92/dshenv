@@ -111,4 +111,35 @@ describe('writeAtomic', () => {
     await writeAtomic(targetFile, '{}', 'overwrite');
     expect(fs.statSync(targetFile).mode & 0o777).toBe(0o600);
   });
+
+  // Windows needs extra rights to create symlinks.
+  it.skipIf(process.platform === 'win32')('refuses to replace a dangling symlink with a plain file', async () => {
+    const link = path.join(tempDir, 'state.json');
+    fs.symlinkSync(path.join(tempDir, 'dotfiles', 'state.json'), link);
+    await expect(writeAtomic(link, 'new')).rejects.toThrow(/symlink to .*dotfiles.*state\.json, which does not exist/);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readdirSync(tempDir)).toEqual(['state.json']);
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the owner of a file it replaces when running as root', async () => {
+    const target = path.join(tempDir, 'state.json');
+    fs.writeFileSync(target, 'old');
+    const { uid, gid } = fs.statSync(target);
+    const chown = vi.spyOn(fs.promises, 'chown');
+    try {
+      await writeAtomic(target, 'as user');
+      expect(chown).not.toHaveBeenCalled();
+      // Pretend to be root: the file's owner is then another user.
+      const getuid = vi.spyOn(process, 'getuid').mockReturnValue(0);
+      try {
+        await writeAtomic(target, 'as root');
+      } finally {
+        getuid.mockRestore();
+      }
+      expect(chown).toHaveBeenCalledWith(expect.stringContaining('.tmp-state.json-'), uid, gid);
+      expect(fs.readFileSync(target, 'utf8')).toBe('as root');
+    } finally {
+      chown.mockRestore();
+    }
+  });
 });

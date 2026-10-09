@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DshError } from '../errors.js';
 import { processAlive } from './process-tree.js';
+import { onSignalExit } from './interrupt.js';
 
 export interface ProfileLockOptions {
   timeoutMs?: number;
@@ -10,6 +11,22 @@ export interface ProfileLockOptions {
 export const PROFILE_LOCK_TIMEOUT_MS = 30_000;
 const LOCK_RETRY_INITIAL_MS = 25;
 const LOCK_RETRY_MAX_MS = 1_000;
+
+// Locks this process created and still holds; the finally below never runs when dshenv exits mid-operation.
+const heldLocks = new Set<string>();
+let stopOnSignalExit: (() => void) | undefined;
+
+function releaseHeldLocks(): void {
+  for (const lockPath of heldLocks) {
+    try {
+      if (fs.readFileSync(lockPath, 'utf8') === `${process.pid}\n`) {
+        fs.rmSync(lockPath, { force: true });
+      }
+    } catch {
+      // Already gone, or unreadable: nothing of ours to remove.
+    }
+  }
+}
 
 async function tryCreate(lockPath: string, content: string): Promise<boolean> {
   try {
@@ -57,9 +74,19 @@ export async function withProfilePackageLock<T>(
     await delay(Math.min(wait, remaining));
     wait = Math.min(wait * 2, LOCK_RETRY_MAX_MS);
   }
+  if (heldLocks.size === 0) {
+    process.on('exit', releaseHeldLocks);
+    stopOnSignalExit = onSignalExit(releaseHeldLocks);
+  }
+  heldLocks.add(lockPath);
   try {
     return await operation();
   } finally {
+    heldLocks.delete(lockPath);
+    if (heldLocks.size === 0) {
+      process.off('exit', releaseHeldLocks);
+      stopOnSignalExit?.();
+    }
     await fs.promises.rm(lockPath, { force: true });
   }
 }

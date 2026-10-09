@@ -114,7 +114,7 @@ describe('CLI sync', () => {
     const lockBefore = read(paths.lockFile);
     const dryRun = await run(['remote', 'sync', '--yes', '--dry-run']);
     expect(dryRun.code).toBe(2);
-    expect(dryRun.stdout).toContain('Run it again without --dry-run and with --ref ');
+    expect(dryRun.stdout).toContain('Run it again without --dry-run and with --expect ');
     expect(read(paths.lockFile)).toBe(lockBefore);
     const accepted = await run(['sync', '--yes', '--json']);
     expect(accepted.code).toBe(0);
@@ -330,20 +330,65 @@ profiles:
     await commitTeamFiles(team, { 'envctl/manifest.yaml': V2_MANIFEST }, 'v2');
     // Simulate a process killed mid-accept: snapshot and sync-started exist, the manifest is written, remote.json is not.
     const operationId = 'sync-0123456789ab';
-    await createEnvironmentSnapshot(paths, operationId);
+    const { snapshotId } = await createEnvironmentSnapshot(paths, operationId);
     await appendJournalEntry(paths, { operationId, type: 'sync-started', timestamp: new Date().toISOString() });
     fs.writeFileSync(paths.manifestFile, V2_MANIFEST);
 
     const { code, stderr } = await run(['sync']);
     expect(code).toBe(3);
     expect(stderr).toContain(
-      `The previous sync ${operationId} did not finish; run dshenv rollback ${operationId} --yes to restore the files it started changing, then sync again`
+      `The previous sync ${operationId} did not finish; run dshenv rollback ${snapshotId} --yes to restore the files it started changing, then sync again`
     );
 
     expect((await run(['rollback', operationId, '--yes'])).code).toBe(0);
     expect(read(paths.manifestFile)).toBe(TEAM_MANIFEST);
     expect((await run(['sync', '--yes'])).code).toBe(0);
     expect(read(paths.manifestFile)).toBe(V2_MANIFEST);
+  });
+
+  it('refuses every command that reads or writes the half-written files until the interrupted accept is rolled back', async () => {
+    await commitTeamFiles(team, { 'envctl/manifest.yaml': V2_MANIFEST }, 'v2');
+    const operationId = 'sync-0123456789ab';
+    const { snapshotId } = await createEnvironmentSnapshot(paths, operationId);
+    await appendJournalEntry(paths, { operationId, type: 'sync-started', timestamp: new Date().toISOString(), details: { from: first } });
+    fs.writeFileSync(paths.manifestFile, V2_MANIFEST);
+    const message = `The previous sync ${operationId} did not finish; run dshenv rollback ${snapshotId} --yes`;
+
+    for (const args of [['plan'], ['status'], ['apply', '--yes'], ['pull', '--yes'], ['remote', 'sync', '--yes'], ['remote', 'remove', '--yes'], ['adopt', 'x.yaml']]) {
+      const { code, stderr } = await run(args);
+      expect({ args, code }).toEqual({ args, code: 3 });
+      expect(stderr).toContain(message);
+    }
+    expect(fs.existsSync(paths.remoteFile)).toBe(true);
+
+    expect((await run(['rollback', snapshotId, '--yes'])).code).toBe(0);
+    expect((await run(['plan'])).stderr).not.toContain('did not finish');
+  });
+
+  it('accepts only the reviewed commit with --expect', async () => {
+    const second = await commitTeamFiles(team, { 'envctl/manifest.yaml': V2_MANIFEST }, 'v2');
+    const preview = await run(['sync']);
+    expect(preview.stdout).toContain(`Re-run with --expect ${second} --yes to accept this commit.`);
+    const third = await commitTeamFiles(team, { 'envctl/overlays/new.yaml': TEAM_OVERLAY }, 'v3');
+
+    const refused = await run(['sync', '--expect', second, '--yes']);
+    expect(refused.code).toBe(3);
+    expect(refused.stderr).toContain(`The remote now resolves to ${third}, not the reviewed ${second}; preview again and review that commit`);
+    expect(readRemoteConfig(paths)!.commit).toBe(first);
+    expect(read(paths.manifestFile)).toBe(TEAM_MANIFEST);
+
+    expect((await run(['sync', '--expect', third, '--yes'])).code).toBe(0);
+    expect(readRemoteConfig(paths)!.commit).toBe(third);
+    expect((await run(['sync', '--expect', 'abc123', '--yes'])).code).toBe(3);
+  });
+
+  it('keeps --ref beside --expect in the accept command the preview prints', async () => {
+    const second = await commitTeamFiles(team, { 'envctl/manifest.yaml': V2_MANIFEST }, 'v2');
+    await tagTeamCommit(team, 'v2', second);
+    await commitTeamFiles(team, { 'envctl/overlays/new.yaml': TEAM_OVERLAY }, 'v3');
+    expect((await run(['sync', '--ref', 'v2'])).stdout).toContain(`Re-run with --expect ${second} --ref v2 --yes to accept this commit.`);
+    expect((await run(['sync', '--expect', second, '--ref', 'v2', '--yes'])).code).toBe(0);
+    expect(readRemoteConfig(paths)!.commit).toBe(second);
   });
 
   it('keeps pointing at rollback after a rollback to a snapshot taken since the interrupted accept', async () => {

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { readRemoteConfig, skillPathFromKey } from '../remote/schema.js';
 import { calculateSourceDigest, isUndigestedEntry } from '../source/local.js';
@@ -107,21 +108,37 @@ export async function copySkillDir(from: string, to: string): Promise<void> {
   });
 }
 
+// A name next to `file` that no inventory takes for a skill (see isUndigestedEntry), even if left behind by a kill.
+function stagingPath(file: string): string {
+  return path.join(path.dirname(file), `.tmp-${path.basename(file)}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+}
+
 // envctl may sit on another filesystem than DSH_HOME (DSHENV_HOME), where moving between them fails with EXDEV.
+// Each side then changes only by a rename, so neither is ever seen half copied or half deleted.
 async function moveDir(from: string, to: string): Promise<void> {
   try {
     await retryWhileBusy(() => fs.promises.rename(from, to));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
-    await fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true });
-    await retryWhileBusy(() => fs.promises.rm(from, { recursive: true }));
+    const staging = stagingPath(to);
+    try {
+      await fs.promises.cp(from, staging, { recursive: true, verbatimSymlinks: true });
+      await retryWhileBusy(() => fs.promises.rename(staging, to));
+    } catch (copyErr) {
+      await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
+      throw copyErr;
+    }
+    const doomed = stagingPath(from);
+    await retryWhileBusy(() => fs.promises.rename(from, doomed));
+    // The move is done; a leftover staging name is ignored like any other.
+    await fs.promises.rm(doomed, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 // Replaces `target` with a copy of `source` (or removes it when source is null), keeping the old one under `trash`.
 // Returns how to undo it.
 export async function replaceSkillDir(source: string | null, target: string, trash: string): Promise<() => Promise<void>> {
-  const staging = source ? `${target}.dshenv-${process.pid}-${Date.now()}` : null;
+  const staging = source ? stagingPath(target) : null;
   const hadTarget = fs.existsSync(target);
   // A staging copy left in DSH's skills directory would read as one more skill.
   try {

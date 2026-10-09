@@ -294,19 +294,34 @@ async function rollbackDecided(
   // A pull or remote add may have created the selected overlay the restore removes; a selection of nothing breaks every command.
   const selected = readSelectionFile(paths);
   const selectedExisted = selected !== null && fs.existsSync(overlayFilePath(paths, selected));
-  await restoreEnvironmentSnapshot(snapshot, paths);
-  await keepLiveState(paths, before);
-  await keepLiveLocalDigests(paths, lockBefore);
   let selectionNote = '';
-  const reselect = readClearedSelection(snapshot);
-  if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && (selectedExisted || readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`))) {
-    await writeSelectionFile(paths, null);
-    await recordClearedSelection(backup, selected);
-    selectionNote = `; overlay '${selected}' it removed was selected; no overlay is selected now`;
-  } else if (selected === null && reselect !== null && isValidOverlayName(reselect) && fs.existsSync(overlayFilePath(paths, reselect))) {
-    // Undoing a rollback that deselected the overlay it removed; a selection made since is the user's and stays.
-    await writeSelectionFile(paths, reselect);
-    selectionNote = `; overlay '${reselect}', which the rolled-back rollback deselected, is selected again`;
+  try {
+    await restoreEnvironmentSnapshot(snapshot, paths);
+    await keepLiveState(paths, before);
+    await keepLiveLocalDigests(paths, lockBefore);
+    const reselect = readClearedSelection(snapshot);
+    if (selected && !fs.existsSync(overlayFilePath(paths, selected)) && (selectedExisted || readAbsentKeys(snapshot).includes(`overlays/${selected}.yaml`))) {
+      await writeSelectionFile(paths, null);
+      await recordClearedSelection(backup, selected);
+      selectionNote = `; overlay '${selected}' it removed was selected; no overlay is selected now`;
+    } else if (selected === null && reselect !== null && isValidOverlayName(reselect) && fs.existsSync(overlayFilePath(paths, reselect))) {
+      // Undoing a rollback that deselected the overlay it removed; a selection made since is the user's and stays.
+      await writeSelectionFile(paths, reselect);
+      selectionNote = `; overlay '${reselect}', which the rolled-back rollback deselected, is selected again`;
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await appendJournalEntry(paths, {
+      operationId,
+      type: 'rollback-failed',
+      timestamp: new Date().toISOString(),
+      details: { snapshotId: snapshot.snapshotId, backupSnapshotId: backup.snapshotId, reason }
+    }).catch(() => {});
+    // The envctl files are half restored; keep the original error (and its exit code), and say how to put them back.
+    if (err instanceof Error) {
+      err.message += `; the files it replaced are saved as snapshot ${backup.snapshotId}, run dshenv rollback ${backup.snapshotId} --yes to put them back`;
+    }
+    throw err;
   }
   await appendJournalEntry(paths, {
     operationId,

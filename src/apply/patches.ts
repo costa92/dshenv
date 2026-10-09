@@ -57,6 +57,10 @@ export async function readProfilePatchFile(paths: EnvironmentPaths, profileName:
     return '';
   }
   const stat = await fs.promises.stat(file);
+  // A FIFO reports size 0 and would block the read forever.
+  if (!stat.isFile()) {
+    throw new ValidationError(`cordis.patch.yml is not a regular file: ${file}`);
+  }
   if (stat.size > MAX_PATCH_BYTES) {
     throw new ValidationError(`cordis.patch.yml exceeds 1 MiB: ${file}`);
   }

@@ -8,6 +8,9 @@ import { isolatedGit } from '../source/git.js';
 export interface TreeEntry {
   mode: string;
   type: string;
+  object: string;
+  // null for an entry without a blob, such as a submodule
+  size: number | null;
   path: string;
 }
 
@@ -121,30 +124,51 @@ export async function isAncestor(repoDir: string, ancestor: string, descendant: 
 }
 
 export async function listTree(repoDir: string, commit: string, dir: string): Promise<TreeEntry[]> {
-  const out = await git(repoDir, ['ls-tree', '-r', '-z', commit, '--', dir]);
+  const out = await git(repoDir, ['ls-tree', '-r', '-l', '-z', commit, '--', dir]);
   return out
     .split('\0')
     .filter(Boolean)
     .map((line) => {
       const tab = line.indexOf('\t');
-      const [mode, type] = line.slice(0, tab).split(' ');
-      return { mode, type, path: line.slice(tab + 1) };
+      const [mode, type, object, size] = line.slice(0, tab).split(/ +/);
+      return { mode, type, object, size: /^\d+$/.test(size) ? Number(size) : null, path: line.slice(tab + 1) };
     });
 }
 
-export async function readBlob(repoDir: string, commit: string, file: string): Promise<Buffer> {
-  const args = ['cat-file', 'blob', `${commit}:${file}`];
+// One git process for all the blobs: one per file made a large team repository take seconds, all under the lock.
+export async function readBlobs(repoDir: string, objects: string[], maxBytes: number): Promise<Buffer[]> {
+  if (objects.length === 0) {
+    return [];
+  }
+  const args = ['cat-file', '--batch'];
+  let out: Buffer;
   try {
     const res = await execa('git', gitArgs(repoDir, args), {
       shell: false,
       timeout: GIT_TIMEOUT_MS,
       ...gitEnv(),
+      input: `${objects.join('\n')}\n`,
       encoding: 'buffer',
       // File contents must stay byte-exact; execa would otherwise drop the final newline.
-      stripFinalNewline: false
+      stripFinalNewline: false,
+      // Each blob also comes with a header line and a trailing newline.
+      maxBuffer: maxBytes + objects.length * 128
     });
-    return Buffer.from(res.stdout);
+    out = Buffer.from(res.stdout);
   } catch (err) {
     throw gitFailure(args[0], err);
   }
+  const blobs: Buffer[] = [];
+  let offset = 0;
+  for (const object of objects) {
+    const eol = out.indexOf(0x0a, offset);
+    const [, type, size] = (eol === -1 ? '' : out.subarray(offset, eol).toString('utf8')).split(' ');
+    if (type !== 'blob' || !/^\d+$/.test(size ?? '')) {
+      throw new DshError(`git cat-file failed: object ${object} is not a readable blob`, 1);
+    }
+    const start = eol + 1;
+    blobs.push(Buffer.from(out.subarray(start, start + Number(size))));
+    offset = start + Number(size) + 1;
+  }
+  return blobs;
 }

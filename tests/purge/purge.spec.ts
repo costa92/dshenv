@@ -118,6 +118,29 @@ profiles:
     });
   });
 
+  it.skipIf(process.platform === 'win32')('refuses a managed clone reached through a linked directory outside envctl', async () => {
+    const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
+    const sources = path.join(paths.managerDir, 'sources');
+    // envctl/sources linked away, then envctl/sources/web linked away.
+    for (const [linked, outside] of [
+      [sources, path.join(tempHome, 'user-sources')],
+      [path.join(sources, 'web'), path.join(tempHome, 'user-web')]
+    ]) {
+      const repo = linked === sources ? path.join(outside, 'web', 'demo-plugin') : path.join(outside, 'demo-plugin');
+      fs.mkdirSync(repo, { recursive: true });
+      await execa('git', ['init', '-q'], { cwd: repo });
+      fs.writeFileSync(path.join(repo, 'package.json'), '{"name":"demo-plugin"}');
+      await execa('git', ['add', '.'], { cwd: repo });
+      await execa('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init'], { cwd: repo });
+      fs.mkdirSync(path.dirname(linked), { recursive: true });
+      fs.symlinkSync(outside, linked);
+
+      await expect(purgePlugin(paths, 'web', 'demo-plugin')).rejects.toThrow(/outside allowed root/);
+      expect(fs.existsSync(path.join(repo, 'package.json'))).toBe(true);
+      fs.rmSync(sources, { recursive: true, force: true });
+    }
+  });
+
   it('purges the config blocks a renamed alias writes, though the ownership record keeps the old alias', async () => {
     const paths = resolveEnvironmentPaths({ cliDshHome: tempHome });
     const manifestFile = path.join(tempHome, 'envctl', 'manifest.yaml');

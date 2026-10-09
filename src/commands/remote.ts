@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { ValidationError } from '../errors.js';
 import { normalizeGitUrl } from '../source/git.js';
 import { withEnvironmentLock } from '../io/lock.js';
+import { assertNoUnfinishedOperations } from '../io/journal.js';
 import { TRANSPORT_HELPER_MESSAGE, hasEmbeddedCredentials, isTransportHelperUrl, isValidGitRef } from '../manifest/schema.js';
 import { renderPlan } from '../output/render.js';
 import { planJson } from '../planner/plan.js';
@@ -62,21 +63,31 @@ function assertRefOption(ref: string | undefined): void {
   }
 }
 
-// The branch tip, or the commit a ref names on that branch.
-async function targetCommit(repoDir: string, branch: string, ref: string | undefined): Promise<string> {
-  const tip = await fetchBranch(repoDir, branch);
-  if (ref === undefined) {
-    return tip;
+function assertExpectOption(expect: string | undefined): void {
+  if (expect !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(expect)) {
+    throw new ValidationError(`Invalid --expect '${expect}': give the full commit id the preview showed`);
   }
-  const target = await resolveTargetRef(repoDir, ref);
-  if (!(await isAncestor(repoDir, target, tip))) {
-    throw new ValidationError(`Ref '${ref}' (${target}) is not on branch '${branch}'`);
+}
+
+// The branch tip, or the commit a ref names on that branch.
+async function targetCommit(repoDir: string, branch: string, ref: string | undefined, expect: string | undefined): Promise<string> {
+  const tip = await fetchBranch(repoDir, branch);
+  let target = tip;
+  if (ref !== undefined) {
+    target = await resolveTargetRef(repoDir, ref);
+    if (!(await isAncestor(repoDir, target, tip))) {
+      throw new ValidationError(`Ref '${ref}' (${target}) is not on branch '${branch}'`);
+    }
+  }
+  // The branch or tag may have moved since the preview; accepting must not take a commit nobody reviewed.
+  if (expect !== undefined && target !== expect) {
+    throw new ValidationError(`The remote now resolves to ${target}, not the reviewed ${expect}; preview again and review that commit`);
   }
   return target;
 }
 
 export function registerRemoteCommands(ctx: CommandContext): void {
-  const { program, writeOut, setExitCode } = ctx;
+  const { program, writeOut, writeErr, setExitCode } = ctx;
 
   function reportSync(
     opts: { json?: boolean },
@@ -85,7 +96,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     accepted: AcceptResult | null,
     dryRun: boolean | undefined,
     extra: Record<string, unknown> = {},
-    // Flags the preview needed (--replace, --discard-local-changes) that accepting needs again.
+    // Flags the preview needed (--ref, --replace, --discard-local-changes) that accepting needs again.
     repeated: string[] = []
   ): void {
     const status = accepted ? 'accepted' : preview.status;
@@ -118,8 +129,8 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     if (accepted) {
       writeOut(`Accepted ${preview.to} (snapshot ${accepted.snapshotId}).\nNext: dshenv plan, then dshenv apply --yes.\n`);
     } else {
-      // The branch can move on after the review; --ref pins the accept to the commit shown here.
-      const accept = [`--ref ${preview.to}`, ...repeated, '--yes'].join(' ');
+      // The branch can move on after the review; --expect refuses to accept any commit but the one shown here.
+      const accept = [`--expect ${preview.to}`, ...repeated, '--yes'].join(' ');
       writeOut(
         `Accepting means agreeing to run the plugins this commit declares. ` +
           `${dryRun ? `Run it again without --dry-run and with ${accept}` : `Re-run with ${accept}`} to accept this commit.\n`
@@ -135,12 +146,14 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     .option('--branch <name>', 'branch to follow; defaults to the branch the remote HEAD points to')
     .option('--path <dir>', 'directory inside the repository that holds manifest.yaml', DEFAULT_REMOTE_PATH)
     .option('--ref <ref>', 'commit or tag on the branch to pin instead of its newest commit')
+    .option('--expect <commit>', 'accept only if the commit to pin is still this full commit id, as the preview showed')
     .option('--replace', 'overwrite a local manifest, same-named overlay or lock entry the team lock pins (a snapshot is taken first)')
     .option('--dry-run', 'show what remote add would write without writing; exit code 2 when there is any')
     .option('-y, --yes', 'accept and write the remote files; without it remote add only previews')
-    .action(async (url: string, cmdOpts: { branch?: string; path: string; ref?: string; replace?: boolean; dryRun?: boolean; yes?: boolean }) => {
+    .action(async (url: string, cmdOpts: { branch?: string; path: string; ref?: string; expect?: string; replace?: boolean; dryRun?: boolean; yes?: boolean }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: writeErr });
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
       }
@@ -157,6 +170,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
         throw new ValidationError(`Invalid --branch '${cmdOpts.branch}'`);
       }
       assertRefOption(cmdOpts.ref);
+      assertExpectOption(cmdOpts.expect);
       // A relative path means something only in this directory; the clone may run again from anywhere (sync after a rollback).
       url = normalizeGitUrl(url);
 
@@ -173,7 +187,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           if (!isValidBranchName(branch)) {
             throw new ValidationError(`Remote default branch '${branch}' is not a supported branch name; pass --branch`);
           }
-          const target = await targetCommit(repoDir, branch, cmdOpts.ref);
+          const target = await targetCommit(repoDir, branch, cmdOpts.ref, cmdOpts.expect);
           const subscription = { url, branch, path: cmdOpts.path };
           const preview = await prepareSync({
             paths,
@@ -194,7 +208,10 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           throw err;
         }
       });
-      reportSync(opts, url, preview, accepted, cmdOpts.dryRun, subscription, cmdOpts.replace ? ['--replace'] : []);
+      reportSync(opts, url, preview, accepted, cmdOpts.dryRun, subscription, [
+        ...(cmdOpts.ref !== undefined ? [`--ref ${cmdOpts.ref}`] : []),
+        ...(cmdOpts.replace ? ['--replace'] : [])
+      ]);
     });
 
   remoteCmd
@@ -248,6 +265,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     .action(async (cmdOpts: { dryRun?: boolean; yes?: boolean }) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: writeErr });
       if (cmdOpts.dryRun || !cmdOpts.yes) {
         const current = readRemoteConfig(paths);
         if (!current) {
@@ -286,13 +304,16 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     syncCmd
       .description('Fetch the subscribed remote and preview or accept its newest commit')
       .option('--ref <ref>', 'commit or tag on the subscribed branch to move to')
+      .option('--expect <commit>', 'accept only if the commit to move to is still this full commit id, as the preview showed')
       .option('--discard-local-changes', 'overwrite remote-owned files and lock entries that were changed locally')
       .option('--dry-run', 'show what remote sync would write without writing; exit code 2 when there is any')
       .option('-y, --yes', 'accept and write the remote files; without it remote sync only previews')
-      .action(async (cmdOpts: { ref?: string; discardLocalChanges?: boolean; dryRun?: boolean; yes?: boolean }) => {
+      .action(async (cmdOpts: { ref?: string; expect?: string; discardLocalChanges?: boolean; dryRun?: boolean; yes?: boolean }) => {
         const opts = program.opts();
         const paths = resolveCliPaths(opts);
+        await assertNoUnfinishedOperations(paths, { warn: writeErr });
         assertRefOption(cmdOpts.ref);
+        assertExpectOption(cmdOpts.expect);
         const { url, preview, accepted } = await withEnvironmentLock(paths, async () => {
           const config = readRemoteConfig(paths);
           if (!config) {
@@ -305,7 +326,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
             await fs.promises.rm(repoDir, { recursive: true, force: true });
             await cloneRemoteRepo(config.url, repoDir);
           }
-          const target = await targetCommit(repoDir, config.branch, cmdOpts.ref);
+          const target = await targetCommit(repoDir, config.branch, cmdOpts.ref, cmdOpts.expect);
           const preview = await prepareSync({
             paths,
             repoDir,
@@ -318,7 +339,10 @@ export function registerRemoteCommands(ctx: CommandContext): void {
           const accepted = preview.status === 'pending' && cmdOpts.yes && !cmdOpts.dryRun ? await acceptSync(paths, preview) : null;
           return { url: config.url, preview, accepted };
         });
-        reportSync(opts, url, preview, accepted, cmdOpts.dryRun, {}, cmdOpts.discardLocalChanges ? ['--discard-local-changes'] : []);
+        reportSync(opts, url, preview, accepted, cmdOpts.dryRun, {}, [
+          ...(cmdOpts.ref !== undefined ? [`--ref ${cmdOpts.ref}`] : []),
+          ...(cmdOpts.discardLocalChanges ? ['--discard-local-changes'] : [])
+        ]);
       });
   }
 }

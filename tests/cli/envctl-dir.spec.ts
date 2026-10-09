@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { runCli } from '../../src/cli.js';
 import { resolveEnvironmentPaths } from '../../src/environment/paths.js';
 import { acquireEnvironmentLock } from '../../src/io/lock.js';
+import { migrateEnvctl } from '../../src/environment/migrate.js';
 
 describe('CLI envctl location', () => {
   let tempRoot: string;
@@ -341,15 +342,15 @@ describe('CLI envctl location', () => {
     const profile = path.join(home, 'profiles', 'web');
     fs.mkdirSync(path.join(profile, 'node_modules', '@acme'), { recursive: true });
     fs.symlinkSync(inside, path.join(profile, 'node_modules', '@acme', 'notes'), 'junction');
-    fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dependencies: { '@acme/notes': `link:${inside}` } }));
+    fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dependencies: { '@acme/notes': `link:${inside}` }, dsh: { profile: { bundles: ['@acme/notes'] } } }));
     const target = path.join(tempRoot, 'moved');
 
     expect((await run(['migrate', '--to', target, '--yes'])).code).toBe(0);
-    // DSH's link now points at the deleted directory, so plan sees the plugin as missing and apply installs it from the new path.
+    // DSH's link now points at the deleted directory, so apply reinstalls the plugin from the new path.
     const plan = await run(['plan', '--envctl-dir', target]);
     expect(plan.code).toBe(2);
-    expect(plan.stdout).toContain('+ [web] @acme/notes (notes)');
-    expect(plan.stdout).toContain('not installed in profile');
+    expect(plan.stdout).toContain('~ [web] @acme/notes (notes)');
+    expect(plan.stdout).toContain(`Local source path changed to ${path.join(target, 'sources', 'web', 'notes')}`);
   });
 
   it.skipIf(process.platform === 'win32')('treats a trailing separator on a symlinked envctl as the link itself', async () => {
@@ -443,6 +444,62 @@ describe('CLI envctl location', () => {
       await held.release();
     }
   }, 15_000);
+
+  it('lets only one of two envctls migrated into the same empty directory at once land there', async () => {
+    const sources = [path.join(tempRoot, 'a'), path.join(tempRoot, 'b')];
+    for (const dir of sources) {
+      expect((await run(['init', '--envctl-dir', dir])).code).toBe(0);
+      fs.writeFileSync(path.join(dir, `from-${path.basename(dir)}`), '');
+    }
+    const target = path.join(tempRoot, 'target');
+    fs.mkdirSync(target);
+
+    const results = await Promise.allSettled(
+      sources.map((dir) => migrateEnvctl(resolveEnvironmentPaths({ cliDshHome: home, cliEnvctlDir: dir }), target))
+    );
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const [winner, loser] = results[0].status === 'fulfilled' ? sources : [...sources].reverse();
+    expect(fs.existsSync(path.join(target, `from-${path.basename(winner)}`))).toBe(true);
+    expect(fs.existsSync(path.join(target, `from-${path.basename(loser)}`))).toBe(false);
+    expect(fs.existsSync(path.join(loser, 'dshenv.moved'))).toBe(false);
+    expect(fs.existsSync(path.join(loser, 'manifest.yaml'))).toBe(true);
+    expect(fs.readdirSync(tempRoot).filter((name) => name.includes('dshenv-migrate'))).toEqual([]);
+  });
+
+  it('finishes a migrate killed after the copy landed but before the old envctl was marked', async () => {
+    await run(['init']);
+    const envctl = path.join(home, 'envctl');
+    const target = path.join(tempRoot, 'moved');
+    const writeFile = fs.promises.writeFile;
+    const spy = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (file, data, options) => {
+      if (String(file).endsWith('dshenv.moved')) {
+        throw new Error('killed');
+      }
+      return writeFile(file, data, options);
+    });
+    try {
+      expect((await run(['migrate', '--to', target, '--yes'])).code).not.toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.existsSync(path.join(target, 'manifest.yaml'))).toBe(true);
+
+    const again = await run(['migrate', '--to', target, '--yes']);
+    expect(again.code).toBe(0);
+    expect(fs.readdirSync(envctl)).toEqual(['dshenv.moved']);
+    expect(fs.existsSync(path.join(target, 'manifest.yaml'))).toBe(true);
+  });
+
+  it('says how to clear a target that holds something other than this envctl', async () => {
+    await run(['init']);
+    const target = path.join(tempRoot, 'moved');
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'other'), '');
+    const result = await run(['migrate', '--to', target, '--yes']);
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain('delete it and migrate again');
+    expect(fs.existsSync(path.join(target, 'other'))).toBe(true);
+  });
 
   it('points at migrate when the new location is empty but the default one has a manifest', async () => {
     await run(['init']);

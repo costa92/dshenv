@@ -32,10 +32,13 @@ export function registerOverlayCommands(ctx: CommandContext): void {
       if (Boolean(name) === Boolean(cmdOpts.none)) {
         throw new ValidationError('overlay use requires exactly one of <name> or --none');
       }
-      if (name) {
-        loadEffectiveManifest(paths, { name: validateOverlayName(name), via: 'file' });
-      }
-      await writeSelectionFile(paths, name ?? null);
+      // Under the lock, so an apply or sync in progress never sees the selection change halfway.
+      await withEnvironmentLock(paths, async () => {
+        if (name) {
+          loadEffectiveManifest(paths, { name: validateOverlayName(name), via: 'file' });
+        }
+        await writeSelectionFile(paths, name ?? null);
+      });
       if (process.env.DSHENV_OVERLAY && process.env.DSHENV_OVERLAY !== name) {
         writeErr(`DSHENV_OVERLAY=${process.env.DSHENV_OVERLAY} takes precedence over the saved overlay in this shell\n`);
       }

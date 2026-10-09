@@ -112,4 +112,52 @@ console.log('applied');`
     const next = await applyEnvironment(paths, { probeHmr: async () => ({ state: 'off' }), hmrSettleMs: 0 });
     expect(next.applied).toBe(true);
   }, 60_000);
+
+  // The driver raises SIGINT on itself from inside `hook`, then gives the handler time to run before going on.
+  const runInterrupted = async (patch: string) => {
+    fs.writeFileSync(paths.manifestFile, 'apiVersion: dshenv/v1\nprofiles: {}\n');
+    for (const name of ['aa', 'bb']) {
+      fs.mkdirSync(path.join(paths.skillsDir, name), { recursive: true });
+      fs.writeFileSync(path.join(paths.skillsDir, name, 'SKILL.md'), name);
+    }
+    const driver = path.join(tempHome, 'driver.mts');
+    fs.writeFileSync(
+      driver,
+      `import fs from 'node:fs';
+import { applyEnvironment } from ${JSON.stringify(path.resolve('src/apply/apply.ts'))};
+import { resolveEnvironmentPaths } from ${JSON.stringify(path.resolve('src/environment/paths.ts'))};
+const interrupt = async () => { process.kill(process.pid, 'SIGINT'); await new Promise((resolve) => setTimeout(resolve, 300)); };
+${patch}
+await applyEnvironment(resolveEnvironmentPaths({ cliDshHome: ${JSON.stringify(tempHome)} }), { probeHmr: async () => ({ state: 'off' }), hmrSettleMs: 0 });
+console.log('applied');`
+    );
+    return execa(process.execPath, ['--import', 'tsx/esm', driver], { reject: false });
+  };
+
+  it('stops between skills once interrupted and rolls back the ones already written', async () => {
+    const result = await runInterrupted(`const cp = fs.promises.cp.bind(fs.promises);
+let first = true;
+fs.promises.cp = async (...args) => {
+  await cp(...args);
+  if (first && String(args[1]).startsWith(${JSON.stringify(paths.dshSkillsDir)})) { first = false; await interrupt(); }
+};`);
+    expect(result.signal).toBe('SIGINT');
+    expect(fs.existsSync(path.join(paths.dshSkillsDir, 'aa'))).toBe(false);
+    expect(fs.existsSync(path.join(paths.dshSkillsDir, 'bb'))).toBe(false);
+    expect(fs.readFileSync(path.join(paths.logsDir, 'journal.jsonl'), 'utf8')).toMatch(/"type":"apply-rollback".*interrupted/);
+  }, 60_000);
+
+  it('says the apply finished when the interrupt comes after it committed, and still ends by the signal', async () => {
+    const result = await runInterrupted(`const open = fs.promises.open.bind(fs.promises);
+fs.promises.open = async (...args) => {
+  const handle = await open(...args);
+  const append = handle.appendFile.bind(handle);
+  handle.appendFile = async (line, ...rest) => { await append(line, ...rest); if (String(line).includes('apply-completed')) await interrupt(); };
+  return handle;
+};`);
+    expect(result.signal).toBe('SIGINT');
+    expect(result.stdout).not.toContain('applied');
+    expect(result.stderr).toMatch(/Apply apply-[0-9a-f]{12} had already finished when interrupted, so nothing was rolled back: Successfully applied/);
+    expect(fs.readFileSync(path.join(paths.dshSkillsDir, 'bb', 'SKILL.md'), 'utf8')).toBe('bb');
+  }, 60_000);
 });

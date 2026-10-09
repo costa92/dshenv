@@ -5,6 +5,7 @@ import { withEnvironmentLock } from '../io/lock.js';
 import { appendJournalEntry } from '../io/journal.js';
 import { ValidationError } from '../errors.js';
 import { listEnvironmentSnapshots, snapshotTime } from '../io/backup.js';
+import { retryWhileBusy } from '../io/windows-retry.js';
 
 export interface GcOptions {
   olderThanDays?: number;
@@ -70,13 +71,43 @@ export async function collectSnapshotGcTargets(paths: EnvironmentPaths, olderTha
     .filter((snapshot) => expired(snapshot.snapshotDir, snapshotTime(snapshot.snapshotId)))
     .map((snapshot) => snapshot.snapshotDir);
   // A copy a killed operation never renamed into place; no snapshot can still be building one this old.
+  // One a killed gc was deleting is no snapshot any more, whatever its age.
   for (const entry of await fs.promises.readdir(paths.backupsDir, { withFileTypes: true })) {
     const dir = path.join(paths.backupsDir, entry.name);
-    if (entry.isDirectory() && entry.name.startsWith('.') && entry.name.endsWith('.partial') && expired(dir, null)) {
+    if (entry.isDirectory() && entry.name.startsWith('.') && ((entry.name.endsWith('.partial') && expired(dir, null)) || entry.name.endsWith(DELETING))) {
       targets.push(dir);
     }
   }
   return targets;
+}
+
+const DELETING = '.deleting';
+
+// Staging copies of skills a killed apply left in DSH's skills directory; DSH skips .tmp-* names.
+export async function collectSkillStagingGcTargets(paths: EnvironmentPaths, olderThanDays: number): Promise<string[]> {
+  if (!fs.existsSync(paths.dshSkillsDir)) {
+    return [];
+  }
+  const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+  const targets: string[] = [];
+  for (const entry of await fs.promises.readdir(paths.dshSkillsDir, { withFileTypes: true })) {
+    const dir = path.join(paths.dshSkillsDir, entry.name);
+    if (entry.name.startsWith('.tmp-') && (await fs.promises.lstat(dir)).mtimeMs <= cutoff) {
+      targets.push(dir);
+    }
+  }
+  return targets;
+}
+
+// Renamed to a dot name first, which no listing takes for a snapshot, so a gc killed halfway leaves no half-deleted
+// snapshot that rollback would restore; the next gc finishes it.
+async function deleteSnapshot(paths: EnvironmentPaths, dir: string): Promise<void> {
+  let doomed = dir;
+  if (!path.basename(dir).endsWith(DELETING)) {
+    doomed = path.join(paths.backupsDir, `.${path.basename(dir)}${DELETING}`);
+    await retryWhileBusy(() => fs.promises.rename(dir, doomed));
+  }
+  await fs.promises.rm(doomed, { recursive: true, force: true });
 }
 
 // Collected under the lock, so a concurrent purge or gc cannot change the trash in between.
@@ -95,12 +126,14 @@ async function gcDecided(
   const olderThanDays = options?.olderThanDays ?? 7;
   const targets = await collectTrashGcTargets(paths, olderThanDays);
   const snapshots = await collectSnapshotGcTargets(paths, olderThanDays);
-  const counts = `${String(targets.deleted.length)} trash item(s)${snapshots.length > 0 ? ` and ${String(snapshots.length)} snapshot(s)` : ''}`;
+  const staging = await collectSkillStagingGcTargets(paths, olderThanDays);
+  const counts = `${String(targets.deleted.length)} trash item(s)${snapshots.length > 0 ? ` and ${String(snapshots.length)} snapshot(s)` : ''}` +
+    (staging.length > 0 ? ` and ${String(staging.length)} skill staging dir(s)` : '');
 
   if (options?.dryRun) {
     return {
       dryRun: true,
-      deleted: [...targets.deleted, ...snapshots],
+      deleted: [...targets.deleted, ...snapshots, ...staging],
       skipped: targets.skipped,
       message: `Would delete ${counts}`
     };
@@ -111,7 +144,7 @@ async function gcDecided(
     operationId,
     type: 'gc-started',
     timestamp: new Date().toISOString(),
-    details: { olderThanDays, count: targets.deleted.length + snapshots.length }
+    details: { olderThanDays, count: targets.deleted.length + snapshots.length + staging.length }
   });
 
   for (const target of targets.deleted) {
@@ -122,7 +155,13 @@ async function gcDecided(
   }
   for (const snapshot of snapshots) {
     if (isPathInside(paths.backupsDir, snapshot)) {
-      await fs.promises.rm(snapshot, { recursive: true, force: true });
+      await deleteSnapshot(paths, snapshot);
+    }
+  }
+  // Only here, under the lock, so no apply is filling one of these meanwhile.
+  for (const dir of staging) {
+    if (isPathInside(paths.dshSkillsDir, dir)) {
+      await fs.promises.rm(dir, { recursive: true, force: true });
     }
   }
 
@@ -130,12 +169,12 @@ async function gcDecided(
     operationId,
     type: 'gc-completed',
     timestamp: new Date().toISOString(),
-    details: { deleted: [...targets.deleted, ...snapshots] }
+    details: { deleted: [...targets.deleted, ...snapshots, ...staging] }
   });
 
   return {
     dryRun: false,
-    deleted: [...targets.deleted, ...snapshots],
+    deleted: [...targets.deleted, ...snapshots, ...staging],
     skipped: targets.skipped,
     message: `Deleted ${counts}`
   };

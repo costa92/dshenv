@@ -4,6 +4,7 @@ import { rollbackEnvironment } from '../rollback/rollback.js';
 import { gcEnvironment } from '../gc/gc.js';
 import { purgePlugin } from '../purge/purge.js';
 import { markRestarted } from '../restart/restart.js';
+import { assertNoUnfinishedOperations, settleInterruptedApply } from '../io/journal.js';
 import { renderPatchTargets, renderPlan, renderRestartSummary, renderRuntimeReport } from '../output/render.js';
 import { ValidationError } from '../errors.js';
 import { isProfileOperation, planExitCode, planJson } from '../planner/plan.js';
@@ -27,6 +28,7 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
     .action(async (cmdOpts) => {
       const opts = program.opts();
       const paths = resolveCliPaths(opts);
+      await assertNoUnfinishedOperations(paths, { warn: writeErr });
       const allowUntested = Boolean(opts.allowUntestedDsh);
       const preview = Boolean(cmdOpts.dryRun) || !cmdOpts.yes;
       if (cmdOpts.verify && preview) {
@@ -50,6 +52,7 @@ export function registerLifecycleCommands(ctx: CommandContext): void {
         overlay: selection,
         profile: cmdOpts.profile
       });
+      if (!res.dryRun) await settleInterruptedApply(paths);
 
       const verify: ProfileVerification[] = [];
       if (cmdOpts.verify && res.applied) {

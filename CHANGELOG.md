@@ -2,6 +2,36 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。发布流程见 [docs/发布流程.md](docs/发布流程.md)。
 
+## 未发布
+
+### 升级须知
+
+- `remote sync`、`pull`、`adopt`、`remote add` 被中断（进程被杀、恢复失败）后，`plan`、`status`、`apply`、`pull`、`adopt`、`remote add/sync/remove` 以退出码 3 拒绝，并给出 `dshenv rollback <快照 id> --yes`；`apply` 被中断只警告，重跑 `apply` 后消失。
+- `profiles/<名字>/` 已存在但 `package.json` 缺失、损坏或缺 `dsh.profile` 时，该 Profile 的计划为 BLOCKED，不再当作新建。
+- 团队 lock 只能包含团队 manifest（或团队 overlay）声明的插件；团队仓库限 1 万个文件、单文件 10MB、总计 100MB。
+- 不带 `-p` 的 `source clone/sync` 不能再指向 `envctl/sources` 下的托管克隆。
+- 新快照带递增序号，`rollback` 与 `gc` 按序号排新旧，不再受时钟回拨影响；旧快照视为比所有新快照更早。
+
+### 新增
+
+- `remote add` / `remote sync` 新增 `--expect <commit>`：要接受的 commit 不是它时以退出码 3 拒绝；预览末尾给出带 `--expect` 的命令。
+
+### 修复
+
+- `apply` 失败回滚不再删除已存在的 Profile 目录（`package.json` 损坏时曾连同 sessions 一起删除）。
+- 恢复软链接的 skills 目录时按真实路径解析链接目标；envctl 本身是软链接、skills 是相对链接时，`rollback` 曾删掉旁边同名的无关目录。
+- 两个 `migrate --to` 同一空目录不再删掉先完成的那份 envctl；目标只在为空时原子替换，staging 名带随机后缀，中断后重跑可以续做。
+- `purge` 对克隆目录及其父目录取真实路径校验，中间层软链接不能再把 envctl 外的仓库移进 trash。
+- `gc` 删除快照前先改名为隐藏目录，中途被杀不会留下能被 `rollback` 选中的半份快照；`gc` 也清理 DSH skills 目录里残留的 `.tmp-*`。
+- `dsh plugin add` 装好但以非 0 退出的插件，失败的 apply 也记录归属，之后可以照常卸载。
+- skill 的临时目录改为 `.tmp-` 开头，被杀后不再被当成新 skill；跨设备移动 skill 时先复制到临时目录再改名，不会只删掉一半。
+- `apply` 的撤销步骤失败时写进错误信息与 journal；中断时已提交的 `apply` 先说明已完成再退出；Ctrl-C 也会立即停止 DSH 版本探测与 `--dump-config`。
+- `pull` 写入开始/结束记录，`pull`、`adopt` 恢复失败时写明原因并给出快照 id；`adopt` 的归属检查与随后的 `pull` 在同一把锁内，写入前建快照。
+- 环境锁：不接管另一个 pid 命名空间的锁；释放前核对内容；修正刚释放的锁文件 inode 被复用时把新持有者的锁当成陈旧锁删除的竞争；写锁失败时删除空锁文件；残留的 reclaim 目录超过 5 秒自动清除。
+- Profile 锁在 `dshenv` 退出时释放，包括第二次 Ctrl-C；快照与 journal 写入后 fsync；`rollback` 恢复 skills 先复制到临时目录再替换，中途失败的报错给出 pre-rollback 快照 id。
+- 读 DSH 目录时跳过 FIFO 等非普通文件，不再永久挂起；悬空软链接目标拒绝写入；root 运行时保留被覆盖文件的属主。
+- 团队仓库改为 `git cat-file --batch` 一次读取；`overlay use` 写选择文件时持环境锁。
+
 ## 0.12.1 - 2026-10-09
 
 ### 修复
