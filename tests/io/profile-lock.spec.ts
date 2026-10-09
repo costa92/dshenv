@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { releaseProfileLockOfStopped, withProfilePackageLock } from '../../src/io/profile-lock.js';
@@ -121,7 +122,7 @@ describe('withProfilePackageLock', () => {
     const driver = path.join(dir, 'driver.mts');
     fs.writeFileSync(
       driver,
-      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
+      `import { withProfilePackageLock } from ${JSON.stringify(pathToFileURL(path.resolve('src/io/profile-lock.ts')).href)};
 await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => process.exit(3));`
     );
     const result = spawnSync(process.execPath, ['--import', 'tsx/esm', driver]);
@@ -134,8 +135,8 @@ await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => process
     const driver = path.join(dir, 'driver.mts');
     fs.writeFileSync(
       driver,
-      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
-import { stopOnInterrupt } from ${JSON.stringify(path.resolve('src/io/interrupt.ts'))};
+      `import { withProfilePackageLock } from ${JSON.stringify(pathToFileURL(path.resolve('src/io/profile-lock.ts')).href)};
+import { stopOnInterrupt } from ${JSON.stringify(pathToFileURL(path.resolve('src/io/interrupt.ts')).href)};
 stopOnInterrupt(() => new Promise(() => {}));
 await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => {
   process.kill(process.pid, 'SIGINT');
@@ -154,7 +155,7 @@ await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => {
     const driver = path.join(dir, 'driver.mts');
     fs.writeFileSync(
       driver,
-      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
+      `import { withProfilePackageLock } from ${JSON.stringify(pathToFileURL(path.resolve('src/io/profile-lock.ts')).href)};
 setTimeout(() => process.exit(3), 300);
 await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => {});`
     );

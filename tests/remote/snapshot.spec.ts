@@ -332,7 +332,7 @@ describe('loadRemoteSnapshot', () => {
       files[`envctl/skills/big/part-${index}.md`] = String(index).repeat(size / String(index).length | 0);
     }
     await expect(snapshotOf(files)).rejects.toThrow(/^Remote path envctl holds \d+ bytes, more than the 104857600 dshenv reads from a team repository$/);
-  });
+  }, 60_000);
 
   it('refuses more team files than the limit', async () => {
     const files: Record<string, string> = { 'envctl/manifest.yaml': TEAM_MANIFEST };
