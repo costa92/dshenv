@@ -60,13 +60,14 @@ export interface DumpCheckOptions {
   home: string;
   profilesDir: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export type DumpCheckResult = ({ ok: true } & DumpDiagnostics) | { ok: false; reason: string };
 
 // What DSH composes for the profile now. The caller makes sure the profile exists: a dump creates a missing one.
 export async function readDumpDiagnostics(profile: string, options: DumpCheckOptions): Promise<DumpCheckResult> {
-  const dump = await dumpProfileConfig(profile, { command: options.command, dshHome: options.home, timeoutMs: options.timeoutMs });
+  const dump = await dumpProfileConfig(profile, { command: options.command, dshHome: options.home, timeoutMs: options.timeoutMs, signal: options.signal });
   if (!dump.ok) return dump;
   return { ok: true, ...parseDumpDiagnostics(dump.stderr, profile, options.home) };
 }

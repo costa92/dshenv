@@ -40,7 +40,7 @@ export async function checkPatchTargets(
   const everyProfile = homeWrite && fs.existsSync(paths.profilesDir) ? fs.readdirSync(paths.profilesDir) : [];
   const profiles = [...new Set([...profileWrites, ...everyProfile])].filter(existing).sort();
   const homePatch = homeWrite ? profilePatchContent(await readProfilePatchFile(paths, HOME_PATCH_TARGET), HOME_PATCH_TARGET, manifest.patches ?? []) : undefined;
-  const options = { command, home: paths.home, profilesDir: paths.profilesDir, timeoutMs };
+  const options = { command, home: paths.home, profilesDir: paths.profilesDir, timeoutMs, signal };
 
   // A plugin step of this apply changes the rows such a profile has, which a dump of it today cannot show.
   const pluginChanges = new Set(plan.operations.flatMap((op) => (op.resource === 'plugin' && op.kind !== 'blocked' ? [op.profile] : [])));

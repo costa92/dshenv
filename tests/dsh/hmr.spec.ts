@@ -3,7 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { HMR_PROBE_TIMEOUT_MS, parseHmrFromDump, probeProfileHmr } from '../../src/dsh/hmr.js';
-import { resolveDshCommand } from '../../src/dsh/command.js';
+import { probeDsh, resolveDshCommand } from '../../src/dsh/command.js';
+import { readDumpDiagnostics } from '../../src/dsh/dump-check.js';
 import { reaped } from '../helpers/process.js';
 
 const header = `# == @deepseek-ai/dsh-base
@@ -181,6 +182,31 @@ process.stdout.write(${JSON.stringify(dumpWithHmr("  disabled: !!js '!ctx.get(''
     interrupt.abort();
     expect(await probe).toEqual({ state: 'unknown', reason: 'dsh --dump-config was stopped by the interrupt' });
     expect(Date.now() - started).toBeLessThan(HMR_PROBE_TIMEOUT_MS);
+    expect(await reaped(Number(fs.readFileSync(pidFile, 'utf8')))).toBe(true);
+  }, 30_000);
+
+  it('stops the patch target dump and the version probe at once when apply is interrupted', async () => {
+    const pidFile = path.join(dir, 'dsh.pid');
+    const command = fakeDsh(`import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`);
+    const interruptOnStart = async () => {
+      const interrupt = new AbortController();
+      void (async () => {
+        while (!fs.existsSync(pidFile)) await new Promise((resolve) => setTimeout(resolve, 20));
+        interrupt.abort();
+      })();
+      return interrupt.signal;
+    };
+
+    let started = Date.now();
+    const dump = readDumpDiagnostics('web', { command, home: dir, profilesDir: path.join(dir, 'profiles'), signal: await interruptOnStart() });
+    expect(await dump).toEqual({ ok: false, reason: 'dsh --dump-config was stopped by the interrupt' });
+    expect(Date.now() - started).toBeLessThan(HMR_PROBE_TIMEOUT_MS);
+    expect(await reaped(Number(fs.readFileSync(pidFile, 'utf8')))).toBe(true);
+
+    fs.rmSync(pidFile);
+    started = Date.now();
+    await expect(probeDsh(command, undefined, undefined, await interruptOnStart())).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(10_000);
     expect(await reaped(Number(fs.readFileSync(pidFile, 'utf8')))).toBe(true);
   }, 30_000);
 

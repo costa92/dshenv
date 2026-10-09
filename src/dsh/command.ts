@@ -128,12 +128,14 @@ function commandNotFound(cmd: CommandSpec): CapabilityError {
 export async function probeDsh(
   cmd: CommandSpec,
   runner?: (file: string, args: string[], opts: Record<string, unknown>) => Promise<{ stdout: string; stderr: string }>,
-  timeoutMs = 10000
+  timeoutMs = 10000,
+  signal?: AbortSignal
 ): Promise<ProbeResult> {
   const run = runner ?? (async (file, args, opts) => {
     const { result, timedOut } = await awaitWithTreeTimeout(
       execa(file, args, { ...opts, shell: false, reject: false, maxBuffer: 1024 * 1024 }),
-      timeoutMs
+      timeoutMs,
+      signal
     );
     if (!timedOut && (result as { code?: string }).code === 'ENOENT') {
       throw new CommandNotFound();

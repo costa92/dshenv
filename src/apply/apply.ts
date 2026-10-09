@@ -82,11 +82,11 @@ async function assertSupportedDsh(
   command: CommandSpec,
   manifest: EnvironmentManifest,
   options?: ApplyOptions,
-  { tolerateProbeFailure = false } = {}
+  { tolerateProbeFailure = false, signal }: { tolerateProbeFailure?: boolean; signal?: AbortSignal } = {}
 ): Promise<void> {
   let probe: Awaited<ReturnType<typeof probeDsh>>;
   try {
-    probe = await probeDsh(command);
+    probe = await probeDsh(command, undefined, undefined, signal);
   } catch (err) {
     if (tolerateProbeFailure) {
       return;
@@ -542,7 +542,7 @@ async function planAndApply(
     // A preview refuses an unsupported DSH like the real apply would; a DSH it cannot ask still gets the plan shown.
     const command = planNeedsDshCli(plan, inventory) && !options.executor ? dshCommandFor(manifest, options) : null;
     if (command) {
-      await assertSupportedDsh(command, manifest, options, { tolerateProbeFailure: true });
+      await assertSupportedDsh(command, manifest, options, { tolerateProbeFailure: true, signal });
     }
     return {
       applied: false,
@@ -561,7 +561,7 @@ async function planAndApply(
     throw new CapabilityError('DSH CLI was not found; configure DSH_CLI or --harness-source');
   }
   if (command) {
-    await assertSupportedDsh(command, manifest, options);
+    await assertSupportedDsh(command, manifest, options, { signal });
     assertNotInterrupted(signal);
   }
   // Ids DSH already skips are left to the preview: a row moved into a preset or missing from one profile is normal.
