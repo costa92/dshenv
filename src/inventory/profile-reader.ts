@@ -44,6 +44,8 @@ export interface EnvironmentInventory {
   homePatches?: ProfilePatchState;
   // Why the global file could not be read; dshenv then leaves it alone.
   homePatchesError?: string;
+  // Profile directories DSH cannot load -> why; they are neither inventoried nor to be created anew.
+  invalidProfiles?: Record<string, string>;
 }
 
 const MAX_JSON_SIZE = 1024 * 1024; // 1 MiB
@@ -55,10 +57,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// A FIFO or device reports size 0 and would block the read forever.
+function readableFileSize(filePath: string): number | null {
+  const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+  return stat?.isFile() ? stat.size : null;
+}
+
 function safeReadJson(filePath: string): unknown | null {
   try {
-    const stat = fs.statSync(filePath);
-    if (stat.size > MAX_JSON_SIZE) {
+    const size = readableFileSize(filePath);
+    if (size === null || size > MAX_JSON_SIZE) {
       return null;
     }
     const content = fs.readFileSync(filePath, 'utf8');
@@ -66,6 +74,11 @@ function safeReadJson(filePath: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+function invalidProfileReason(profile: string, dir: string, problem: string): string {
+  return `Profile '${profile}' exists at ${dir} but ${problem}, so DSH cannot load it; ` +
+    'fix that profile (or move the directory away to have it created anew) and apply again';
 }
 
 function isPathInside(root: string, candidate: string): boolean {
@@ -204,6 +217,7 @@ function readHomePatches(paths: EnvironmentPaths): Pick<EnvironmentInventory, 'h
   try {
     const stat = fs.statSync(file, { throwIfNoEntry: false });
     if (!stat) return {};
+    if (!stat.isFile()) return { homePatchesError: `${file} is not a regular file` };
     if (stat.size > MAX_JSON_SIZE) return { homePatchesError: `${file} exceeds 1 MiB` };
     return { homePatches: readProfilePatchState(fs.readFileSync(file, 'utf8'), HOME_PATCH_TARGET) };
   } catch (err) {
@@ -236,6 +250,12 @@ export async function readEnvironmentInventory(
     const packageJsonPath = path.join(profilePath, 'package.json');
     const rawProfileData = safeReadJson(packageJsonPath);
     if (!isRecord(rawProfileData) || !isRecord(rawProfileData.dsh) || !isRecord(rawProfileData.dsh.profile)) {
+      const problem = !fs.existsSync(packageJsonPath)
+        ? 'has no package.json'
+        : rawProfileData === null
+          ? 'has a package.json that is not a readable JSON file of at most 1 MiB'
+          : 'has a package.json without dsh.profile';
+      (result.invalidProfiles ??= {})[profileName] = invalidProfileReason(profileName, profilePath, problem);
       continue;
     }
 
@@ -254,6 +274,10 @@ export async function readEnvironmentInventory(
     let patchFileRepairable = false;
     let profilePatches: ProfilePatchState | undefined;
     let mounts: Record<string, string> = {};
+    if (fs.existsSync(patchFile) && readableFileSize(patchFile) === null) {
+      (result.invalidProfiles ??= {})[profileName] = invalidProfileReason(profileName, profilePath, 'its cordis.patch.yml is not a regular file');
+      continue;
+    }
     try {
       const patchStat = fs.statSync(patchFile);
       if (patchStat.size <= MAX_JSON_SIZE) {

@@ -133,8 +133,11 @@ async function executeWithDsh(
   for (const profile of plan.createdProfiles ?? []) {
     assertNotInterrupted(signal);
     const dir = path.join(paths.profilesDir, profile);
-    const created = await dumpProfileConfig(profile, { command, dshHome: paths.home });
-    if (fs.existsSync(path.join(dir, 'package.json'))) {
+    // A directory that was already there may hold sessions; only one DSH created here is apply's to remove.
+    const existed = fs.existsSync(dir);
+    const created = await dumpProfileConfig(profile, { command, dshHome: paths.home, signal });
+    assertNotInterrupted(signal);
+    if (!existed && fs.existsSync(path.join(dir, 'package.json'))) {
       rollback.undo.push(async () => fs.rmSync(dir, { recursive: true, force: true }));
     }
     if (!created.ok || !fs.existsSync(path.join(dir, 'package.json'))) {
@@ -360,7 +363,8 @@ function pruneOwnership(
 function defaultHmrProbe(
   paths: EnvironmentPaths,
   manifest: EnvironmentManifest,
-  options?: ApplyOptions
+  options?: ApplyOptions,
+  signal?: AbortSignal
 ): (profile: string) => Promise<HmrStatus> {
   const command = resolveDshCommand({
     cliHarnessSource: options?.harnessSource,
@@ -371,7 +375,7 @@ function defaultHmrProbe(
     if (!fs.existsSync(path.join(paths.profilesDir, profile, 'package.json'))) {
       return { state: 'unknown', reason: `profile ${profile} does not exist yet` };
     }
-    return probeProfileHmr(profile, { command, dshHome: paths.home });
+    return probeProfileHmr(profile, { command, dshHome: paths.home, signal });
   };
 }
 
@@ -445,6 +449,12 @@ export async function applyEnvironment(
     settled();
   }
   if (interrupt.signal.aborted) {
+    // Committed before the interrupt reached a check: say so, or it would pass for rolled back.
+    if ('result' in outcome && outcome.result.applied) {
+      process.stderr.write(
+        `Apply ${outcome.result.operationId} had already finished when interrupted, so nothing was rolled back: ${outcome.result.message}\n`
+      );
+    }
     // The signal ends dshenv once the cleanup above returns; reporting the rollback as a failure would only race it.
     await new Promise(() => {});
   }
@@ -515,16 +525,18 @@ async function planAndApply(
     assertSupportedPlan(plan);
   }
 
-  const probe = options?.probeHmr ?? defaultHmrProbe(paths, manifest, options);
+  const probe = options?.probeHmr ?? defaultHmrProbe(paths, manifest, options, signal);
   // DSH applies the global file to every profile, but only those already created run anything.
   const existingProfiles = Object.keys(inventory.profiles).sort();
   const profiles = profilesToProbe(plan, existingProfiles);
   const statuses = await Promise.all(profiles.map((profile) => probe(profile)));
+  assertNotInterrupted(signal);
   const hmrByProfile = new Map<string, HmrStatus>(profiles.map((profile, index) => [profile, statuses[index]]));
   const restart = buildRestartSummary(plan, hmrByProfile, existingProfiles);
   const patchTargets = options?.executor
     ? undefined
-    : await checkPatchTargets(paths, manifest, plan, dshCommandFor(manifest, options));
+    : await checkPatchTargets(paths, manifest, plan, dshCommandFor(manifest, options), undefined, signal);
+  assertNotInterrupted(signal);
 
   if (options?.dryRun) {
     // A preview refuses an unsupported DSH like the real apply would; a DSH it cannot ask still gets the plan shown.
@@ -550,6 +562,7 @@ async function planAndApply(
   }
   if (command) {
     await assertSupportedDsh(command, manifest, options);
+    assertNotInterrupted(signal);
   }
   // Ids DSH already skips are left to the preview: a row moved into a preset or missing from one profile is normal.
   if (patchTargets && patchTargets.added.length > 0) {
@@ -604,7 +617,8 @@ async function planAndApply(
       );
       const done = plan.operations.filter((op) => op.resource === 'plugin' && !remaining.has(`${op.profile}\0${op.alias}\0${op.kind}`));
       profiles = recordRestartState(base.profiles, { ...plan, operations: done }, live, now, restart);
-      plugin = dropUninstalledOwnership(plugin, live);
+      // A dsh plugin add can exit non-zero after installing; what is on disk is dshenv's all the same.
+      plugin = dropUninstalledOwnership(recordInstalledOwnership(plugin, done, manifest, now, operationId), live);
     } catch {
       // Without the profiles on disk, keep at least the ownership of what was installed.
     }
@@ -646,6 +660,7 @@ async function planAndApply(
     const trashRoot = path.join(paths.trashDir, operationId);
     // Global patches follow the profiles too, as their entries may target rows a profile install just added.
     for (const operation of plan.operations) {
+      assertNotInterrupted(signal);
       if (operation.resource === 'home-patch') {
         rollback.undo.push(await applyHomePatchOperation(paths, manifest));
       } else if (operation.resource === 'skill') {
@@ -705,13 +720,18 @@ async function planAndApply(
       restart
     };
   } catch (err: unknown) {
+    // Keep undoing the remaining edits; what failed is reported, as the profile may be left half changed.
+    const undoFailures: string[] = [];
     for (const step of [...[...rollback.undo].reverse(), ...rollback.keep]) {
       try {
         await step();
-      } catch {
-        // keep undoing the remaining edits; preserve original error
+      } catch (undoErr) {
+        undoFailures.push(undoErr instanceof Error ? undoErr.message : String(undoErr));
       }
     }
+    const undoNote = undoFailures.length > 0
+      ? `\n${undoFailures.length} of the edits apply made could not be undone, so DSH may be left half changed: ${undoFailures.join('; ')}`
+      : '';
 
     // Apply writes only lock.json and state.json; the manifest and envctl/skills may hold edits made meanwhile.
     let failureNote = '';
@@ -724,7 +744,8 @@ async function planAndApply(
           type: 'apply-rollback',
           timestamp: new Date().toISOString(),
           details: {
-            reason: err instanceof Error ? err.message : String(err)
+            reason: err instanceof Error ? err.message : String(err),
+            ...(undoFailures.length > 0 ? { undoFailures } : {})
           }
         });
       } catch (restoreErr) {
@@ -738,6 +759,7 @@ async function planAndApply(
       }
     }
 
+    failureNote += undoNote;
     if (err instanceof DshError) {
       err.message += failureNote;
       throw err;

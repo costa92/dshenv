@@ -42,4 +42,25 @@ describe('replaceSkillDir across filesystems', () => {
     expect(fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8')).toBe('old\n');
     expect(fs.existsSync(trash)).toBe(false);
   });
+
+  it('replaces the live skill whole even when deleting the moved copy fails halfway', async () => {
+    const source = path.join(dir, 'source');
+    const target = path.join(dir, 'skills', 'demo');
+    const trash = path.join(dir, 'trash', 'op', 'demo');
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'SKILL.md'), 'new\n');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'SKILL.md'), 'old\n');
+    fs.writeFileSync(path.join(target, 'run.sh'), 'echo\n');
+    const rm = fs.promises.rm.bind(fs.promises);
+    vi.spyOn(fs.promises, 'rm').mockImplementationOnce(async (dirPath) => {
+      fs.rmSync(path.join(String(dirPath), 'SKILL.md'));
+      throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' });
+    }).mockImplementation(rm);
+
+    await replaceSkillDir(source, target, trash).catch(() => {});
+    expect(fs.readdirSync(target).sort()).toEqual(['SKILL.md']);
+    expect(fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8')).toBe('new\n');
+    expect(fs.readdirSync(path.join(dir, 'skills')).filter((name) => !name.startsWith('.tmp-'))).toEqual(['demo']);
+  });
 });

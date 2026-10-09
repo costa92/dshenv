@@ -342,15 +342,15 @@ describe('CLI envctl location', () => {
     const profile = path.join(home, 'profiles', 'web');
     fs.mkdirSync(path.join(profile, 'node_modules', '@acme'), { recursive: true });
     fs.symlinkSync(inside, path.join(profile, 'node_modules', '@acme', 'notes'), 'junction');
-    fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dependencies: { '@acme/notes': `link:${inside}` } }));
+    fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dependencies: { '@acme/notes': `link:${inside}` }, dsh: { profile: { bundles: ['@acme/notes'] } } }));
     const target = path.join(tempRoot, 'moved');
 
     expect((await run(['migrate', '--to', target, '--yes'])).code).toBe(0);
-    // DSH's link now points at the deleted directory, so plan sees the plugin as missing and apply installs it from the new path.
+    // DSH's link now points at the deleted directory, so apply reinstalls the plugin from the new path.
     const plan = await run(['plan', '--envctl-dir', target]);
     expect(plan.code).toBe(2);
-    expect(plan.stdout).toContain('+ [web] @acme/notes (notes)');
-    expect(plan.stdout).toContain('not installed in profile');
+    expect(plan.stdout).toContain('~ [web] @acme/notes (notes)');
+    expect(plan.stdout).toContain(`Local source path changed to ${path.join(target, 'sources', 'web', 'notes')}`);
   });
 
   it.skipIf(process.platform === 'win32')('treats a trailing separator on a symlinked envctl as the link itself', async () => {

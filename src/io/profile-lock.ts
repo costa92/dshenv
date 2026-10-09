@@ -11,6 +11,21 @@ export const PROFILE_LOCK_TIMEOUT_MS = 30_000;
 const LOCK_RETRY_INITIAL_MS = 25;
 const LOCK_RETRY_MAX_MS = 1_000;
 
+// Locks this process created and still holds; the finally below never runs when dshenv exits mid-operation.
+const heldLocks = new Set<string>();
+
+function releaseHeldLocks(): void {
+  for (const lockPath of heldLocks) {
+    try {
+      if (fs.readFileSync(lockPath, 'utf8') === `${process.pid}\n`) {
+        fs.rmSync(lockPath, { force: true });
+      }
+    } catch {
+      // Already gone, or unreadable: nothing of ours to remove.
+    }
+  }
+}
+
 async function tryCreate(lockPath: string, content: string): Promise<boolean> {
   try {
     const handle = await fs.promises.open(lockPath, 'wx', 0o600);
@@ -57,9 +72,17 @@ export async function withProfilePackageLock<T>(
     await delay(Math.min(wait, remaining));
     wait = Math.min(wait * 2, LOCK_RETRY_MAX_MS);
   }
+  if (heldLocks.size === 0) {
+    process.on('exit', releaseHeldLocks);
+  }
+  heldLocks.add(lockPath);
   try {
     return await operation();
   } finally {
+    heldLocks.delete(lockPath);
+    if (heldLocks.size === 0) {
+      process.off('exit', releaseHeldLocks);
+    }
     await fs.promises.rm(lockPath, { force: true });
   }
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -30,6 +30,7 @@ describe('apply skills', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
@@ -54,6 +55,27 @@ describe('apply skills', () => {
     const trashed = fs.readdirSync(paths.trashDir).map((entry) => path.join(paths.trashDir, entry, 'skills', 'wiki', 'SKILL.md'));
     expect(trashed.some((file) => fs.existsSync(file) && fs.readFileSync(file, 'utf8') === 'edited in DSH')).toBe(true);
     expect(fs.readFileSync(dshSkill('mine'), 'utf8')).toBe('hand-made');
+  });
+
+  it('reports the edits it could not undo, in the error and the journal, rather than claiming a clean rollback', async () => {
+    write(path.join(paths.skillsDir, 'aaa', 'SKILL.md'), 'declared');
+    const cp = fs.promises.cp.bind(fs.promises);
+    vi.spyOn(fs.promises, 'cp').mockImplementation(async (from, to, options) => {
+      if (String(from).endsWith(`${path.sep}wiki`)) throw new Error('ENOSPC: no space left on device');
+      return cp(from, to, options);
+    });
+    const rm = fs.promises.rm.bind(fs.promises);
+    vi.spyOn(fs.promises, 'rm').mockImplementation(async (target, options) => {
+      if (String(target) === path.join(paths.dshSkillsDir, 'aaa')) throw new Error(`EIO: i/o error, rm '${String(target)}'`);
+      return rm(target, options);
+    });
+
+    const failure = (await applyEnvironment(paths).catch((err: Error) => err)) as Error;
+    expect(failure.message).toMatch(/ENOSPC/);
+    expect(failure.message).toMatch(/1 of the edits apply made could not be undone, so DSH may be left half changed/);
+    expect(failure.message).toContain(`EIO: i/o error, rm '${path.join(paths.dshSkillsDir, 'aaa')}'`);
+    const journal = fs.readFileSync(path.join(paths.logsDir, 'journal.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(journal.at(-1)).toMatchObject({ type: 'apply-rollback', details: { undoFailures: [expect.stringContaining('EIO')] } });
   });
 
   it('takes ownership of a declared skill DSH already has as declared, though apply copies nothing', async () => {

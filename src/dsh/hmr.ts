@@ -9,6 +9,8 @@ export interface ProbeHmrOptions {
   command: CommandSpec | null;
   dshHome: string;
   timeoutMs?: number;
+  // Apply's interrupt: stops dsh rather than waiting out the timeout.
+  signal?: AbortSignal;
 }
 
 export const HMR_PROBE_TIMEOUT_MS = 15_000;
@@ -86,9 +88,12 @@ export async function dumpProfileConfig(profile: string, options: ProbeHmrOption
     reject: false,
     maxBuffer: 16 * 1024 * 1024
   });
-  const { result, timedOut } = await awaitWithTreeTimeout(subprocess, timeoutMs);
+  const { result, timedOut } = await awaitWithTreeTimeout(subprocess, timeoutMs, options.signal);
   if (timedOut) {
     return { ok: false, reason: `dsh --dump-config timed out after ${timeoutMs} ms` };
+  }
+  if (options.signal?.aborted) {
+    return { ok: false, reason: 'dsh --dump-config was stopped by the interrupt' };
   }
   // Never use execa's messages here: they include the command line, and DSH_CLI args can carry credentials.
   if (result.failed) {

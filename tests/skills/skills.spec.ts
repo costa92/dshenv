@@ -135,6 +135,24 @@ describe('skill files', () => {
     expect(fs.existsSync(path.join(paths.dshSkillsDir, 'wiki', 'refs'))).toBe(false);
   });
 
+  it('stages a copy under a name no inventory takes for a skill, should dshenv be killed before it is renamed', async () => {
+    const cp = fs.promises.cp.bind(fs.promises);
+    const staged: string[] = [];
+    vi.spyOn(fs.promises, 'cp').mockImplementation(async (from, to, options) => {
+      staged.push(String(to));
+      return cp(from, to, options);
+    });
+    await applySkillOperation(paths, { resource: 'skill', kind: 'update', name: 'wiki', reason: '' }, path.join(paths.trashDir, 'apply-1'));
+    vi.restoreAllMocks();
+    // What a kill between the copy and the rename leaves behind.
+    expect(path.dirname(staged[0])).toBe(paths.dshSkillsDir);
+    await cp(path.join(paths.skillsDir, 'wiki'), staged[0], { recursive: true });
+
+    const inventory = await readSkillInventory(paths);
+    expect(Object.keys(inventory.live)).toEqual(['wiki']);
+    expect(planSkills(inventory, { wiki: inventory.live.wiki }).unmanaged).toEqual([]);
+  });
+
   it('moves a removed skill into trash', async () => {
     const trash = path.join(paths.trashDir, 'apply-2');
     await applySkillOperation(paths, { resource: 'skill', kind: 'remove', name: 'wiki', reason: '' }, trash);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { parseHmrFromDump, probeProfileHmr } from '../../src/dsh/hmr.js';
+import { HMR_PROBE_TIMEOUT_MS, parseHmrFromDump, probeProfileHmr } from '../../src/dsh/hmr.js';
 import { resolveDshCommand } from '../../src/dsh/command.js';
 import { reaped } from '../helpers/process.js';
 
@@ -170,6 +170,19 @@ process.stdout.write(${JSON.stringify(dumpWithHmr("  disabled: !!js '!ctx.get(''
       reason: 'dsh --dump-config timed out after 200 ms'
     });
   });
+
+  it('stops dsh and returns at once when apply is interrupted', async () => {
+    const pidFile = path.join(dir, 'dsh.pid');
+    const command = fakeDsh(`import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`);
+    const interrupt = new AbortController();
+    const started = Date.now();
+    const probe = probeProfileHmr('web', { command, dshHome: dir, signal: interrupt.signal });
+    while (!fs.existsSync(pidFile)) await new Promise((resolve) => setTimeout(resolve, 20));
+    interrupt.abort();
+    expect(await probe).toEqual({ state: 'unknown', reason: 'dsh --dump-config was stopped by the interrupt' });
+    expect(Date.now() - started).toBeLessThan(HMR_PROBE_TIMEOUT_MS);
+    expect(await reaped(Number(fs.readFileSync(pidFile, 'utf8')))).toBe(true);
+  }, 30_000);
 
   it('times out when dsh runs under a wrapper, as pnpm runs a source checkout, and stops what it started', async () => {
     const pidFile = path.join(dir, 'grandchild.pid');

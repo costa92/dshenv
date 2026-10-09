@@ -8,6 +8,7 @@ import type { EnvironmentPlan } from '../planner/plan.js';
 import { isValidProfileName } from '../manifest/schema.js';
 import { HOME_PATCH_TARGET } from '../profile-patches/entries.js';
 import { profilePatchContent, readProfilePatchFile } from './patches.js';
+import { assertNotInterrupted } from '../io/interrupt.js';
 
 export interface PatchTargetReport {
   // Entries of the profile and global layers DSH would skip, matching no row, once apply wrote them.
@@ -25,7 +26,8 @@ export async function checkPatchTargets(
   manifest: EnvironmentManifest,
   plan: EnvironmentPlan,
   command: CommandSpec | null,
-  timeoutMs?: number
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<PatchTargetReport | undefined> {
   const writes = (op: EnvironmentPlan['operations'][number]) => op.kind === 'configure' && (op.resource === 'profile-patch' || op.resource === 'home-patch');
   const profileWrites = new Set(plan.operations.flatMap((op) => (writes(op) && op.resource === 'profile-patch' ? [op.profile] : [])));
@@ -57,6 +59,7 @@ export async function checkPatchTargets(
         : undefined;
       // One after the other: both dumps prepare the same node_modules.
       const current = await readDumpDiagnostics(profile, options);
+      assertNotInterrupted(signal);
       const candidate = current.ok ? await readCandidateDiagnostics(profile, { profilePatch, homePatch }, options) : current;
       if (!current.ok || !candidate.ok) {
         report.unchecked.push(`${profile}: ${(candidate as { reason: string }).reason}`);

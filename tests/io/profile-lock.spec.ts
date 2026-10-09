@@ -116,4 +116,29 @@ describe('withProfilePackageLock', () => {
       parent.kill('SIGKILL');
     }
   });
+
+  it('removes the lock it holds when dshenv exits in the middle of the operation', () => {
+    const driver = path.join(dir, 'driver.mts');
+    fs.writeFileSync(
+      driver,
+      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
+await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => process.exit(3));`
+    );
+    const result = spawnSync(process.execPath, ['--import', 'tsx/esm', driver]);
+    expect(result.status).toBe(3);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('leaves a lock another process holds when it exits', () => {
+    fs.writeFileSync(lockPath, '1\n');
+    const driver = path.join(dir, 'driver.mts');
+    fs.writeFileSync(
+      driver,
+      `import { withProfilePackageLock } from ${JSON.stringify(path.resolve('src/io/profile-lock.ts'))};
+setTimeout(() => process.exit(3), 300);
+await withProfilePackageLock(${JSON.stringify(packageJson)}, async () => {});`
+    );
+    expect(spawnSync(process.execPath, ['--import', 'tsx/esm', driver]).status).toBe(3);
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe('1\n');
+  });
 });

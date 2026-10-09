@@ -47,6 +47,7 @@ fs.mkdirSync(dir, { recursive: true });
 fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, version: spec.slice(name.length + 1), dsh: { bundle: {} } }));
 if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name);
 fs.writeFileSync(pkgPath, JSON.stringify(pkg));
+if (process.env.FAIL_AFTER_ON && spec.includes(process.env.FAIL_AFTER_ON)) { console.error('dsh: postinstall failed'); process.exit(9); }
 `;
 
 describe('applyEnvironment failure recovery', () => {
@@ -76,6 +77,7 @@ describe('applyEnvironment failure recovery', () => {
   afterEach(() => {
     hint.fail = false;
     delete process.env.FAIL_ON;
+    delete process.env.FAIL_AFTER_ON;
     if (previousDshCli === undefined) delete process.env.DSH_CLI;
     else process.env.DSH_CLI = previousDshCli;
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -95,6 +97,19 @@ describe('applyEnvironment failure recovery', () => {
     expect(message).toContain(
       `The manifest still declares what failed: fix it and apply again, or go back to the manifest apply ${good.operationId} applied (dropping every manifest change made since) with: dshenv rollback ${good.operationId} --yes`
     );
+  });
+
+  it('owns a plugin DSH installed although its add exited non-zero, so dropping it from the manifest removes it', async () => {
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa'), plugin('bb')));
+    process.env.FAIL_AFTER_ON = 'bb';
+    await expect(applyEnvironment(paths, options)).rejects.toThrow(/install bb/);
+    const state = JSON.parse(fs.readFileSync(paths.stateFile, 'utf8'));
+    expect(Object.keys(state.resources.plugin.web).sort()).toEqual(['aa', 'bb']);
+
+    fs.writeFileSync(paths.manifestFile, manifest(plugin('aa')));
+    const preview = await applyEnvironment(paths, { ...options, dryRun: true });
+    expect(preview.plan.operations.filter((op) => op.resource === 'plugin').map((op) => `${op.kind} ${op.alias}`)).toEqual(['remove bb']);
+    expect(preview.plan.unmanaged).toEqual([]);
   });
 
   it('keeps the digest of a local plugin installed before the failure, so the next plan does not reinstall it', async () => {

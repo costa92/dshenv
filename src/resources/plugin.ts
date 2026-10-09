@@ -129,11 +129,18 @@ export function planPlugins(
   for (const [profName, profManifest] of Object.entries(manifestProfiles)) {
     const profInv = inventory.profiles[profName];
     const profLock = lock?.profiles?.[profName]?.plugins || {};
+    const invalidProfile = profInv ? undefined : inventory.invalidProfiles?.[profName];
 
     for (const [alias, pluginManifest] of Object.entries(profManifest.plugins)) {
       const pkgName = pluginManifest.package;
       const targetEnabled = pluginManifest.enabled ?? true;
       const lockEntry = profLock[alias];
+
+      // Neither an install nor DSH's template may run over a profile that holds sessions and config.
+      if (invalidProfile) {
+        operations.push({ resource: 'plugin', kind: 'blocked', profile: profName, alias, package: pkgName, reason: invalidProfile, blockedReason: invalidProfile, targetEnabled });
+        continue;
+      }
 
       const targetVersion = pluginManifest.source.type === 'npm' ? pluginManifest.source.version : undefined;
 

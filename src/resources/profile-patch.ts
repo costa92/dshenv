@@ -36,7 +36,7 @@ export function planProfilePatches(
 ): ProfilePatchPlan {
   const operations: ProfilePatchOperation[] = [];
   for (const [profName, profManifest] of Object.entries(manifest.profiles)) {
-    const operation = planProfileBlock(profName, profManifest.patches ?? [], inventory.profiles[profName], pluginOperations);
+    const operation = planProfileBlock(profName, profManifest.patches ?? [], inventory.profiles[profName], pluginOperations, inventory.invalidProfiles?.[profName]);
     if (operation) {
       operations.push(operation);
     }
@@ -63,12 +63,16 @@ function planProfileBlock(
   profile: string,
   expected: ProfilePatch[],
   profInv: EnvironmentInventory['profiles'][string] | undefined,
-  pluginOperations: PluginOperation[]
+  pluginOperations: PluginOperation[],
+  invalidReason?: string
 ): ProfilePatchOperation | null {
   const base = { resource: 'profile-patch', profile } as const;
   if (!profInv) {
     if (expected.length === 0) {
       return null;
+    }
+    if (invalidReason) {
+      return { ...base, kind: 'blocked', reason: invalidReason, blockedReason: invalidReason };
     }
     // DSH creates the profile when it installs a plugin into it, or from its template; otherwise there is nowhere to write.
     if (dshCreatesProfile(profile) || pluginOperations.some((op) => op.profile === profile && op.kind === 'install')) {
