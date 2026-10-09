@@ -62,8 +62,8 @@ describe('remote.json schema', () => {
   });
 
   it.each([
-    ['a short commit', { commit: 'abc123' }, /commit: Commit must be a 40-character lowercase hex SHA-1/],
-    ['an uppercase commit', { commit: 'A'.repeat(40) }, /commit: Commit must be a 40-character lowercase hex SHA-1/],
+    ['a short commit', { commit: 'abc123' }, /commit: Commit must be a 40- or 64-character lowercase hex commit id/],
+    ['an uppercase commit', { commit: 'A'.repeat(40) }, /commit: Commit must be a 40- or 64-character lowercase hex commit id/],
     ['a credential URL', { url: 'https://user:token@example.com/team.git' }, /url: Git URL must not embed credentials/],
     ['an option-like URL', { url: '--upload-pack=evil' }, /url: Git URL must not start with -/],
     ['a path with ..', { path: '../envctl' }, /path: Path must be '\.' or a relative directory/],

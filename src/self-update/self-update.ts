@@ -171,8 +171,9 @@ export async function detectInstallMethod(run: Runner, packageRoot: string): Pro
     }
     const spec = method === 'pnpm' ? pnpmGlobalSpec(globalRoot) : undefined;
     if (spec && /^(?:git\+|git:|github:|gitlab:|bitbucket:|https?:|file:|link:)/.test(spec)) {
+      // Userinfo and the query can carry a token; the fragment is the git ref to reinstall from.
       throw new ValidationError(
-        `dshenv was installed with pnpm from ${spec.replace(/\/\/[^/@]*@/, '//')}, not from the npm registry; ` +
+        `dshenv was installed with pnpm from ${spec.replace(/\/\/[^/@]*@/, '//').replace(/\?[^#]*/, '')}, not from the npm registry; ` +
           `reinstall from that source, or switch with 'pnpm add -g ${PACKAGE_NAME}'`
       );
     }

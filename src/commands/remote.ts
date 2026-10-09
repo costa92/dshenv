@@ -96,7 +96,7 @@ export function registerRemoteCommands(ctx: CommandContext): void {
     accepted: AcceptResult | null,
     dryRun: boolean | undefined,
     extra: Record<string, unknown> = {},
-    // Flags the preview needed (--ref, --replace, --discard-local-changes) that accepting needs again.
+    // Flags the preview needed (--branch, --path, --ref, --replace, --discard-local-changes) that accepting needs again.
     repeated: string[] = []
   ): void {
     const status = accepted ? 'accepted' : preview.status;
@@ -125,7 +125,8 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       return;
     }
     const range = preview.from ? `${shortCommit(preview.from)} -> ${shortCommit(preview.to)}` : `at ${shortCommit(preview.to)}`;
-    writeOut(`${[`Remote ${url} ${range}`, ...renderChanges(preview), 'Plan after accepting:'].join('\n')}\n${renderPlan(preview.plan)}`);
+    const heading = `Remote ${url} ${range} (branch ${preview.next.branch}, path ${preview.next.path})`;
+    writeOut(`${[heading, ...renderChanges(preview), 'Plan after accepting:'].join('\n')}\n${renderPlan(preview.plan)}`);
     if (accepted) {
       writeOut(`Accepted ${preview.to} (snapshot ${accepted.snapshotId}).\nNext: dshenv plan, then dshenv apply --yes.\n`);
     } else {
@@ -156,6 +157,9 @@ export function registerRemoteCommands(ctx: CommandContext): void {
       await assertNoUnfinishedOperations(paths, { warn: writeErr });
       if (hasEmbeddedCredentials(url)) {
         throw new ValidationError('Git URL must not embed credentials; use SSH or a git credential helper');
+      }
+      if (url.trim() === '') {
+        throw new ValidationError('Git URL must not be empty');
       }
       if (url.startsWith('-')) {
         throw new ValidationError(`Invalid Git URL: ${url}`);
@@ -209,6 +213,8 @@ export function registerRemoteCommands(ctx: CommandContext): void {
         }
       });
       reportSync(opts, url, preview, accepted, cmdOpts.dryRun, subscription, [
+        ...(cmdOpts.branch !== undefined ? [`--branch ${cmdOpts.branch}`] : []),
+        ...(cmdOpts.path !== DEFAULT_REMOTE_PATH ? [`--path ${cmdOpts.path}`] : []),
         ...(cmdOpts.ref !== undefined ? [`--ref ${cmdOpts.ref}`] : []),
         ...(cmdOpts.replace ? ['--replace'] : [])
       ]);

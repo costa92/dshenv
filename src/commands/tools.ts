@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { Option } from 'commander';
+import { Option, type Command } from 'commander';
 import type { ProfilePatch } from '../domain.js';
 import type { EnvironmentPaths } from '../environment/paths.js';
 import { ValidationError } from '../errors.js';
@@ -266,9 +266,16 @@ export function registerToolsCommands(ctx: CommandContext): void {
     .addOption(targetProfile())
     .addOption(presetOption())
     .addOption(writeLayer())
-    .action((tool: string, dottedPath: string | undefined, value: string | undefined, cmdOpts) =>
-      dottedPath !== undefined && value !== undefined ? setConfig(tool, dottedPath, value, cmdOpts) : showConfig(tool, dottedPath, cmdOpts)
-    );
+    .action((tool: string, dottedPath: string | undefined, value: string | undefined, cmdOpts, cmd: Command) => {
+      if (dottedPath !== undefined && value !== undefined) {
+        return setConfig(tool, dottedPath, value, cmdOpts);
+      }
+      // A read has no layer, as tools config get shows; DSHENV_LAYER fills the option in too, so only an explicit one is refused.
+      if (cmd.getOptionValueSource('layer') === 'cli') {
+        throw new ValidationError('--layer applies only when setting a value; tools config reads the effective config');
+      }
+      return showConfig(tool, dottedPath, cmdOpts);
+    });
   configCmd
     .command('get <tool> [dottedPath]')
     .description("Show a tool's config, or one key of it")

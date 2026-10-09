@@ -61,4 +61,9 @@ describe('CLI errors with --json', () => {
     expect(out.code).toBe(3);
     expect(out.stderr).toBe('--overlay and --no-overlay cannot be used together\n');
   });
+
+  it('does not treat --no-overlay after -- as conflicting with --overlay', async () => {
+    const out = await run(['--dsh-home', home, '--overlay', 'a', 'status', '--', '--no-overlay']);
+    expect(out.stderr).not.toContain('cannot be used together');
+  });
 });

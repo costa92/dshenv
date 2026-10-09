@@ -139,6 +139,9 @@ process.exit(1);
       { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetchMaxOutputChars: 1000, search: { maxResults: 3 } } }
     ]);
     expect((await run(['tools', 'config', 'tool-web', 'search.maxResults', '-p', 'headless'])).stdout.trim()).toBe('3');
+    const layered = await run(['tools', 'config', 'tool-web', 'search.maxResults', '-p', 'headless', '--layer', 'bogus']);
+    expect(layered.code).toBe(3);
+    expect(layered.stderr).toContain('--layer applies only when setting a value');
 
     await run(['tools', 'disable', 'tool-web', '-p', 'headless']);
     expect(manifest().profiles.headless.patches).toEqual([

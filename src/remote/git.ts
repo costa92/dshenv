@@ -91,7 +91,7 @@ export async function resolveTargetRef(repoDir: string, ref: string): Promise<st
   if (!isValidGitRef(ref)) {
     throw new ValidationError(`Invalid ref: '${ref}'`);
   }
-  if (/^[0-9a-f]{7,40}$/.test(ref) && (await hasCommit(repoDir, ref))) {
+  if (/^[0-9a-f]{7,64}$/.test(ref) && (await hasCommit(repoDir, ref))) {
     return revParseCommit(repoDir, ref);
   }
   const args = ['fetch', '--quiet', '--no-tags', 'origin', `+refs/tags/${ref}:refs/tags/${ref}`];
